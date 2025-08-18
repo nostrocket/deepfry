@@ -1,0 +1,835 @@
+{
+  "configuration" : { },
+  "description" : "DeepFry backend for Humble Horse — StrFry relay plus subsystems for search, trust, profiles, threads.",
+  "documentation" : { },
+  "id" : 1,
+  "lastModifiedAgent" : "structurizr-ui",
+  "lastModifiedDate" : "2025-08-14T09:55:54Z",
+  "model" : {
+    "deploymentNodes" : [ {
+      "environment" : "Logical",
+      "id" : "32",
+      "instances" : "1",
+      "name" : "User Device",
+      "properties" : {
+        "structurizr.dsl.identifier" : "e1d7abe8-8949-4a95-b929-6c581529732a"
+      },
+      "softwareSystemInstances" : [ {
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "33",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "eedb8c8f-31bb-49d7-a7cb-6671255a0528"
+        },
+        "softwareSystemId" : "2",
+        "tags" : "Software System Instance"
+      } ],
+      "tags" : "Element,Deployment Node"
+    }, {
+      "description" : "TCP/WebSocket",
+      "environment" : "Logical",
+      "id" : "34",
+      "instances" : "1",
+      "name" : "Edge / LB",
+      "properties" : {
+        "structurizr.dsl.identifier" : "21b482fd-2b6e-4b16-b5fc-3461c3cafa36"
+      },
+      "tags" : "Element,Deployment Node,}",
+      "technology" : "{"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "5",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "36",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "b1ae56cb-ade7-4579-896d-0598c545440c"
+        },
+        "relationships" : [ {
+          "description" : "Dispatch NIP-50",
+          "destinationId" : "37",
+          "id" : "38",
+          "linkedRelationshipId" : "20",
+          "sourceId" : "36"
+        }, {
+          "description" : "Store/query full events",
+          "destinationId" : "39",
+          "id" : "40",
+          "linkedRelationshipId" : "19",
+          "sourceId" : "36"
+        }, {
+          "description" : "Event Kind 1",
+          "destinationId" : "46",
+          "id" : "47",
+          "linkedRelationshipId" : "24",
+          "sourceId" : "36"
+        }, {
+          "description" : "Kinds 1/18/25/51/57",
+          "destinationId" : "54",
+          "id" : "55",
+          "linkedRelationshipId" : "27",
+          "sourceId" : "36"
+        }, {
+          "description" : "Kinds 1 with e/p tags",
+          "destinationId" : "57",
+          "id" : "58",
+          "linkedRelationshipId" : "28",
+          "sourceId" : "36"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "7",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "37",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "0cb827aa-a957-4246-9c26-33004f38369d"
+        },
+        "relationships" : [ {
+          "description" : "HTTP /search, stream results",
+          "destinationId" : "42",
+          "id" : "43",
+          "linkedRelationshipId" : "21",
+          "sourceId" : "37"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "6",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "39",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "f6aa090a-31e8-4544-b20f-7539935d1fa7"
+        },
+        "tags" : "Container Instance"
+      } ],
+      "environment" : "Logical",
+      "id" : "35",
+      "instances" : "1",
+      "name" : "Relay Host",
+      "properties" : {
+        "structurizr.dsl.identifier" : "83a7f985-f8b3-475e-8992-dda161d8c954"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "8",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "42",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "ada12a30-558b-478f-8947-1700fdab698f"
+        },
+        "relationships" : [ {
+          "description" : "kNN/ANN queries",
+          "destinationId" : "44",
+          "id" : "45",
+          "linkedRelationshipId" : "22",
+          "sourceId" : "42"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "9",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "44",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "c2a0caf7-9bac-4c0b-8dfe-9fbffcb6cb1b"
+        },
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "10",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "46",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "d1c7bc44-f99c-470f-bc06-5c9aaa22f3a3"
+        },
+        "relationships" : [ {
+          "description" : "HTTP /index upserts",
+          "destinationId" : "42",
+          "id" : "48",
+          "linkedRelationshipId" : "23",
+          "sourceId" : "46"
+        } ],
+        "tags" : "Container Instance"
+      } ],
+      "environment" : "Logical",
+      "id" : "41",
+      "instances" : "1",
+      "name" : "Search Tier",
+      "properties" : {
+        "structurizr.dsl.identifier" : "c2fdef76-adbc-470a-96dd-770a3a5d614d"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "13",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "50",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "12072044-542d-4a1e-8c95-28822c16a2da"
+        },
+        "tags" : "Container Instance"
+      } ],
+      "environment" : "Logical",
+      "id" : "49",
+      "instances" : "1",
+      "name" : "Graph Tier",
+      "properties" : {
+        "structurizr.dsl.identifier" : "7f995eee-4c62-49bd-96c7-2f2e5eda159a"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "11",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "52",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "228d48c1-6615-43c8-a98b-4c064cfb56cb"
+        },
+        "relationships" : [ {
+          "description" : "Republish EVENTs",
+          "destinationId" : "36",
+          "id" : "53",
+          "linkedRelationshipId" : "25",
+          "sourceId" : "52"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "14",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "54",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "65104561-bbbf-46eb-9aef-5ee52af7a2d5"
+        },
+        "relationships" : [ {
+          "description" : "profile data (tba)",
+          "destinationId" : "44",
+          "id" : "56",
+          "linkedRelationshipId" : "31",
+          "sourceId" : "54"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "15",
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "57",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "daaab80a-6622-4739-9d44-947e8f88932f"
+        },
+        "relationships" : [ {
+          "description" : "Event-id thread graph",
+          "destinationId" : "50",
+          "id" : "59",
+          "linkedRelationshipId" : "30",
+          "sourceId" : "57"
+        } ],
+        "tags" : "Container Instance"
+      } ],
+      "environment" : "Logical",
+      "id" : "51",
+      "instances" : "1",
+      "name" : "Services",
+      "properties" : {
+        "structurizr.dsl.identifier" : "fe355d16-6cba-4ba3-a355-75e0de77a986"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "environment" : "Logical",
+      "id" : "60",
+      "instances" : "1",
+      "name" : "Upstream Relays",
+      "properties" : {
+        "structurizr.dsl.identifier" : "7cf6ae84-1d7c-414a-a89c-21cd21733de4"
+      },
+      "softwareSystemInstances" : [ {
+        "deploymentGroups" : [ "Default" ],
+        "environment" : "Logical",
+        "id" : "61",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "7fe484cd-f90b-408d-8870-39e2c8e2853f"
+        },
+        "softwareSystemId" : "3",
+        "tags" : "Software System Instance"
+      } ],
+      "tags" : "Element,Deployment Node"
+    } ],
+    "people" : [ {
+      "description" : "Interacts via Humble Horse client",
+      "id" : "1",
+      "location" : "Unspecified",
+      "name" : "User",
+      "properties" : {
+        "structurizr.dsl.identifier" : "user"
+      },
+      "relationships" : [ {
+        "description" : "Reads and publishes Nostr events",
+        "destinationId" : "2",
+        "id" : "16",
+        "sourceId" : "1",
+        "tags" : "Relationship"
+      } ],
+      "tags" : "Element,Person"
+    } ],
+    "softwareSystems" : [ {
+      "description" : "Mobile and web client",
+      "documentation" : { },
+      "id" : "2",
+      "location" : "Unspecified",
+      "name" : "Humble Horse Client",
+      "properties" : {
+        "structurizr.dsl.identifier" : "hhc"
+      },
+      "relationships" : [ {
+        "description" : "WebSocket",
+        "destinationId" : "4",
+        "id" : "17",
+        "sourceId" : "2",
+        "tags" : "Relationship"
+      } ],
+      "tags" : "Element,Software System"
+    }, {
+      "description" : "External Nostr relays",
+      "documentation" : { },
+      "id" : "3",
+      "location" : "Unspecified",
+      "name" : "Upstream Relays",
+      "properties" : {
+        "structurizr.dsl.identifier" : "upstream"
+      },
+      "relationships" : [ {
+        "description" : "events via stream/sync",
+        "destinationId" : "4",
+        "id" : "18",
+        "sourceId" : "3",
+        "tags" : "Relationship"
+      } ],
+      "tags" : "Element,Software System"
+    }, {
+      "containers" : [ {
+        "description" : "Canonical Nostr relay. Stores and serves events. Dispatches NIP-50 to plugin.",
+        "documentation" : { },
+        "id" : "5",
+        "name" : "StrFry Relay",
+        "properties" : {
+          "structurizr.dsl.identifier" : "strfry"
+        },
+        "relationships" : [ {
+          "description" : "Store/query full events",
+          "destinationId" : "6",
+          "id" : "19",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Dispatch NIP-50",
+          "destinationId" : "7",
+          "id" : "20",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Event Kind 1",
+          "destinationId" : "10",
+          "id" : "24",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "NIP-02 contacts",
+          "destinationId" : "12",
+          "id" : "26",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Kinds 1/18/25/51/57",
+          "destinationId" : "14",
+          "id" : "27",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Kinds 1 with e/p tags",
+          "destinationId" : "15",
+          "id" : "28",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "C++"
+      }, {
+        "description" : "Canonical full Nostr events.",
+        "documentation" : { },
+        "id" : "6",
+        "name" : "LMDB",
+        "properties" : {
+          "structurizr.dsl.identifier" : "lmdb"
+        },
+        "tags" : "Element,Container,Database",
+        "technology" : "Embedded DB"
+      }, {
+        "description" : "Intercepts NIP-50 and calls Semantic Search.",
+        "documentation" : { },
+        "id" : "7",
+        "name" : "Search Plugin",
+        "properties" : {
+          "structurizr.dsl.identifier" : "plugin"
+        },
+        "relationships" : [ {
+          "description" : "HTTP /search, stream results",
+          "destinationId" : "8",
+          "id" : "21",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "StrFry plugin (stdin/stdout JSON)"
+      }, {
+        "description" : "Vector search API: /index, /search. Hybrid rank.",
+        "documentation" : { },
+        "id" : "8",
+        "name" : "Semantic Search Service",
+        "properties" : {
+          "structurizr.dsl.identifier" : "search"
+        },
+        "relationships" : [ {
+          "description" : "kNN/ANN queries",
+          "destinationId" : "9",
+          "id" : "22",
+          "sourceId" : "8",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "TS/Go API"
+      }, {
+        "description" : "Embeddings and metadata.",
+        "documentation" : { },
+        "id" : "9",
+        "name" : "Vector DB",
+        "properties" : {
+          "structurizr.dsl.identifier" : "vecdb"
+        },
+        "tags" : "Element,Container,Database",
+        "technology" : "pgvector"
+      }, {
+        "description" : "Clean, chunk, embed, upsert to Vector DB.",
+        "documentation" : { },
+        "id" : "10",
+        "name" : "Embeddings Generator",
+        "properties" : {
+          "structurizr.dsl.identifier" : "embed"
+        },
+        "relationships" : [ {
+          "description" : "HTTP /index upserts",
+          "destinationId" : "8",
+          "id" : "23",
+          "sourceId" : "10",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Go workers"
+      }, {
+        "description" : "stream/sync from upstream relays; republish to StrFry; offset as replaceable event.",
+        "documentation" : { },
+        "id" : "11",
+        "name" : "Event Forwarder",
+        "properties" : {
+          "structurizr.dsl.identifier" : "forwarder"
+        },
+        "relationships" : [ {
+          "description" : "Republish EVENTs",
+          "destinationId" : "5",
+          "id" : "25",
+          "sourceId" : "11",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Service"
+      }, {
+        "description" : "Compute trust scores; export allowlist.",
+        "documentation" : { },
+        "id" : "12",
+        "name" : "WoT Builder + Crawler",
+        "properties" : {
+          "structurizr.dsl.identifier" : "wot"
+        },
+        "relationships" : [ {
+          "description" : "Pubkey trust graph",
+          "destinationId" : "13",
+          "id" : "29",
+          "sourceId" : "12",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Go/.NET"
+      }, {
+        "description" : "ID-only graphs: pubkeys and event-ids.",
+        "documentation" : { },
+        "id" : "13",
+        "name" : "Dgraph",
+        "properties" : {
+          "structurizr.dsl.identifier" : "dgraph"
+        },
+        "tags" : "Element,Container,Database",
+        "technology" : "Graph DB"
+      }, {
+        "description" : "Track Likes, Mutes, Replies, Reposts, Zaps; compute interests.",
+        "documentation" : { },
+        "id" : "14",
+        "name" : "Profile Builder",
+        "properties" : {
+          "structurizr.dsl.identifier" : "profile"
+        },
+        "relationships" : [ {
+          "description" : "profile data (tba)",
+          "destinationId" : "9",
+          "id" : "31",
+          "sourceId" : "14",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Service"
+      }, {
+        "description" : "Build thread graph from reply/quote links.",
+        "documentation" : { },
+        "id" : "15",
+        "name" : "Thread Inference Engine",
+        "properties" : {
+          "structurizr.dsl.identifier" : "thread"
+        },
+        "relationships" : [ {
+          "description" : "Event-id thread graph",
+          "destinationId" : "13",
+          "id" : "30",
+          "sourceId" : "15",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Go/.NET"
+      } ],
+      "description" : "Relay + backend subsystems",
+      "documentation" : { },
+      "id" : "4",
+      "location" : "Unspecified",
+      "name" : "DeepFry",
+      "properties" : {
+        "structurizr.dsl.identifier" : "deepfry"
+      },
+      "tags" : "Element,Software System"
+    } ]
+  },
+  "name" : "DeepFry C4",
+  "properties" : {
+    "structurizr.dsl" : "d29ya3NwYWNlICJEZWVwRnJ5IEM0IiAiRGVlcEZyeSBiYWNrZW5kIGZvciBIdW1ibGUgSG9yc2Ug4oCUIFN0ckZyeSByZWxheSBwbHVzIHN1YnN5c3RlbXMgZm9yIHNlYXJjaCwgdHJ1c3QsIHByb2ZpbGVzLCB0aHJlYWRzLiIgewoKICBtb2RlbCB7CiAgICB1c2VyID0gcGVyc29uICJVc2VyIiAiSW50ZXJhY3RzIHZpYSBIdW1ibGUgSG9yc2UgY2xpZW50IgogICAgaGhjICA9IHNvZnR3YXJlU3lzdGVtICJIdW1ibGUgSG9yc2UgQ2xpZW50IiAiTW9iaWxlIGFuZCB3ZWIgY2xpZW50IgogICAgdXBzdHJlYW0gPSBzb2Z0d2FyZVN5c3RlbSAiVXBzdHJlYW0gUmVsYXlzIiAiRXh0ZXJuYWwgTm9zdHIgcmVsYXlzIgoKICAgIGRlZXBmcnkgPSBzb2Z0d2FyZVN5c3RlbSAiRGVlcEZyeSIgIlJlbGF5ICsgYmFja2VuZCBzdWJzeXN0ZW1zIiB7CiAgICAgIHN0cmZyeSA9IGNvbnRhaW5lciAiU3RyRnJ5IFJlbGF5IiAiQ2Fub25pY2FsIE5vc3RyIHJlbGF5LiBTdG9yZXMgYW5kIHNlcnZlcyBldmVudHMuIERpc3BhdGNoZXMgTklQLTUwIHRvIHBsdWdpbi4iICJDKysiCiAgICAgIGxtZGIgICA9IGNvbnRhaW5lciAiTE1EQiIgIkNhbm9uaWNhbCBmdWxsIE5vc3RyIGV2ZW50cy4iICJFbWJlZGRlZCBEQiIgewogICAgICAgIHRhZ3MgIkRhdGFiYXNlIgogICAgICB9CiAgICAgIHBsdWdpbiA9IGNvbnRhaW5lciAiU2VhcmNoIFBsdWdpbiIgIkludGVyY2VwdHMgTklQLTUwIGFuZCBjYWxscyBTZW1hbnRpYyBTZWFyY2guIiAiU3RyRnJ5IHBsdWdpbiAoc3RkaW4vc3Rkb3V0IEpTT04pIgogICAgICBzZWFyY2ggPSBjb250YWluZXIgIlNlbWFudGljIFNlYXJjaCBTZXJ2aWNlIiAiVmVjdG9yIHNlYXJjaCBBUEk6IC9pbmRleCwgL3NlYXJjaC4gSHlicmlkIHJhbmsuIiAiVFMvR28gQVBJIgogICAgICB2ZWNkYiAgPSBjb250YWluZXIgIlZlY3RvciBEQiIgIkVtYmVkZGluZ3MgYW5kIG1ldGFkYXRhLiIgInBndmVjdG9yIiB7CiAgICAgICAgdGFncyAiRGF0YWJhc2UiCiAgICAgIH0KICAgICAgZW1iZWQgID0gY29udGFpbmVyICJFbWJlZGRpbmdzIEdlbmVyYXRvciIgIkNsZWFuLCBjaHVuaywgZW1iZWQsIHVwc2VydCB0byBWZWN0b3IgREIuIiAiR28gd29ya2VycyIKICAgICAgZm9yd2FyZGVyID0gY29udGFpbmVyICJFdmVudCBGb3J3YXJkZXIiICJzdHJlYW0vc3luYyBmcm9tIHVwc3RyZWFtIHJlbGF5czsgcmVwdWJsaXNoIHRvIFN0ckZyeTsgb2Zmc2V0IGFzIHJlcGxhY2VhYmxlIGV2ZW50LiIgIlNlcnZpY2UiCiAgICAgIHdvdCAgICA9IGNvbnRhaW5lciAiV29UIEJ1aWxkZXIgKyBDcmF3bGVyIiAiQ29tcHV0ZSB0cnVzdCBzY29yZXM7IGV4cG9ydCBhbGxvd2xpc3QuIiAiR28vLk5FVCIKICAgICAgZGdyYXBoID0gY29udGFpbmVyICJEZ3JhcGgiICJJRC1vbmx5IGdyYXBoczogcHVia2V5cyBhbmQgZXZlbnQtaWRzLiIgIkdyYXBoIERCIiB7CiAgICAgICAgdGFncyAiRGF0YWJhc2UiCiAgICAgIH0KICAgICAgcHJvZmlsZSA9IGNvbnRhaW5lciAiUHJvZmlsZSBCdWlsZGVyIiAiVHJhY2sgTGlrZXMsIE11dGVzLCBSZXBsaWVzLCBSZXBvc3RzLCBaYXBzOyBjb21wdXRlIGludGVyZXN0cy4iICJTZXJ2aWNlIgogICAgICB0aHJlYWQgID0gY29udGFpbmVyICJUaHJlYWQgSW5mZXJlbmNlIEVuZ2luZSIgIkJ1aWxkIHRocmVhZCBncmFwaCBmcm9tIHJlcGx5L3F1b3RlIGxpbmtzLiIgIkdvLy5ORVQiCiAgICB9CgogICAgdXNlciAtPiBoaGMgICAgICAiUmVhZHMgYW5kIHB1Ymxpc2hlcyBOb3N0ciBldmVudHMiCiAgICBoaGMgIC0+IGRlZXBmcnkgICJXZWJTb2NrZXQiCiAgICB1cHN0cmVhbSAtPiBkZWVwZnJ5ICJldmVudHMgdmlhIHN0cmVhbS9zeW5jIgoKICAgIHN0cmZyeSAtPiBsbWRiICAgICJTdG9yZS9xdWVyeSBmdWxsIGV2ZW50cyIKICAgIHN0cmZyeSAtPiBwbHVnaW4gICJEaXNwYXRjaCBOSVAtNTAiCiAgICBwbHVnaW4gLT4gc2VhcmNoICAiSFRUUCAvc2VhcmNoLCBzdHJlYW0gcmVzdWx0cyIKICAgIHNlYXJjaCAtPiB2ZWNkYiAgICJrTk4vQU5OIHF1ZXJpZXMiCiAgICBlbWJlZCAgLT4gc2VhcmNoICAiSFRUUCAvaW5kZXggdXBzZXJ0cyIKICAgIHN0cmZyeSAtPiBlbWJlZCAgICJFdmVudCBLaW5kIDEiCiAgICBmb3J3YXJkZXIgLT4gc3RyZnJ5ICJSZXB1Ymxpc2ggRVZFTlRzIgogICAgc3RyZnJ5IC0+IHdvdCAgICAgIk5JUC0wMiBjb250YWN0cyIKICAgIHN0cmZyeSAtPiBwcm9maWxlICJLaW5kcyAxLzE4LzI1LzUxLzU3IgogICAgc3RyZnJ5IC0+IHRocmVhZCAgIktpbmRzIDEgd2l0aCBlL3AgdGFncyIKICAgIHdvdCAgICAtPiBkZ3JhcGggICJQdWJrZXkgdHJ1c3QgZ3JhcGgiCiAgICB0aHJlYWQgLT4gZGdyYXBoICAiRXZlbnQtaWQgdGhyZWFkIGdyYXBoIgogICAgcHJvZmlsZSAtPiB2ZWNkYiAicHJvZmlsZSBkYXRhICh0YmEpIgoKICAgIGRlcGxveW1lbnRFbnZpcm9ubWVudCAiTG9naWNhbCIgewogICAgICBkZXBsb3ltZW50Tm9kZSAiVXNlciBEZXZpY2UiIHsKICAgICAgICBzb2Z0d2FyZVN5c3RlbUluc3RhbmNlIGhoYwogICAgICB9CiAgICAgIGRlcGxveW1lbnROb2RlICJFZGdlIC8gTEIiICJUQ1AvV2ViU29ja2V0IiB7IH0KICAgICAgZGVwbG95bWVudE5vZGUgIlJlbGF5IEhvc3QiIHsKICAgICAgICBjb250YWluZXJJbnN0YW5jZSBzdHJmcnkKICAgICAgICBjb250YWluZXJJbnN0YW5jZSBwbHVnaW4KICAgICAgICBjb250YWluZXJJbnN0YW5jZSBsbWRiCiAgICAgIH0KICAgICAgZGVwbG95bWVudE5vZGUgIlNlYXJjaCBUaWVyIiB7CiAgICAgICAgY29udGFpbmVySW5zdGFuY2Ugc2VhcmNoCiAgICAgICAgY29udGFpbmVySW5zdGFuY2UgdmVjZGIKICAgICAgICBjb250YWluZXJJbnN0YW5jZSBlbWJlZAogICAgICB9CiAgICAgIGRlcGxveW1lbnROb2RlICJHcmFwaCBUaWVyIiB7CiAgICAgICAgY29udGFpbmVySW5zdGFuY2UgZGdyYXBoCiAgICAgIH0KICAgICAgZGVwbG95bWVudE5vZGUgIlNlcnZpY2VzIiB7CiAgICAgICAgY29udGFpbmVySW5zdGFuY2UgZm9yd2FyZGVyCiAgICAgICAgY29udGFpbmVySW5zdGFuY2UgcHJvZmlsZQogICAgICAgIGNvbnRhaW5lckluc3RhbmNlIHRocmVhZAogICAgICB9CiAgICAgIGRlcGxveW1lbnROb2RlICJVcHN0cmVhbSBSZWxheXMiIHsKICAgICAgICBzb2Z0d2FyZVN5c3RlbUluc3RhbmNlIHVwc3RyZWFtCiAgICAgIH0KICAgIH0KICB9CgogIHZpZXdzIHsKICAgIHN5c3RlbUNvbnRleHQgZGVlcGZyeSAiY29udGV4dCIgewogICAgICBpbmNsdWRlICoKICAgICAgYXV0b0xheW91dCBscgogICAgfQoKICAgIGNvbnRhaW5lciBkZWVwZnJ5ICJjb250YWluZXJzIiB7CiAgICAgIGluY2x1ZGUgKgogICAgICBhdXRvTGF5b3V0IGxyCiAgICB9CgogICAgZGVwbG95bWVudCBkZWVwZnJ5ICJMb2dpY2FsIiAiZGVwbG95bWVudC1sb2dpY2FsIiB7CiAgICAgIGluY2x1ZGUgKgogICAgICBhdXRvTGF5b3V0IGxyCiAgICB9CgogICAgc3R5bGVzIHsKICAgICAgZWxlbWVudCAiUGVyc29uIiB7CiAgICAgICAgYmFja2dyb3VuZCAjMDg0MjdiCiAgICAgICAgY29sb3IgI2ZmZmZmZgogICAgICAgIHNoYXBlIFBlcnNvbgogICAgICB9CiAgICAgIGVsZW1lbnQgIlNvZnR3YXJlIFN5c3RlbSIgewogICAgICAgIGJhY2tncm91bmQgIzExNjhiZAogICAgICAgIGNvbG9yICNmZmZmZmYKICAgICAgfQogICAgICBlbGVtZW50ICJDb250YWluZXIiIHsKICAgICAgICBiYWNrZ3JvdW5kICM0MzhkZDUKICAgICAgICBjb2xvciAjZmZmZmZmCiAgICAgIH0KICAgICAgZWxlbWVudCAiRGF0YWJhc2UiIHsKICAgICAgICBzaGFwZSBDeWxpbmRlcgogICAgICB9CiAgICB9CiAgfQp9"
+  },
+  "views" : {
+    "configuration" : {
+      "branding" : { },
+      "lastSavedView" : "deployment-logical",
+      "metadataSymbols" : "SquareBrackets",
+      "styles" : {
+        "elements" : [ {
+          "background" : "#08427b",
+          "color" : "#ffffff",
+          "shape" : "Person",
+          "tag" : "Person"
+        }, {
+          "background" : "#1168bd",
+          "color" : "#ffffff",
+          "tag" : "Software System"
+        }, {
+          "background" : "#438dd5",
+          "color" : "#ffffff",
+          "tag" : "Container"
+        }, {
+          "shape" : "Cylinder",
+          "tag" : "Database"
+        } ]
+      },
+      "terminology" : { }
+    },
+    "containerViews" : [ {
+      "automaticLayout" : {
+        "applied" : true,
+        "edgeSeparation" : 0,
+        "implementation" : "Graphviz",
+        "nodeSeparation" : 300,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 300,
+        "vertices" : false
+      },
+      "dimensions" : {
+        "height" : 3519,
+        "width" : 3890
+      },
+      "elements" : [ {
+        "id" : "5",
+        "x" : 969,
+        "y" : 1614
+      }, {
+        "id" : "6",
+        "x" : 1719,
+        "y" : 785
+      }, {
+        "id" : "7",
+        "x" : 1719,
+        "y" : 185
+      }, {
+        "id" : "8",
+        "x" : 2469,
+        "y" : 1239
+      }, {
+        "id" : "9",
+        "x" : 3219,
+        "y" : 1539
+      }, {
+        "id" : "10",
+        "x" : 1719,
+        "y" : 1385
+      }, {
+        "id" : "11",
+        "x" : 219,
+        "y" : 1614
+      }, {
+        "id" : "12",
+        "x" : 1719,
+        "y" : 2893
+      }, {
+        "id" : "13",
+        "x" : 2469,
+        "y" : 2664
+      }, {
+        "id" : "14",
+        "x" : 2469,
+        "y" : 1839
+      }, {
+        "id" : "15",
+        "x" : 1719,
+        "y" : 2293
+      } ],
+      "externalSoftwareSystemBoundariesVisible" : false,
+      "key" : "containers",
+      "order" : 2,
+      "relationships" : [ {
+        "id" : "19"
+      }, {
+        "id" : "20",
+        "vertices" : [ {
+          "x" : 1719,
+          "y" : 635
+        } ]
+      }, {
+        "id" : "21",
+        "vertices" : [ {
+          "x" : 2169,
+          "y" : 635
+        } ]
+      }, {
+        "id" : "22"
+      }, {
+        "id" : "23"
+      }, {
+        "id" : "24"
+      }, {
+        "id" : "25"
+      }, {
+        "id" : "26",
+        "vertices" : [ {
+          "x" : 1719,
+          "y" : 2743
+        } ]
+      }, {
+        "id" : "27"
+      }, {
+        "id" : "28"
+      }, {
+        "id" : "29"
+      }, {
+        "id" : "30"
+      }, {
+        "id" : "31"
+      } ],
+      "softwareSystemId" : "4"
+    } ],
+    "deploymentViews" : [ {
+      "automaticLayout" : {
+        "applied" : true,
+        "edgeSeparation" : 0,
+        "implementation" : "Graphviz",
+        "nodeSeparation" : 300,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 300,
+        "vertices" : false
+      },
+      "dimensions" : {
+        "height" : 4352,
+        "width" : 3140
+      },
+      "elements" : [ {
+        "id" : "32",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "33",
+        "x" : 220,
+        "y" : 2826
+      }, {
+        "id" : "35",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "36",
+        "x" : 220,
+        "y" : 1326
+      }, {
+        "id" : "37",
+        "x" : 970,
+        "y" : 1326
+      }, {
+        "id" : "39",
+        "x" : 970,
+        "y" : 726
+      }, {
+        "id" : "41",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "42",
+        "x" : 1720,
+        "y" : 1926
+      }, {
+        "id" : "44",
+        "x" : 2470,
+        "y" : 1926
+      }, {
+        "id" : "46",
+        "x" : 970,
+        "y" : 1926
+      }, {
+        "id" : "49",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "50",
+        "x" : 1720,
+        "y" : 3726
+      }, {
+        "id" : "51",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "52",
+        "x" : 970,
+        "y" : 2526
+      }, {
+        "id" : "54",
+        "x" : 970,
+        "y" : 3126
+      }, {
+        "id" : "57",
+        "x" : 970,
+        "y" : 3726
+      }, {
+        "id" : "60",
+        "x" : 175,
+        "y" : 175
+      }, {
+        "id" : "61",
+        "x" : 220,
+        "y" : 185
+      } ],
+      "environment" : "Logical",
+      "key" : "deployment-logical",
+      "order" : 3,
+      "relationships" : [ {
+        "id" : "38"
+      }, {
+        "id" : "40"
+      }, {
+        "id" : "43"
+      }, {
+        "id" : "45"
+      }, {
+        "id" : "47"
+      }, {
+        "id" : "48"
+      }, {
+        "id" : "53",
+        "vertices" : [ {
+          "x" : 866,
+          "y" : 2406
+        } ]
+      }, {
+        "id" : "55",
+        "vertices" : [ {
+          "x" : 866,
+          "y" : 2976
+        } ]
+      }, {
+        "id" : "56"
+      }, {
+        "id" : "58",
+        "vertices" : [ {
+          "x" : 774,
+          "y" : 2647
+        }, {
+          "x" : 866,
+          "y" : 3576
+        } ]
+      }, {
+        "id" : "59"
+      } ],
+      "softwareSystemId" : "4"
+    } ],
+    "systemContextViews" : [ {
+      "automaticLayout" : {
+        "applied" : true,
+        "edgeSeparation" : 0,
+        "implementation" : "Graphviz",
+        "nodeSeparation" : 300,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 300,
+        "vertices" : false
+      },
+      "dimensions" : {
+        "height" : 1300,
+        "width" : 1600
+      },
+      "elements" : [ {
+        "id" : "2",
+        "x" : 200,
+        "y" : 165
+      }, {
+        "id" : "3",
+        "x" : 200,
+        "y" : 765
+      }, {
+        "id" : "4",
+        "x" : 950,
+        "y" : 465
+      } ],
+      "enterpriseBoundaryVisible" : true,
+      "key" : "context",
+      "order" : 1,
+      "relationships" : [ {
+        "id" : "17"
+      }, {
+        "id" : "18"
+      } ],
+      "softwareSystemId" : "4"
+    } ]
+  }
+}
