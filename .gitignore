@@ -27,6 +27,12 @@ go.work.sum
 # env file
 .env
 
+# Persistent runtime data (databases, volumes)
+/data/
+/data/strfry-db/
+/data/strfry-plugins/
+/data/dgraph/
+
 # Editor/IDE
 # .idea/
 # .vscode/
