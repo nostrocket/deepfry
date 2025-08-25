@@ -1,0 +1,3 @@
+{
+  "query": "mutation { addUser(input: [{ pubkey: \"npub1example1234567890abcdef\", name: \"Alice\", about: \"Nostr developer and privacy advocate\", picture: \"https://example.com/alice.jpg\", userCreatedAt: \"2024-01-01T00:00:00Z\", userUpdatedAt: \"2024-01-01T00:00:00Z\" }, { pubkey: \"npub1example2234567890abcdef\", name: \"Bob\", about: \"Bitcoin maximalist\", picture: \"https://example.com/bob.jpg\", userCreatedAt: \"2024-01-02T00:00:00Z\", userUpdatedAt: \"2024-01-02T00:00:00Z\" }, { pubkey: \"npub1example3234567890abcdef\", name: \"Charlie\", about: \"Decentralization enthusiast\", picture: \"https://example.com/charlie.jpg\", userCreatedAt: \"2024-01-03T00:00:00Z\", userUpdatedAt: \"2024-01-03T00:00:00Z\" }]) { user { id pubkey name about } } }"
+}
