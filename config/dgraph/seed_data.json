@@ -1,0 +1,70 @@
+{
+  "set": [
+    {
+      "uid": "_:user1",
+      "dgraph.type": "User",
+      "pubkey": "npub1example1234567890abcdef",
+      "name": "Alice",
+      "about": "Nostr developer and privacy advocate",
+      "picture": "https://example.com/alice.jpg",
+      "userCreatedAt": "2024-01-01T00:00:00Z",
+      "userUpdatedAt": "2024-01-01T00:00:00Z"
+    },
+    {
+      "uid": "_:user2", 
+      "dgraph.type": "User",
+      "pubkey": "npub1example2234567890abcdef",
+      "name": "Bob",
+      "about": "Bitcoin maximalist",
+      "picture": "https://example.com/bob.jpg",
+      "userCreatedAt": "2024-01-02T00:00:00Z",
+      "userUpdatedAt": "2024-01-02T00:00:00Z"
+    },
+    {
+      "uid": "_:user3",
+      "dgraph.type": "User", 
+      "pubkey": "npub1example3234567890abcdef",
+      "name": "Charlie",
+      "about": "Decentralization enthusiast",
+      "userCreatedAt": "2024-01-03T00:00:00Z",
+      "userUpdatedAt": "2024-01-03T00:00:00Z"
+    },
+    {
+      "uid": "_:user1",
+      "follows": [
+        {"uid": "_:user2"},
+        {"uid": "_:user3"}
+      ],
+      "followCreatedAt": "2024-01-05T00:00:00Z"
+    },
+    {
+      "uid": "_:user2", 
+      "follows": [
+        {"uid": "_:user1"}
+      ],
+      "followCreatedAt": "2024-01-06T00:00:00Z"
+    },
+    {
+      "uid": "_:report1",
+      "dgraph.type": "Report",
+      "eventId": "note1examplereport123456789",
+      "reporter": {"uid": "_:user1"},
+      "reported": {"uid": "_:user3"},
+      "reportType": "spam",
+      "reportContent": "This user is posting spam content repeatedly",
+      "reportCreatedAt": "2024-01-10T00:00:00Z",
+      "reportUpdatedAt": "2024-01-10T00:00:00Z"
+    },
+    {
+      "uid": "_:label1",
+      "dgraph.type": "Label",
+      "eventId": "note1examplelabel123456789",
+      "labeler": {"uid": "_:user2"},
+      "labeled": {"uid": "_:user1"},
+      "labelValue": "verified",
+      "labelNamespace": "identity",
+      "labelCreatedAt": "2024-01-15T00:00:00Z",
+      "labelUpdatedAt": "2024-01-15T00:00:00Z"
+    }
+  ]
+}
