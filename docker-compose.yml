@@ -1,0 +1,61 @@
+services:
+  strfry:
+    image: dockurr/strfry:latest
+    container_name: strfry
+    restart: unless-stopped
+    environment:
+      # Relay private key (hex). Provide via .env (gitignored) file: STRFRY_PRIVATE_KEY=... 
+      # If empty, strfry will likely generate or refuse depending on image behavior; keep secret out of git.
+      STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
+    volumes:
+      # LMDB database directory (bind mount for transparency)
+      - ./data/strfry-db:/app/strfry-db
+      # Config file (read-only)
+      - ./config/strfry/strfry.conf:/app/strfry.conf:ro
+      # Plugin directory (future search plugin etc.)
+      - ./data/strfry-plugins:/app/plugins
+    ports:
+      - "7777:7777" # Nostr WebSocket
+    networks:
+      - deepfry-net
+
+  dgraph:
+    image: dgraph/standalone:latest
+    container_name: dgraph
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # HTTP (GraphQL+/Admin)
+      - "9080:9080" # gRPC
+    volumes:
+      - ./data/dgraph:/dgraph
+      - ./config/dgraph/schema.graphql:/dgraph-seed/schema.graphql
+      - ./config/dgraph/seed_data.graphql:/dgraph-seed/seed_data.graphql
+      - ./config/dgraph/entrypoint.sh:/entrypoint.sh
+    entrypoint: ["/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - deepfry-net
+
+  dgraph-ratel:
+    image: dgraph/ratel:latest
+    container_name: dgraph-ratel
+    restart: unless-stopped
+    ports:
+      - "8000:8000" # Ratel UI
+    depends_on:
+      dgraph:
+        condition: service_healthy
+    networks:
+      - deepfry-net
+
+networks:
+  deepfry-net:
+    name: deepfry-net
+    driver: bridge
+
+# No top-level volumes section: using bind mounts under ./data (gitignored) for portability.
