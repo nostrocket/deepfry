@@ -4,7 +4,7 @@ services:
     container_name: strfry
     restart: unless-stopped
     environment:
-      # Relay private key (hex). Provide via .env (gitignored) file: STRFRY_PRIVATE_KEY=... 
+      # Relay private key (hex). Provide via .env (gitignored) file: STRFRY_PRIVATE_KEY=...
       # If empty, strfry will likely generate or refuse depending on image behavior; keep secret out of git.
       STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
     volumes:
@@ -44,6 +44,7 @@ services:
   dgraph-ratel:
     image: dgraph/ratel:latest
     container_name: dgraph-ratel
+    platform: linux/amd64
     restart: unless-stopped
     ports:
       - "8000:8000" # Ratel UI
@@ -57,5 +58,4 @@ networks:
   deepfry-net:
     name: deepfry-net
     driver: bridge
-
 # No top-level volumes section: using bind mounts under ./data (gitignored) for portability.
