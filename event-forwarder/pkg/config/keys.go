@@ -41,3 +41,60 @@ const (
 	DefaultTimeoutPublishSeconds   = 10
 	DefaultTimeoutSubscribeSeconds = 10
 )
+
+// CLI flag name constants
+const (
+	// CLI flag names (kebab-case for command line)
+	FlagSourceRelayURL               = "source-relay-url"
+	FlagDeepFryRelayURL              = "deepfry-relay-url"
+	FlagNostrSecretKey               = "nostr-secret-key"
+	FlagSyncWindowSeconds            = "sync-window-seconds"
+	FlagSyncMaxBatch                 = "sync-max-batch"
+	FlagSyncMaxCatchupLagSeconds     = "sync-max-catchup-lag-seconds"
+	FlagNetworkInitialBackoffSeconds = "network-initial-backoff-seconds"
+	FlagNetworkMaxBackoffSeconds     = "network-max-backoff-seconds"
+	FlagNetworkBackoffJitter         = "network-backoff-jitter"
+	FlagTimeoutPublishSeconds        = "timeout-publish-seconds"
+	FlagTimeoutSubscribeSeconds      = "timeout-subscribe-seconds"
+	FlagHelp                         = "help"
+)
+
+// Help message constants
+const (
+	AppName        = "Event Forwarder"
+	AppDescription = "Forward events between Nostr relays"
+	UsageFormat    = "fwd [OPTIONS]"
+
+	// Help descriptions
+	HelpSourceRelayURL               = "Source relay URL (required)"
+	HelpDeepFryRelayURL              = "DeepFry relay URL (required)"
+	HelpNostrSecretKey               = "Nostr secret key (required)"
+	HelpSyncWindowSeconds            = "Sync window in seconds"
+	HelpSyncMaxBatch                 = "Max sync batch size"
+	HelpSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"
+	HelpNetworkInitialBackoffSeconds = "Initial backoff in seconds"
+	HelpNetworkMaxBackoffSeconds     = "Max backoff in seconds"
+	HelpNetworkBackoffJitter         = "Backoff jitter"
+	HelpTimeoutPublishSeconds        = "Publish timeout in seconds"
+	HelpTimeoutSubscribeSeconds      = "Subscribe timeout in seconds"
+	HelpShowHelp                     = "Show this help message"
+
+	// Environment variable descriptions (reuse help descriptions)
+	EnvDescSourceRelayURL               = "Source relay URL"
+	EnvDescDeepFryRelayURL              = "DeepFry relay URL"
+	EnvDescNostrSecretKey               = "Nostr secret key"
+	EnvDescSyncWindowSeconds            = "Sync window in seconds"
+	EnvDescSyncMaxBatch                 = "Max sync batch size"
+	EnvDescSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"
+	EnvDescNetworkInitialBackoffSeconds = "Initial backoff in seconds"
+	EnvDescNetworkMaxBackoffSeconds     = "Max backoff in seconds"
+	EnvDescNetworkBackoffJitter         = "Backoff jitter"
+	EnvDescTimeoutPublishSeconds        = "Publish timeout in seconds"
+	EnvDescTimeoutSubscribeSeconds      = "Subscribe timeout in seconds"
+
+	// Help section headers
+	HelpOptions         = "Options:"
+	HelpEnvironmentVars = "Environment Variables:"
+	HelpUsage           = "Usage:"
+	HelpNote            = "Note: CLI options override environment variables"
+)

@@ -22,9 +22,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Event Forwarder started successfully!")
-	fmt.Printf("Version: %s\n", version.Info().Version)
-	fmt.Printf("Source Relay: %s\n", cfg.SourceRelayURL)
-	fmt.Printf("DeepFry Relay: %s\n", cfg.DeepFryRelayURL)
-	fmt.Printf("Public Key: %s\n", cfg.NostrKeyPair.PublicKeyHex)
+	if cfg != nil {
+		fmt.Println("Event Forwarder started successfully!")
+		fmt.Printf("Version: %s\n", version.Info().Version)
+		fmt.Printf("Source Relay: %s\n", cfg.SourceRelayURL)
+		fmt.Printf("DeepFry Relay: %s\n", cfg.DeepFryRelayURL)
+		fmt.Printf("Public Key: %s\n", cfg.NostrKeyPair.PublicKeyHex)
+	}
 }
