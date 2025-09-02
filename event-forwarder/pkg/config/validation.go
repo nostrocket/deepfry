@@ -4,13 +4,13 @@ import "fmt"
 
 func (c *Config) validate() error {
 	if c.SourceRelayURL == "" {
-		return fmt.Errorf("SOURCE_RELAY_URL is required")
+		return fmt.Errorf("%s is required", KeySourceRelayURL)
 	}
 	if c.DeepFryRelayURL == "" {
-		return fmt.Errorf("DEEPFRY_RELAY_URL is required")
+		return fmt.Errorf("%s is required", KeyDeepFryRelayURL)
 	}
 	if c.NostrSecretKey == "" {
-		return fmt.Errorf("NOSTR_SYNC_SECKEY is required")
+		return fmt.Errorf("%s is required", KeyNostrSecretKey)
 	}
 	return nil
 }

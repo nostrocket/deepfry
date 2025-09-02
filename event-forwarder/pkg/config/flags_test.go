@@ -26,8 +26,8 @@ func TestParseCLIFlags(t *testing.T) {
 		}
 
 		// Test that empty flag source returns no values
-		if value, found := flagSource.GetString("SOURCE_RELAY_URL"); found {
-			t.Errorf("expected no value for SOURCE_RELAY_URL, got '%s'", value)
+		if value, found := flagSource.GetString(KeySourceRelayURL); found {
+			t.Errorf("expected no value for %s, got '%s'", KeySourceRelayURL, value)
 		}
 	})
 
@@ -43,12 +43,12 @@ func TestParseCLIFlags(t *testing.T) {
 		}
 
 		// Test string value
-		if value, found := flagSource.GetString("SOURCE_RELAY_URL"); !found || value != "wss://test.relay" {
+		if value, found := flagSource.GetString(KeySourceRelayURL); !found || value != "wss://test.relay" {
 			t.Errorf("expected 'wss://test.relay', got '%s' (found: %v)", value, found)
 		}
 
 		// Test int value
-		if value, found := flagSource.GetInt("SYNC_WINDOW_SECONDS"); !found || value != 15 {
+		if value, found := flagSource.GetInt(KeySyncWindowSeconds); !found || value != 15 {
 			t.Errorf("expected 15, got %d (found: %v)", value, found)
 		}
 	})

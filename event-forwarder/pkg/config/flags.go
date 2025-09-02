@@ -31,37 +31,37 @@ func parseCLIFlags() (*FlagSource, bool) {
 
 	// Store non-zero/non-empty values in flag source
 	if *sourceRelayURL != "" {
-		flagSource.Set("SOURCE_RELAY_URL", *sourceRelayURL)
+		flagSource.Set(KeySourceRelayURL, *sourceRelayURL)
 	}
 	if *deepFryRelayURL != "" {
-		flagSource.Set("DEEPFRY_RELAY_URL", *deepFryRelayURL)
+		flagSource.Set(KeyDeepFryRelayURL, *deepFryRelayURL)
 	}
 	if *nostrSecretKey != "" {
-		flagSource.Set("NOSTR_SYNC_SECKEY", *nostrSecretKey)
+		flagSource.Set(KeyNostrSecretKey, *nostrSecretKey)
 	}
 	if *syncWindowSeconds != 0 {
-		flagSource.Set("SYNC_WINDOW_SECONDS", *syncWindowSeconds)
+		flagSource.Set(KeySyncWindowSeconds, *syncWindowSeconds)
 	}
 	if *syncMaxBatch != 0 {
-		flagSource.Set("SYNC_MAX_BATCH", *syncMaxBatch)
+		flagSource.Set(KeySyncMaxBatch, *syncMaxBatch)
 	}
 	if *syncMaxCatchupLagSeconds != 0 {
-		flagSource.Set("SYNC_MAX_CATCHUP_LAG_SECONDS", *syncMaxCatchupLagSeconds)
+		flagSource.Set(KeySyncMaxCatchupLagSeconds, *syncMaxCatchupLagSeconds)
 	}
 	if *networkInitialBackoffSeconds != 0 {
-		flagSource.Set("NETWORK_INITIAL_BACKOFF_SECONDS", *networkInitialBackoffSeconds)
+		flagSource.Set(KeyNetworkInitialBackoffSeconds, *networkInitialBackoffSeconds)
 	}
 	if *networkMaxBackoffSeconds != 0 {
-		flagSource.Set("NETWORK_MAX_BACKOFF_SECONDS", *networkMaxBackoffSeconds)
+		flagSource.Set(KeyNetworkMaxBackoffSeconds, *networkMaxBackoffSeconds)
 	}
 	if *networkBackoffJitter != 0 {
-		flagSource.Set("NETWORK_BACKOFF_JITTER", *networkBackoffJitter)
+		flagSource.Set(KeyNetworkBackoffJitter, *networkBackoffJitter)
 	}
 	if *timeoutPublishSeconds != 0 {
-		flagSource.Set("TIMEOUT_PUBLISH_SECONDS", *timeoutPublishSeconds)
+		flagSource.Set(KeyTimeoutPublishSeconds, *timeoutPublishSeconds)
 	}
 	if *timeoutSubscribeSeconds != 0 {
-		flagSource.Set("TIMEOUT_SUBSCRIBE_SECONDS", *timeoutSubscribeSeconds)
+		flagSource.Set(KeyTimeoutSubscribeSeconds, *timeoutSubscribeSeconds)
 	}
 
 	return flagSource, false
@@ -75,31 +75,31 @@ func printUsage() {
 	fmt.Println("  fwd [OPTIONS]")
 	fmt.Println()
 	fmt.Println("Options:")
-	fmt.Println("  --source-relay-url string            Source relay URL (required)")
-	fmt.Println("  --deepfry-relay-url string           DeepFry relay URL (required)")
-	fmt.Println("  --nostr-secret-key string            Nostr secret key (required)")
-	fmt.Println("  --sync-window-seconds int            Sync window in seconds (default: 5)")
-	fmt.Println("  --sync-max-batch int                 Max sync batch size (default: 1000)")
-	fmt.Println("  --sync-max-catchup-lag-seconds int   Max catchup lag in seconds (default: 10)")
-	fmt.Println("  --network-initial-backoff-seconds int Initial backoff in seconds (default: 1)")
-	fmt.Println("  --network-max-backoff-seconds int   Max backoff in seconds (default: 30)")
-	fmt.Println("  --network-backoff-jitter float      Backoff jitter (default: 0.2)")
-	fmt.Println("  --timeout-publish-seconds int       Publish timeout in seconds (default: 10)")
-	fmt.Println("  --timeout-subscribe-seconds int     Subscribe timeout in seconds (default: 10)")
+	fmt.Printf("  --source-relay-url string            Source relay URL (required)\n")
+	fmt.Printf("  --deepfry-relay-url string           DeepFry relay URL (required)\n")
+	fmt.Printf("  --nostr-secret-key string            Nostr secret key (required)\n")
+	fmt.Printf("  --sync-window-seconds int            Sync window in seconds (default: %d)\n", DefaultSyncWindowSeconds)
+	fmt.Printf("  --sync-max-batch int                 Max sync batch size (default: %d)\n", DefaultSyncMaxBatch)
+	fmt.Printf("  --sync-max-catchup-lag-seconds int   Max catchup lag in seconds (default: %d)\n", DefaultSyncMaxCatchupLagSeconds)
+	fmt.Printf("  --network-initial-backoff-seconds int Initial backoff in seconds (default: %d)\n", DefaultNetworkInitialBackoffSeconds)
+	fmt.Printf("  --network-max-backoff-seconds int   Max backoff in seconds (default: %d)\n", DefaultNetworkMaxBackoffSeconds)
+	fmt.Printf("  --network-backoff-jitter float      Backoff jitter (default: %.1f)\n", DefaultNetworkBackoffJitter)
+	fmt.Printf("  --timeout-publish-seconds int       Publish timeout in seconds (default: %d)\n", DefaultTimeoutPublishSeconds)
+	fmt.Printf("  --timeout-subscribe-seconds int     Subscribe timeout in seconds (default: %d)\n", DefaultTimeoutSubscribeSeconds)
 	fmt.Println("  --help                               Show this help message")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
-	fmt.Println("  SOURCE_RELAY_URL                     Source relay URL")
-	fmt.Println("  DEEPFRY_RELAY_URL                    DeepFry relay URL")
-	fmt.Println("  NOSTR_SYNC_SECKEY                    Nostr secret key")
-	fmt.Println("  SYNC_WINDOW_SECONDS                  Sync window in seconds")
-	fmt.Println("  SYNC_MAX_BATCH                       Max sync batch size")
-	fmt.Println("  SYNC_MAX_CATCHUP_LAG_SECONDS         Max catchup lag in seconds")
-	fmt.Println("  NETWORK_INITIAL_BACKOFF_SECONDS      Initial backoff in seconds")
-	fmt.Println("  NETWORK_MAX_BACKOFF_SECONDS          Max backoff in seconds")
-	fmt.Println("  NETWORK_BACKOFF_JITTER               Backoff jitter")
-	fmt.Println("  TIMEOUT_PUBLISH_SECONDS              Publish timeout in seconds")
-	fmt.Println("  TIMEOUT_SUBSCRIBE_SECONDS            Subscribe timeout in seconds")
+	fmt.Printf("  %-36s %s\n", KeySourceRelayURL, "Source relay URL")
+	fmt.Printf("  %-36s %s\n", KeyDeepFryRelayURL, "DeepFry relay URL")
+	fmt.Printf("  %-36s %s\n", KeyNostrSecretKey, "Nostr secret key")
+	fmt.Printf("  %-36s %s\n", KeySyncWindowSeconds, "Sync window in seconds")
+	fmt.Printf("  %-36s %s\n", KeySyncMaxBatch, "Max sync batch size")
+	fmt.Printf("  %-36s %s\n", KeySyncMaxCatchupLagSeconds, "Max catchup lag in seconds")
+	fmt.Printf("  %-36s %s\n", KeyNetworkInitialBackoffSeconds, "Initial backoff in seconds")
+	fmt.Printf("  %-36s %s\n", KeyNetworkMaxBackoffSeconds, "Max backoff in seconds")
+	fmt.Printf("  %-36s %s\n", KeyNetworkBackoffJitter, "Backoff jitter")
+	fmt.Printf("  %-36s %s\n", KeyTimeoutPublishSeconds, "Publish timeout in seconds")
+	fmt.Printf("  %-36s %s\n", KeyTimeoutSubscribeSeconds, "Subscribe timeout in seconds")
 	fmt.Println()
 	fmt.Println("Note: CLI options override environment variables")
 }

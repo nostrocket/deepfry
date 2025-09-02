@@ -16,13 +16,13 @@ func TestLoad(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
 	t.Run("valid env vars", func(t *testing.T) {
-		os.Setenv("SOURCE_RELAY_URL", "wss://source.relay")
-		os.Setenv("DEEPFRY_RELAY_URL", "wss://deepfry.relay")
-		os.Setenv("NOSTR_SYNC_SECKEY", testutil.TestSKHex)
+		os.Setenv(KeySourceRelayURL, "wss://source.relay")
+		os.Setenv(KeyDeepFryRelayURL, "wss://deepfry.relay")
+		os.Setenv(KeyNostrSecretKey, testutil.TestSKHex)
 		defer func() {
-			os.Unsetenv("SOURCE_RELAY_URL")
-			os.Unsetenv("DEEPFRY_RELAY_URL")
-			os.Unsetenv("NOSTR_SYNC_SECKEY")
+			os.Unsetenv(KeySourceRelayURL)
+			os.Unsetenv(KeyDeepFryRelayURL)
+			os.Unsetenv(KeyNostrSecretKey)
 		}()
 
 		// Set args to empty to avoid parsing flags
@@ -43,11 +43,11 @@ func TestLoad(t *testing.T) {
 		}
 
 		// Test default values
-		if cfg.Sync.WindowSeconds != 5 {
-			t.Errorf("expected WindowSeconds 5, got %d", cfg.Sync.WindowSeconds)
+		if cfg.Sync.WindowSeconds != DefaultSyncWindowSeconds {
+			t.Errorf("expected WindowSeconds %d, got %d", DefaultSyncWindowSeconds, cfg.Sync.WindowSeconds)
 		}
-		if cfg.Network.BackoffJitter != 0.2 {
-			t.Errorf("expected BackoffJitter 0.2, got %f", cfg.Network.BackoffJitter)
+		if cfg.Network.BackoffJitter != DefaultNetworkBackoffJitter {
+			t.Errorf("expected BackoffJitter %f, got %f", DefaultNetworkBackoffJitter, cfg.Network.BackoffJitter)
 		}
 	})
 
@@ -55,15 +55,15 @@ func TestLoad(t *testing.T) {
 		// Reset flag for testing
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-		os.Setenv("SOURCE_RELAY_URL", "wss://env.relay")
-		os.Setenv("DEEPFRY_RELAY_URL", "wss://deepfry.relay")
-		os.Setenv("NOSTR_SYNC_SECKEY", testutil.TestSKHex)
-		os.Setenv("SYNC_WINDOW_SECONDS", "10")
+		os.Setenv(KeySourceRelayURL, "wss://env.relay")
+		os.Setenv(KeyDeepFryRelayURL, "wss://deepfry.relay")
+		os.Setenv(KeyNostrSecretKey, testutil.TestSKHex)
+		os.Setenv(KeySyncWindowSeconds, "10")
 		defer func() {
-			os.Unsetenv("SOURCE_RELAY_URL")
-			os.Unsetenv("DEEPFRY_RELAY_URL")
-			os.Unsetenv("NOSTR_SYNC_SECKEY")
-			os.Unsetenv("SYNC_WINDOW_SECONDS")
+			os.Unsetenv(KeySourceRelayURL)
+			os.Unsetenv(KeyDeepFryRelayURL)
+			os.Unsetenv(KeyNostrSecretKey)
+			os.Unsetenv(KeySyncWindowSeconds)
 		}()
 
 		// Set CLI args to override some env vars
@@ -92,9 +92,9 @@ func TestLoad(t *testing.T) {
 		// Reset flag for testing
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-		os.Unsetenv("SOURCE_RELAY_URL")
-		os.Unsetenv("DEEPFRY_RELAY_URL")
-		os.Unsetenv("NOSTR_SYNC_SECKEY")
+		os.Unsetenv(KeySourceRelayURL)
+		os.Unsetenv(KeyDeepFryRelayURL)
+		os.Unsetenv(KeyNostrSecretKey)
 
 		os.Args = []string{"test"}
 
@@ -108,13 +108,13 @@ func TestLoad(t *testing.T) {
 		// Reset flag for testing
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-		os.Setenv("SOURCE_RELAY_URL", "wss://source.relay")
-		os.Setenv("DEEPFRY_RELAY_URL", "") // Missing required field
-		os.Setenv("NOSTR_SYNC_SECKEY", testutil.TestSKHex)
+		os.Setenv(KeySourceRelayURL, "wss://source.relay")
+		os.Setenv(KeyDeepFryRelayURL, "") // Missing required field
+		os.Setenv(KeyNostrSecretKey, testutil.TestSKHex)
 		defer func() {
-			os.Unsetenv("SOURCE_RELAY_URL")
-			os.Unsetenv("DEEPFRY_RELAY_URL")
-			os.Unsetenv("NOSTR_SYNC_SECKEY")
+			os.Unsetenv(KeySourceRelayURL)
+			os.Unsetenv(KeyDeepFryRelayURL)
+			os.Unsetenv(KeyNostrSecretKey)
 		}()
 
 		os.Args = []string{"test"}
@@ -134,13 +134,13 @@ func TestLoadWithInvalidCrypto(t *testing.T) {
 	// Reset flag for testing
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-	os.Setenv("SOURCE_RELAY_URL", "wss://source.relay")
-	os.Setenv("DEEPFRY_RELAY_URL", "wss://deepfry.relay")
-	os.Setenv("NOSTR_SYNC_SECKEY", "invalid_key")
+	os.Setenv(KeySourceRelayURL, "wss://source.relay")
+	os.Setenv(KeyDeepFryRelayURL, "wss://deepfry.relay")
+	os.Setenv(KeyNostrSecretKey, "invalid_key")
 	defer func() {
-		os.Unsetenv("SOURCE_RELAY_URL")
-		os.Unsetenv("DEEPFRY_RELAY_URL")
-		os.Unsetenv("NOSTR_SYNC_SECKEY")
+		os.Unsetenv(KeySourceRelayURL)
+		os.Unsetenv(KeyDeepFryRelayURL)
+		os.Unsetenv(KeyNostrSecretKey)
 	}()
 
 	os.Args = []string{"test"}
@@ -160,29 +160,29 @@ func TestComplexConfigValues(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
 	// Test all configuration values with CLI override
-	os.Setenv("SOURCE_RELAY_URL", "wss://env.source.relay")
-	os.Setenv("DEEPFRY_RELAY_URL", "wss://env.deepfry.relay")
-	os.Setenv("NOSTR_SYNC_SECKEY", testutil.TestSKHex)
-	os.Setenv("SYNC_WINDOW_SECONDS", "10")
-	os.Setenv("SYNC_MAX_BATCH", "500")
-	os.Setenv("SYNC_MAX_CATCHUP_LAG_SECONDS", "15")
-	os.Setenv("NETWORK_INITIAL_BACKOFF_SECONDS", "2")
-	os.Setenv("NETWORK_MAX_BACKOFF_SECONDS", "60")
-	os.Setenv("NETWORK_BACKOFF_JITTER", "0.3")
-	os.Setenv("TIMEOUT_PUBLISH_SECONDS", "15")
-	os.Setenv("TIMEOUT_SUBSCRIBE_SECONDS", "20")
+	os.Setenv(KeySourceRelayURL, "wss://env.source.relay")
+	os.Setenv(KeyDeepFryRelayURL, "wss://env.deepfry.relay")
+	os.Setenv(KeyNostrSecretKey, testutil.TestSKHex)
+	os.Setenv(KeySyncWindowSeconds, "10")
+	os.Setenv(KeySyncMaxBatch, "500")
+	os.Setenv(KeySyncMaxCatchupLagSeconds, "15")
+	os.Setenv(KeyNetworkInitialBackoffSeconds, "2")
+	os.Setenv(KeyNetworkMaxBackoffSeconds, "60")
+	os.Setenv(KeyNetworkBackoffJitter, "0.3")
+	os.Setenv(KeyTimeoutPublishSeconds, "15")
+	os.Setenv(KeyTimeoutSubscribeSeconds, "20")
 	defer func() {
-		os.Unsetenv("SOURCE_RELAY_URL")
-		os.Unsetenv("DEEPFRY_RELAY_URL")
-		os.Unsetenv("NOSTR_SYNC_SECKEY")
-		os.Unsetenv("SYNC_WINDOW_SECONDS")
-		os.Unsetenv("SYNC_MAX_BATCH")
-		os.Unsetenv("SYNC_MAX_CATCHUP_LAG_SECONDS")
-		os.Unsetenv("NETWORK_INITIAL_BACKOFF_SECONDS")
-		os.Unsetenv("NETWORK_MAX_BACKOFF_SECONDS")
-		os.Unsetenv("NETWORK_BACKOFF_JITTER")
-		os.Unsetenv("TIMEOUT_PUBLISH_SECONDS")
-		os.Unsetenv("TIMEOUT_SUBSCRIBE_SECONDS")
+		os.Unsetenv(KeySourceRelayURL)
+		os.Unsetenv(KeyDeepFryRelayURL)
+		os.Unsetenv(KeyNostrSecretKey)
+		os.Unsetenv(KeySyncWindowSeconds)
+		os.Unsetenv(KeySyncMaxBatch)
+		os.Unsetenv(KeySyncMaxCatchupLagSeconds)
+		os.Unsetenv(KeyNetworkInitialBackoffSeconds)
+		os.Unsetenv(KeyNetworkMaxBackoffSeconds)
+		os.Unsetenv(KeyNetworkBackoffJitter)
+		os.Unsetenv(KeyTimeoutPublishSeconds)
+		os.Unsetenv(KeyTimeoutSubscribeSeconds)
 	}()
 
 	// Override some values with CLI
