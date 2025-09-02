@@ -2,36 +2,93 @@ package crypto
 
 import (
 	"testing"
+
+	"event-forwarder/pkg/testutil"
 )
 
-const testSK = "nsec19nzdqz0awf73vmhtptexj32fyjjufrt62whzfa9mfakcaml5vckqukyjyp"
-const testPK = "npub1u4kr6t7cuqcfye89tqcf4ej7xyeglc9zu8lzdn6qwj5078053lpq2qwka7"
-const testSK_hex = "2cc4d009fd727d166eeb0af269454924a5c48d7a53ae24f4bb4f6d8eeff4662c"
-const testPK_hex = "e56c3d2fd8e0309264e558309ae65e31328fe0a2e1fe26cf4074a8ff1df48fc2"
+func TestDeriveKeyPair_ValidNsec(t *testing.T) {
+	keyPair, err := DeriveKeyPair(testutil.TestSK)
+	if err != nil {
+		t.Fatalf("expected no error for valid nsec key, got %v", err)
+	}
+	if keyPair.PrivateKeyHex == "" {
+		t.Error("expected private key hex to be derived")
+	}
+	if keyPair.PrivateKeyBech32 != testutil.TestSK {
+		t.Errorf("expected private key bech32 %s, got %s", testutil.TestSK, keyPair.PrivateKeyBech32)
+	}
+	if keyPair.PublicKeyHex == "" {
+		t.Error("expected public key hex to be derived")
+	}
+	if keyPair.PublicKeyBech32 != testutil.TestPK {
+		t.Errorf("expected public key bech32 %s, got %s", testutil.TestPK, keyPair.PublicKeyBech32)
+	}
+}
+
+func TestDeriveKeyPair_ValidHex(t *testing.T) {
+	keyPair, err := DeriveKeyPair(testutil.TestSKHex)
+	if err != nil {
+		t.Fatalf("expected no error for valid hex key, got %v", err)
+	}
+	if keyPair.PrivateKeyHex != testutil.TestSKHex {
+		t.Errorf("expected private key hex %s, got %s", testutil.TestSKHex, keyPair.PrivateKeyHex)
+	}
+	if keyPair.PrivateKeyBech32 == "" {
+		t.Error("expected private key bech32 to be derived")
+	}
+	if keyPair.PublicKeyHex != testutil.TestPKHex {
+		t.Errorf("expected public key hex %s, got %s", testutil.TestPKHex, keyPair.PublicKeyHex)
+	}
+	if keyPair.PublicKeyBech32 == "" {
+		t.Error("expected public key bech32 to be derived")
+	}
+}
+
+func TestDeriveKeyPair_Invalid(t *testing.T) {
+	_, err := DeriveKeyPair("invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid key, got nil")
+	}
+}
+
+func TestDeriveKeyPair_InvalidHex(t *testing.T) {
+	_, err := DeriveKeyPair("invalidhexstring")
+	if err == nil {
+		t.Fatal("expected error for invalid hex key, got nil")
+	}
+}
+
+func TestDeriveKeyPair_WrongPrefix(t *testing.T) {
+	// Use a valid npub as nsec to trigger wrong prefix
+	_, err := DeriveKeyPair(testutil.TestPK) // npub instead of nsec
+	if err == nil {
+		t.Fatal("expected error for wrong prefix, got nil")
+	}
+}
 
 func TestDerivePublicKey_ValidNsec(t *testing.T) {
-	pubKey, err := DerivePublicKey(testSK)
+	pubKey, err := DerivePublicKey(testutil.TestSK)
 	if err != nil {
 		t.Fatalf("expected no error for valid nsec key, got %v", err)
 	}
 	if pubKey == "" {
 		t.Error("expected public key to be derived")
 	}
-	if pubKey != testPK {
-		t.Errorf("expected public key %s, got %s", testPK, pubKey)
+	if pubKey != testutil.TestPKHex {
+		t.Errorf("expected public key %s, got %s", testutil.TestPKHex, pubKey)
 	}
 }
 
 func TestDerivePublicKey_ValidHex(t *testing.T) {
-	pubKey, err := DerivePublicKey(testSK_hex)
+	pubKey, err := DerivePublicKey(testutil.TestSKHex)
 	if err != nil {
 		t.Fatalf("expected no error for valid hex key, got %v", err)
 	}
 	if pubKey == "" {
 		t.Error("expected public key to be derived")
 	}
-	if pubKey != testPK {
-		t.Errorf("expected public key %s, got %s", testPK, pubKey)
+	if pubKey != testutil.TestPKHex {
+		t.Errorf("expected public key %s, got %s", testutil.TestPKHex, pubKey)
 	}
 }
 
@@ -51,7 +108,7 @@ func TestDerivePublicKey_InvalidHex(t *testing.T) {
 
 func TestDerivePublicKey_WrongPrefix(t *testing.T) {
 	// Use a valid npub as nsec to trigger wrong prefix
-	_, err := DerivePublicKey(testPK) // npub instead of nsec
+	_, err := DerivePublicKey(testutil.TestPK) // npub instead of nsec
 	if err == nil {
 		t.Fatal("expected error for wrong prefix, got nil")
 	}

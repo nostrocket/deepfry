@@ -1,20 +1,16 @@
 package config
 
 import (
+	"event-forwarder/pkg/testutil"
 	"os"
 	"testing"
 )
-
-const testSK = "nsec19nzdqz0awf73vmhtptexj32fyjjufrt62whzfa9mfakcaml5vckqukyjyp"
-const testPK = "npub1u4kr6t7cuqcfye89tqcf4ej7xyeglc9zu8lzdn6qwj5078053lpq2qwka7"
-const testSK_hex = "2cc4d009fd727d166eeb0af269454924a5c48d7a53ae24f4bb4f6d8eeff4662c"
-const testPK_hex = "e56c3d2fd8e0309264e558309ae65e31328fe0a2e1fe26cf4074a8ff1df48fc2"
 
 func TestLoad(t *testing.T) {
 	t.Run("valid env vars", func(t *testing.T) {
 		os.Setenv("SOURCE_RELAY_URL", "wss://source.relay")
 		os.Setenv("DEEPFRY_RELAY_URL", "wss://deepfry.relay")
-		os.Setenv("NOSTR_SYNC_SECKEY", testSK)
+		os.Setenv("NOSTR_SYNC_SECKEY", testutil.TestSKHex)
 		defer func() {
 			os.Unsetenv("SOURCE_RELAY_URL")
 			os.Unsetenv("DEEPFRY_RELAY_URL")
@@ -55,7 +51,7 @@ func TestValidate(t *testing.T) {
 		cfg := &Config{
 			SourceRelayURL:  "wss://source.relay",
 			DeepFryRelayURL: "wss://deepfry.relay",
-			NostrSecretKey:  testSK,
+			NostrSecretKey:  testutil.TestSK,
 		}
 		err := cfg.validate()
 		if err != nil {

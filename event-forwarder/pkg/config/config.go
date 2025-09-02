@@ -12,7 +12,7 @@ type Config struct {
 	SourceRelayURL  string
 	DeepFryRelayURL string
 	NostrSecretKey  string
-	NostrPublicKey  string
+	NostrKeyPair    crypto.KeyPair
 	Sync            SyncConfig
 	Network         NetworkConfig
 	Timeouts        TimeoutConfig
@@ -60,11 +60,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	pubKey, err := crypto.DerivePublicKey(cfg.NostrSecretKey)
+	keyPair, err := crypto.DeriveKeyPair(cfg.NostrSecretKey)
 	if err != nil {
 		return nil, err
 	}
-	cfg.NostrPublicKey = pubKey
+	cfg.NostrKeyPair = *keyPair
 
 	return cfg, nil
 }
