@@ -32,6 +32,14 @@
   - Fire-and-forget: Send without waiting for application-level acknowledgment; only rely on network send completion.
   - d tag: Parameter for Nostr parameterized replaceable events (NIP-33) used as an identifier.
 
+## Development
+
+- `make fmt` - Format code
+- `make vet` - Vet code
+- `make test` - Run tests
+- `make tidy` - Update dependencies
+- `make clean` - Clean build artifacts
+
 ## Functional Requirements (Traceable)
 
 | ID      | Title               | Description                                                                                                                                                                                                                                                          | MoSCoW | Rationale                                    | Depends On |
