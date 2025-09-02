@@ -11,7 +11,7 @@ services:
       # LMDB database directory (bind mount for transparency)
       - ./data/strfry-db:/app/strfry-db
       # Config file (read-only)
-      - ./config/strfry/strfry.conf:/app/strfry.conf:ro
+      - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
       # Plugin directory (future search plugin etc.)
       - ./data/strfry-plugins:/app/plugins
     ports:

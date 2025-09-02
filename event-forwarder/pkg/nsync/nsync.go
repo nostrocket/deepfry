@@ -15,7 +15,7 @@ type Relay interface {
 	QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error)
 	Publish(ctx context.Context, event nostr.Event) error
 	Close() error
-	URL() string
+	//URL() string
 }
 
 const SyncEventKind = 30078
@@ -28,7 +28,6 @@ type Window struct {
 type SyncTracker struct {
 	relay     Relay
 	keyPair   crypto.KeyPair
-	publicKey string
 	sourceURL string
 }
 
@@ -43,7 +42,7 @@ func NewSyncTracker(relay Relay, config *config.Config) *SyncTracker {
 func (st *SyncTracker) GetLastWindow(ctx context.Context) (*Window, error) {
 	filter := nostr.Filter{
 		Kinds:   []int{SyncEventKind},
-		Authors: []string{st.publicKey},
+		Authors: []string{st.keyPair.PublicKeyHex},
 		Tags:    nostr.TagMap{"d": []string{st.sourceURL}},
 		Limit:   1,
 	}
@@ -63,7 +62,7 @@ func (st *SyncTracker) GetLastWindow(ctx context.Context) (*Window, error) {
 
 func (st *SyncTracker) UpdateWindow(ctx context.Context, window Window) error {
 	event := nostr.Event{
-		PubKey:    st.publicKey,
+		PubKey:    st.keyPair.PublicKeyHex,
 		CreatedAt: nostr.Now(),
 		Kind:      SyncEventKind,
 		Tags: nostr.Tags{
@@ -114,15 +113,15 @@ func (st *SyncTracker) parseWindow(event *nostr.Event) (*Window, error) {
 	}
 
 	return &Window{
-		From: time.Unix(fromUnix, 0),
-		To:   time.Unix(toUnix, 0),
+		From: time.Unix(fromUnix, 0).UTC(),
+		To:   time.Unix(toUnix, 0).UTC(),
 	}, nil
 }
 
 func (w Window) Next(duration time.Duration) Window {
 	return Window{
-		From: w.To,
-		To:   w.To.Add(duration),
+		From: w.To.UTC(),
+		To:   w.To.Add(duration).UTC(),
 	}
 }
 
