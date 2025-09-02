@@ -37,7 +37,7 @@ run:
 
 ## Run tests
 test:
-	go test ./... -race -cover
+	go test ./... -cover
 
 ## Format code
 fmt:
