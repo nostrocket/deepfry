@@ -41,7 +41,7 @@ test:
 
 ## Run integration tests
 test-integration:
-	go test -tags=integration ./... -cover
+	go test -tags=integration ./...
 
 ## Format code
 fmt:

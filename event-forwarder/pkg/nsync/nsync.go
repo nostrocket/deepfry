@@ -4,19 +4,13 @@ import (
 	"context"
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/crypto"
+	"event-forwarder/pkg/relay"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 )
-
-type Relay interface {
-	QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error)
-	Publish(ctx context.Context, event nostr.Event) error
-	Close() error
-	//URL() string
-}
 
 const SyncEventKind = 30078
 
@@ -26,12 +20,12 @@ type Window struct {
 }
 
 type SyncTracker struct {
-	relay     Relay
+	relay     relay.Relay
 	keyPair   crypto.KeyPair
 	sourceURL string
 }
 
-func NewSyncTracker(relay Relay, config *config.Config) *SyncTracker {
+func NewSyncTracker(relay relay.Relay, config *config.Config) *SyncTracker {
 	return &SyncTracker{
 		relay:     relay,
 		keyPair:   config.NostrKeyPair,

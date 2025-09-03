@@ -1,150 +1,171 @@
 package forwarder
 
-// import (
-// 	"context"
-// 	"fmt"
-// 	"log"
-// 	"time"
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
 
-// 	"event-forwarder/pkg/config"
-// 	"event-forwarder/pkg/sync"
+	"event-forwarder/pkg/config"
+	"event-forwarder/pkg/nsync"
+	"event-forwarder/pkg/relay"
 
-// 	"github.com/nbd-wtf/go-nostr"
-// )
+	"github.com/nbd-wtf/go-nostr"
+)
 
-// type Forwarder struct {
-// 	cfg          *config.Config
-// 	logger       *log.Logger
-// 	sourceRelay  *nostr.Relay
-// 	deepfryRelay *nostr.Relay
-// 	syncTracker  *sync.SyncTracker
-// }
+type Forwarder struct {
+	cfg          *config.Config
+	logger       *log.Logger
+	sourceRelay  relay.Relay
+	deepfryRelay relay.Relay
+	syncTracker  *nsync.SyncTracker
+}
 
-// func New(cfg *config.Config, logger *log.Logger) *Forwarder {
-// 	return &Forwarder{
-// 		cfg:    cfg,
-// 		logger: logger,
-// 	}
-// }
+func New(cfg *config.Config, logger *log.Logger) *Forwarder {
+	return &Forwarder{
+		cfg:    cfg,
+		logger: logger,
+	}
+}
 
-// func (f *Forwarder) Start(ctx context.Context) error {
-// 	// Connect to relays
-// 	if err := f.connectRelays(ctx); err != nil {
-// 		return fmt.Errorf("failed to connect to relays: %w", err)
-// 	}
-// 	defer f.closeRelays()
+// NewWithRelays creates a new Forwarder with injected relay dependencies for testing
+func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryRelay relay.Relay) *Forwarder {
+	return &Forwarder{
+		cfg:          cfg,
+		logger:       logger,
+		sourceRelay:  sourceRelay,
+		deepfryRelay: deepfryRelay,
+		syncTracker:  nsync.NewSyncTracker(deepfryRelay, cfg),
+	}
+}
 
-// 	f.syncTracker = sync.NewSyncTracker(f.deepfryRelay, f.cfg.NostrSecretKey, f.cfg.SourceRelayURL)
+func (f *Forwarder) Start(ctx context.Context) error {
+	// Connect to relays
+	if err := f.connectRelays(ctx); err != nil {
+		return fmt.Errorf("failed to connect to relays: %w", err)
+	}
+	defer f.closeRelays()
 
-// 	// Get last sync window or create new one
-// 	window, err := f.getOrCreateWindow(ctx)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to get sync window: %w", err)
-// 	}
+	f.syncTracker = nsync.NewSyncTracker(f.deepfryRelay, f.cfg)
 
-// 	f.logger.Printf("starting sync from window: %s to %s", window.From, window.To)
+	// Get last sync window or create new one
+	window, err := f.getOrCreateWindow(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get sync window: %w", err)
+	}
 
-// 	// Start syncing
-// 	return f.syncLoop(ctx, window)
-// }
+	f.logger.Printf("starting sync from window: %s to %s", window.From, window.To)
 
-// func (f *Forwarder) connectRelays(ctx context.Context) error {
-// 	var err error
+	// Start syncing
+	return f.syncLoop(ctx, window)
+}
 
-// 	f.sourceRelay, err = nostr.RelayConnect(ctx, f.cfg.SourceRelayURL)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to connect to source relay: %w", err)
-// 	}
+func (f *Forwarder) connectRelays(ctx context.Context) error {
+	var err error
 
-// 	f.deepfryRelay, err = nostr.RelayConnect(ctx, f.cfg.DeepFryRelayURL)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to connect to deepfry relay: %w", err)
-// 	}
+	sourceRelay, err := nostr.RelayConnect(ctx, f.cfg.SourceRelayURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source relay: %w", err)
+	}
+	f.sourceRelay = sourceRelay
 
-// 	return nil
-// }
+	deepfryRelay, err := nostr.RelayConnect(ctx, f.cfg.DeepFryRelayURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to deepfry relay: %w", err)
+	}
+	f.deepfryRelay = deepfryRelay
 
-// func (f *Forwarder) closeRelays() {
-// 	if f.sourceRelay != nil {
-// 		f.sourceRelay.Close()
-// 	}
-// 	if f.deepfryRelay != nil {
-// 		f.deepfryRelay.Close()
-// 	}
-// }
+	return nil
+}
 
-// func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*sync.Window, error) {
-// 	lastWindow, err := f.syncTracker.GetLastWindow(ctx)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func (f *Forwarder) closeRelays() {
+	if f.sourceRelay != nil {
+		f.sourceRelay.Close()
+	}
+	if f.deepfryRelay != nil {
+		f.deepfryRelay.Close()
+	}
+}
 
-// 	if lastWindow == nil {
-// 		// Create initial window
-// 		window := sync.NewWindow(time.Duration(f.cfg.Sync.WindowSeconds) * time.Second)
-// 		return &window, nil
-// 	}
+func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error) {
+	lastWindow, err := f.syncTracker.GetLastWindow(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 	// Continue from last window
-// 	nextWindow := lastWindow.Next(time.Duration(f.cfg.Sync.WindowSeconds) * time.Second)
-// 	return &nextWindow, nil
-// }
+	if lastWindow == nil {
+		// Create initial window
+		window := nsync.NewWindow(time.Duration(f.cfg.Sync.WindowSeconds) * time.Second)
+		return &window, nil
+	}
 
-// func (f *Forwarder) syncLoop(ctx context.Context, startWindow *sync.Window) error {
-// 	currentWindow := *startWindow
-// 	windowDuration := time.Duration(f.cfg.Sync.WindowSeconds) * time.Second
+	// Continue from last window
+	nextWindow := lastWindow.Next(time.Duration(f.cfg.Sync.WindowSeconds) * time.Second)
+	return &nextWindow, nil
+}
 
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			return ctx.Err()
-// 		default:
-// 		}
+func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) error {
+	currentWindow := *startWindow
+	windowDuration := time.Duration(f.cfg.Sync.WindowSeconds) * time.Second
 
-// 		// Check if we should move to next window
-// 		if time.Now().UTC().After(currentWindow.To.Add(time.Duration(f.cfg.Sync.MaxCatchupLagSeconds) * time.Second)) {
-// 			if err := f.syncWindow(ctx, currentWindow); err != nil {
-// 				f.logger.Printf("error syncing window %s to %s: %v", currentWindow.From, currentWindow.To, err)
-// 				time.Sleep(time.Second)
-// 				continue
-// 			}
-// 			currentWindow = currentWindow.Next(windowDuration)
-// 		} else {
-// 			// Wait a bit before checking again
-// 			time.Sleep(time.Second)
-// 		}
-// 	}
-// }
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-// func (f *Forwarder) syncWindow(ctx context.Context, window sync.Window) error {
-// 	f.logger.Printf("syncing window: %s to %s", window.From, window.To)
+		// Check if we should move to next window
+		if time.Now().UTC().After(currentWindow.To.Add(time.Duration(f.cfg.Sync.MaxCatchupLagSeconds) * time.Second)) {
+			if err := f.syncWindow(ctx, currentWindow); err != nil {
+				f.logger.Printf("error syncing window %s to %s: %v", currentWindow.From, currentWindow.To, err)
+				time.Sleep(time.Second)
+				continue
+			}
+			currentWindow = currentWindow.Next(windowDuration)
+		} else {
+			// Wait a bit before checking again
+			time.Sleep(time.Second)
+		}
+	}
+}
 
-// 	filter := nostr.Filter{
-// 		Since: &nostr.Timestamp{Time: window.From},
-// 		Until: &nostr.Timestamp{Time: window.To},
-// 		Limit: f.cfg.Sync.MaxBatch,
-// 	}
+func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
+	f.logger.Printf("syncing window: %s to %s", window.From, window.To)
 
-// 	events, err := f.sourceRelay.QuerySync(ctx, filter)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to query events: %w", err)
-// 	}
+	since := nostr.Timestamp(window.From.Unix())
+	until := nostr.Timestamp(window.To.Unix())
 
-// 	f.logger.Printf("forwarding %d events from window", len(events))
+	filter := nostr.Filter{
+		Since: &since,
+		Until: &until,
+		Limit: f.cfg.Sync.MaxBatch,
+	}
 
-// 	// Forward events to deepfry relay
-// 	for _, event := range events {
-// 		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-// 			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
-// 			continue
-// 		}
-// 	}
+	events, err := f.sourceRelay.QuerySync(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to query events: %w", err)
+	}
 
-// 	// Update sync progress
-// 	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
-// 		return fmt.Errorf("failed to update sync window: %w", err)
-// 	}
+	f.logger.Printf("forwarding %d events from window", len(events))
 
-// 	f.logger.Printf("completed window sync: %d events forwarded", len(events))
-// 	return nil
-// }
+	// Forward events to deepfry relay
+	for _, event := range events {
+		if event == nil {
+			f.logger.Printf("skipping nil event")
+			continue
+		}
+		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
+			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
+			continue
+		}
+	}
+
+	// Update sync progress
+	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
+		return fmt.Errorf("failed to update sync window: %w", err)
+	}
+
+	f.logger.Printf("completed window sync: %d events forwarded", len(events))
+	return nil
+}
