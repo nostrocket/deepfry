@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package nsync_test
 
 import (
@@ -166,7 +169,7 @@ func TestNsyncIntegration(t *testing.T) {
 			lastWindow = currentWindow
 			currentWindow = currentWindow.Next(time.Minute) // Advance to next window
 
-			time.Sleep(200 * time.Millisecond) // Increased delay to avoid "newer event" conflicts
+			time.Sleep(2000 * time.Millisecond) // Increased delay to avoid "newer event" conflicts
 		}
 
 		// After loop, check the last published window (should be lastWindow)

@@ -37,7 +37,11 @@ run:
 
 ## Run tests
 test:
-	go test ./... -cover
+	go test ./... -short -cover
+
+## Run integration tests
+test-integration:
+	go test -tags=integration ./... -cover
 
 ## Format code
 fmt:
