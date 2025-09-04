@@ -6,21 +6,63 @@ import (
 	"time"
 )
 
-// MockClock for deterministic testing
+// Mock clock for deterministic testing
 type MockClock struct {
-	currentTime time.Time
+	current time.Time
 }
 
 func (m *MockClock) Now() time.Time {
-	return m.currentTime
+	return m.current
 }
 
 func (m *MockClock) Advance(d time.Duration) {
-	m.currentTime = m.currentTime.Add(d)
+	m.current = m.current.Add(d)
+}
+
+func TestAggregator_SyncModeTracking(t *testing.T) {
+	clock := &MockClock{current: time.Unix(1640995200, 0)}
+	cfg := DefaultConfig()
+	aggregator := NewAggregator(clock, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	aggregator.Start(ctx)
+	defer aggregator.Stop()
+
+	// Initial state should be windowed mode
+	snapshot := aggregator.Snapshot()
+	if snapshot.CurrentSyncMode != "windowed" {
+		t.Errorf("expected initial sync mode to be 'windowed', got '%s'", snapshot.CurrentSyncMode)
+	}
+
+	// Publish sync mode change to realtime
+	aggregator.Publish(NewSyncModeChanged("realtime", "caught_up_to_current_time"))
+
+	// Give aggregator time to process
+	time.Sleep(10 * time.Millisecond)
+
+	// Check sync mode was updated
+	snapshot = aggregator.Snapshot()
+	if snapshot.CurrentSyncMode != "realtime" {
+		t.Errorf("expected sync mode to be 'realtime', got '%s'", snapshot.CurrentSyncMode)
+	}
+
+	// Switch back to windowed mode
+	aggregator.Publish(NewSyncModeChanged("windowed", "error_fallback"))
+
+	// Give aggregator time to process
+	time.Sleep(10 * time.Millisecond)
+
+	// Check sync mode was updated back
+	snapshot = aggregator.Snapshot()
+	if snapshot.CurrentSyncMode != "windowed" {
+		t.Errorf("expected sync mode to be 'windowed', got '%s'", snapshot.CurrentSyncMode)
+	}
 }
 
 func TestAggregator_EventCounting(t *testing.T) {
-	clock := &MockClock{currentTime: time.Unix(1000, 0)}
+	clock := &MockClock{current: time.Unix(1000, 0)}
 	cfg := DefaultConfig()
 	agg := NewAggregator(clock, cfg)
 
@@ -51,7 +93,7 @@ func TestAggregator_EventCounting(t *testing.T) {
 }
 
 func TestAggregator_ConnectionStatus(t *testing.T) {
-	clock := &MockClock{currentTime: time.Unix(1000, 0)}
+	clock := &MockClock{current: time.Unix(1000, 0)}
 	cfg := DefaultConfig()
 	agg := NewAggregator(clock, cfg)
 
@@ -78,7 +120,7 @@ func TestAggregator_ConnectionStatus(t *testing.T) {
 }
 
 func TestAggregator_ErrorTracking(t *testing.T) {
-	clock := &MockClock{currentTime: time.Unix(1000, 0)}
+	clock := &MockClock{current: time.Unix(1000, 0)}
 	cfg := DefaultConfig()
 	agg := NewAggregator(clock, cfg)
 
@@ -111,7 +153,7 @@ func TestAggregator_ErrorTracking(t *testing.T) {
 }
 
 func TestAggregator_SyncProgress(t *testing.T) {
-	clock := &MockClock{currentTime: time.Unix(1000, 0)}
+	clock := &MockClock{current: time.Unix(1000, 0)}
 	cfg := DefaultConfig()
 	agg := NewAggregator(clock, cfg)
 

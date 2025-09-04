@@ -99,6 +99,23 @@ func NewForwarderError(err error, context string, severity ErrorSeverity) Forwar
 	}
 }
 
+type SyncModeChanged struct {
+	timestamp time.Time
+	Mode      string // "windowed" or "realtime"
+	Reason    string // Why the mode changed
+}
+
+func (e SyncModeChanged) Timestamp() time.Time { return e.timestamp }
+func (e SyncModeChanged) EventType() string    { return "sync_mode_changed" }
+
+func NewSyncModeChanged(mode, reason string) SyncModeChanged {
+	return SyncModeChanged{
+		timestamp: time.Now(),
+		Mode:      mode,
+		Reason:    reason,
+	}
+}
+
 type ErrorSeverity int
 
 const (

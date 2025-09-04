@@ -12,6 +12,7 @@ import (
 type Relay interface {
 	QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error)
 	QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error)
+	Subscribe(ctx context.Context, filters nostr.Filters, opts ...nostr.SubscriptionOption) (*nostr.Subscription, error)
 	Publish(ctx context.Context, event nostr.Event) error
 	Close() error
 }

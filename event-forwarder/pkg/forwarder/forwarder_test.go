@@ -32,10 +32,13 @@ type MockRelay struct {
 	QuerySyncError    error
 	QueryEventsReturn chan *nostr.Event
 	QueryEventsError  error
+	SubscribeReturn   *nostr.Subscription
+	SubscribeError    error
 	PublishError      error
 	CloseError        error
 	QuerySyncCalls    []nostr.Filter
 	QueryEventsCalls  []nostr.Filter
+	SubscribeCalls    []nostr.Filters
 	PublishCalls      []nostr.Event
 	CloseCalled       bool
 }
@@ -62,6 +65,50 @@ func (m *MockRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan 
 	}
 
 	return m.QueryEventsReturn, nil
+}
+
+func (m *MockRelay) Subscribe(ctx context.Context, filters nostr.Filters, opts ...nostr.SubscriptionOption) (*nostr.Subscription, error) {
+	m.SubscribeCalls = append(m.SubscribeCalls, filters)
+	if m.SubscribeError != nil {
+		return nil, m.SubscribeError
+	}
+
+	// If no specific subscription is set, create a simple mock one
+	if m.SubscribeReturn == nil {
+		events := make(chan *nostr.Event, len(m.QuerySyncReturn))
+		eose := make(chan struct{}, 1)
+		closed := make(chan string, 1)
+
+		// Create a mock subscription with a dummy relay reference
+		sub := &nostr.Subscription{
+			Events:            events,
+			EndOfStoredEvents: eose,
+			ClosedReason:      closed,
+		}
+
+		// Populate with mock events and signal EOSE in a goroutine
+		go func() {
+			defer close(events)
+
+			for _, event := range m.QuerySyncReturn {
+				select {
+				case events <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// Signal end of stored events
+			select {
+			case eose <- struct{}{}:
+			case <-ctx.Done():
+			}
+		}()
+
+		return sub, nil
+	}
+
+	return m.SubscribeReturn, nil
 }
 
 func (m *MockRelay) Publish(ctx context.Context, event nostr.Event) error {
@@ -439,6 +486,27 @@ func (r *ConditionalErrorRelay) QueryEvents(ctx context.Context, filter nostr.Fi
 	ch := make(chan *nostr.Event)
 	close(ch) // Return empty channel
 	return ch, nil
+}
+
+func (r *ConditionalErrorRelay) Subscribe(ctx context.Context, filters nostr.Filters, opts ...nostr.SubscriptionOption) (*nostr.Subscription, error) {
+	events := make(chan *nostr.Event)
+	eose := make(chan struct{})
+	closed := make(chan string)
+
+	// Create a mock subscription that immediately closes
+	sub := &nostr.Subscription{
+		Events:            events,
+		EndOfStoredEvents: eose,
+		ClosedReason:      closed,
+	}
+
+	// Close immediately
+	go func() {
+		close(events)
+		close(eose)
+	}()
+
+	return sub, nil
 }
 
 func (r *ConditionalErrorRelay) Publish(ctx context.Context, event nostr.Event) error {

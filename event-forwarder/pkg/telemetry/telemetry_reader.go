@@ -11,6 +11,7 @@ type Snapshot struct {
 	SyncLagSeconds float64
 	SyncWindowFrom int64
 	SyncWindowTo   int64
+	CurrentSyncMode string
 
 	// Connection status
 	SourceRelayConnected  bool

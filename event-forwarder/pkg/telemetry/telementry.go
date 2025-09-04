@@ -57,6 +57,7 @@ type Aggregator struct {
 	// Current state
 	syncWindowFrom        int64
 	syncWindowTo          int64
+	currentSyncMode       string
 	sourceRelayConnected  bool
 	deepFryRelayConnected bool
 
@@ -86,6 +87,7 @@ func NewAggregator(clock Clock, cfg Config) *Aggregator {
 	return &Aggregator{
 		clock:                 clock,
 		cfg:                   cfg,
+		currentSyncMode:       "windowed", // Default to windowed mode
 		eventsForwardedByKind: make(map[int]uint64),
 		errorsByType:          make(map[string]uint64),
 		errorsBySeverity:      make(map[ErrorSeverity]uint64),
@@ -181,6 +183,7 @@ func (a *Aggregator) Snapshot() Snapshot {
 		SyncLagSeconds:        syncLag,
 		SyncWindowFrom:        a.syncWindowFrom,
 		SyncWindowTo:          a.syncWindowTo,
+		CurrentSyncMode:       a.currentSyncMode,
 		SourceRelayConnected:  a.sourceRelayConnected,
 		DeepFryRelayConnected: a.deepFryRelayConnected,
 		RecentErrors:          recentErrors,
@@ -243,6 +246,9 @@ func (a *Aggregator) handleEvent(event TelemetryEvent) {
 		a.errorsByType[e.Context]++
 		a.errorsBySeverity[e.Severity]++
 		a.addRecentError(e.Err.Error())
+
+	case SyncModeChanged:
+		a.currentSyncMode = e.Mode
 	}
 }
 

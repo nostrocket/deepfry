@@ -253,8 +253,20 @@ func (t *TUI) updateDisplay() {
 	if snapshot.SyncWindowFrom > 0 && snapshot.SyncWindowTo > 0 {
 		from := time.Unix(snapshot.SyncWindowFrom, 0).Format("15:04:05")
 		to := time.Unix(snapshot.SyncWindowTo, 0).Format("15:04:05")
-		t.currentWindow.SetText(fmt.Sprintf("From: %s\nTo: %s\nLag: %.1fs",
-			from, to, snapshot.SyncLagSeconds))
+		
+		// Format sync mode with color
+		var modeText string
+		switch snapshot.CurrentSyncMode {
+		case "realtime":
+			modeText = "[green]REAL-TIME[white]"
+		case "windowed":
+			modeText = "[yellow]WINDOWED[white]"
+		default:
+			modeText = "[gray]UNKNOWN[white]"
+		}
+		
+		t.currentWindow.SetText(fmt.Sprintf("Mode: %s\nFrom: %s\nTo: %s\nLag: %.1fs",
+			modeText, from, to, snapshot.SyncLagSeconds))
 	}
 
 	// Update progress bar and timeline
@@ -265,14 +277,14 @@ func (t *TUI) updateDisplay() {
 	t.relayTable.SetCell(0, 0, tview.NewTableCell("Source:").SetTextColor(tview.Styles.SecondaryTextColor))
 	sourceStatus := "[red]✘ DISC"
 	if snapshot.SourceRelayConnected {
-		sourceStatus = "[green]✓ CONNECTED"
+		sourceStatus = fmt.Sprintf("[green]✓ CONNECTED %s", t.config.SourceRelayURL)
 	}
 	t.relayTable.SetCell(0, 1, tview.NewTableCell(sourceStatus))
 
 	t.relayTable.SetCell(1, 0, tview.NewTableCell("DeepFry:").SetTextColor(tview.Styles.SecondaryTextColor))
 	deepfryStatus := "[red]✘ DISC"
 	if snapshot.DeepFryRelayConnected {
-		deepfryStatus = "[green]✓ CONNECTED"
+		deepfryStatus = fmt.Sprintf("[green]✓ CONNECTED %s", t.config.DeepFryRelayURL)
 	}
 	t.relayTable.SetCell(1, 1, tview.NewTableCell(deepfryStatus))
 
