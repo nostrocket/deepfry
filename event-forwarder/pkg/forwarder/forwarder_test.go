@@ -28,18 +28,40 @@ var testKeyPair = crypto.KeyPair{
 
 // MockRelay implements the relay.Relay interface for testing
 type MockRelay struct {
-	QuerySyncReturn []*nostr.Event
-	QuerySyncError  error
-	PublishError    error
-	CloseError      error
-	QuerySyncCalls  []nostr.Filter
-	PublishCalls    []nostr.Event
-	CloseCalled     bool
+	QuerySyncReturn   []*nostr.Event
+	QuerySyncError    error
+	QueryEventsReturn chan *nostr.Event
+	QueryEventsError  error
+	PublishError      error
+	CloseError        error
+	QuerySyncCalls    []nostr.Filter
+	QueryEventsCalls  []nostr.Filter
+	PublishCalls      []nostr.Event
+	CloseCalled       bool
 }
 
 func (m *MockRelay) QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error) {
 	m.QuerySyncCalls = append(m.QuerySyncCalls, filter)
 	return m.QuerySyncReturn, m.QuerySyncError
+}
+
+func (m *MockRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
+	m.QueryEventsCalls = append(m.QueryEventsCalls, filter)
+	if m.QueryEventsError != nil {
+		return nil, m.QueryEventsError
+	}
+
+	// If no specific channel is set, create one from QuerySyncReturn
+	if m.QueryEventsReturn == nil {
+		ch := make(chan *nostr.Event, len(m.QuerySyncReturn))
+		for _, event := range m.QuerySyncReturn {
+			ch <- event
+		}
+		close(ch)
+		return ch, nil
+	}
+
+	return m.QueryEventsReturn, nil
 }
 
 func (m *MockRelay) Publish(ctx context.Context, event nostr.Event) error {
@@ -268,11 +290,11 @@ func TestSyncWindow_Success(t *testing.T) {
 	}
 
 	// Verify source relay was queried with correct filter
-	if len(sourceRelay.QuerySyncCalls) != 1 {
-		t.Fatalf("expected 1 QuerySync call, got %d", len(sourceRelay.QuerySyncCalls))
+	if len(sourceRelay.QueryEventsCalls) != 1 {
+		t.Fatalf("expected 1 QueryEvents call, got %d", len(sourceRelay.QueryEventsCalls))
 	}
 
-	filter := sourceRelay.QuerySyncCalls[0]
+	filter := sourceRelay.QueryEventsCalls[0]
 	if filter.Since == nil || filter.Since.Time() != window.From {
 		t.Errorf("expected filter.Since to be %v, got %v", window.From, filter.Since)
 	}
@@ -308,7 +330,7 @@ func TestSyncWindow_QueryError(t *testing.T) {
 	logger := createTestLogger()
 
 	sourceRelay := &MockRelay{
-		QuerySyncError: errors.New("query failed"),
+		QueryEventsError: errors.New("query failed"),
 	}
 	deepfryRelay := &MockRelay{}
 
@@ -323,7 +345,7 @@ func TestSyncWindow_QueryError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !errors.Is(err, sourceRelay.QuerySyncError) {
+	if !errors.Is(err, sourceRelay.QueryEventsError) {
 		t.Errorf("expected error to wrap query error, got %v", err)
 	}
 }
@@ -411,6 +433,12 @@ type ConditionalErrorRelay struct {
 
 func (r *ConditionalErrorRelay) QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error) {
 	return []*nostr.Event{}, nil
+}
+
+func (r *ConditionalErrorRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
+	ch := make(chan *nostr.Event)
+	close(ch) // Return empty channel
+	return ch, nil
 }
 
 func (r *ConditionalErrorRelay) Publish(ctx context.Context, event nostr.Event) error {
@@ -523,8 +551,8 @@ func TestSyncLoop_SyncWindowError(t *testing.T) {
 	}
 
 	// Should have attempted to query despite errors
-	if len(sourceRelay.QuerySyncCalls) == 0 {
-		t.Error("expected at least one QuerySync call")
+	if len(sourceRelay.QueryEventsCalls) == 0 {
+		t.Error("expected at least one QueryEvents call")
 	}
 }
 
@@ -773,11 +801,11 @@ func TestSyncWindow_TimestampConversion(t *testing.T) {
 	}
 
 	// Verify the filter had correct timestamps
-	if len(sourceRelay.QuerySyncCalls) != 1 {
-		t.Fatalf("expected 1 QuerySync call, got %d", len(sourceRelay.QuerySyncCalls))
+	if len(sourceRelay.QueryEventsCalls) != 1 {
+		t.Fatalf("expected 1 QueryEvents call, got %d", len(sourceRelay.QueryEventsCalls))
 	}
 
-	filter := sourceRelay.QuerySyncCalls[0]
+	filter := sourceRelay.QueryEventsCalls[0]
 	if filter.Since == nil || filter.Since.Time().Unix() != window.From.Unix() {
 		t.Errorf("expected filter.Since %v, got %v", window.From.Unix(), filter.Since.Time().Unix())
 	}
@@ -1072,11 +1100,11 @@ func TestSyncWindow_MaxBatchLimit(t *testing.T) {
 	}
 
 	// Verify filter had correct limit
-	if len(sourceRelay.QuerySyncCalls) != 1 {
-		t.Fatalf("expected 1 QuerySync call, got %d", len(sourceRelay.QuerySyncCalls))
+	if len(sourceRelay.QueryEventsCalls) != 1 {
+		t.Fatalf("expected 1 QueryEvents call, got %d", len(sourceRelay.QueryEventsCalls))
 	}
 
-	filter := sourceRelay.QuerySyncCalls[0]
+	filter := sourceRelay.QueryEventsCalls[0]
 	if filter.Limit != cfg.Sync.MaxBatch {
 		t.Errorf("expected filter limit %d, got %d", cfg.Sync.MaxBatch, filter.Limit)
 	}
@@ -1111,7 +1139,7 @@ func TestSyncWindow_ContextCancellation(t *testing.T) {
 	logger := createTestLogger()
 
 	sourceRelay := &MockRelay{
-		QuerySyncError: context.Canceled,
+		QueryEventsError: context.Canceled,
 	}
 	deepfryRelay := &MockRelay{}
 

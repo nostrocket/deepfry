@@ -30,6 +30,18 @@ func (m *MockRelay) QuerySync(ctx context.Context, filter nostr.Filter) ([]*nost
 	return m.QuerySyncReturn, m.QuerySyncError
 }
 
+func (m *MockRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
+	if m.QuerySyncError != nil {
+		return nil, m.QuerySyncError
+	}
+	ch := make(chan *nostr.Event, len(m.QuerySyncReturn))
+	for _, event := range m.QuerySyncReturn {
+		ch <- event
+	}
+	close(ch)
+	return ch, nil
+}
+
 func (m *MockRelay) Publish(ctx context.Context, event nostr.Event) error {
 	return m.PublishError
 }
