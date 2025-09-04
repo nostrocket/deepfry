@@ -5,7 +5,7 @@ import (
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/forwarder"
 	"event-forwarder/pkg/telemetry"
-	"event-forwarder/pkg/utils" // Add this import
+	"event-forwarder/pkg/utils"
 	"event-forwarder/pkg/version"
 	"fmt"
 	"io"
