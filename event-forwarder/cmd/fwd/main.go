@@ -7,6 +7,7 @@ import (
 	"event-forwarder/pkg/telemetry"
 	"event-forwarder/pkg/version"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -33,16 +35,17 @@ func main() {
 	}
 
 	if cfg == nil {
-		fmt.Fprintf(os.Stderr, "Configuration is nil\n")
-		os.Exit(1)
+		// Help was shown, exit gracefully
+		os.Exit(0)
 	}
 
 	// Create telemetry system
 	telemetryConfig := telemetry.DefaultConfig()
 	aggregator := telemetry.NewAggregator(telemetry.RealClock{}, telemetryConfig)
 
-	// Create logger that doesn't interfere with TUI
-	logger := log.New(os.Stderr, "", 0)
+	// Create a silent logger to avoid interfering with TUI
+	// All logging is handled through telemetry instead
+	logger := log.New(io.Discard, "", 0)
 
 	// Create forwarder with telemetry
 	fwd := forwarder.New(cfg, logger, aggregator)
@@ -58,8 +61,10 @@ func main() {
 	// Start TUI
 	tui := NewTUI(aggregator, cfg)
 
-	// Start forwarder in background
+	// Start forwarder in background after TUI is set up
 	go func() {
+		// Small delay to let TUI initialize completely
+		time.Sleep(100 * time.Millisecond)
 		if err := fwd.Start(ctx); err != nil && err != context.Canceled {
 			tui.SetError(fmt.Sprintf("Forwarder error: %v", err))
 		}
@@ -88,6 +93,10 @@ type TUI struct {
 
 	// State
 	lastError string
+	ready     bool
+
+	// Control channels
+	done chan struct{}
 }
 
 // NewTUI creates a new terminal user interface
@@ -96,6 +105,7 @@ func NewTUI(telemetryReader telemetry.TelemetryReader, cfg *config.Config) *TUI 
 		app:       tview.NewApplication(),
 		telemetry: telemetryReader,
 		config:    cfg,
+		done:      make(chan struct{}),
 	}
 
 	tui.setupUI()
@@ -120,7 +130,8 @@ func (t *TUI) setupUI() {
 
 	t.errorsList = tview.NewTextView().
 		SetDynamicColors(true).
-		SetScrollable(true)
+		SetScrollable(false). // Disable scrolling to prevent bouncing
+		SetWrap(false)        // Disable text wrapping
 	t.errorsList.SetBorder(true).SetTitle(" Recent Errors ")
 
 	t.currentWindow = tview.NewTextView().
@@ -157,22 +168,32 @@ func (t *TUI) setupUI() {
 
 	t.app.SetRoot(main, true)
 
-	// Start update ticker
+	// Mark as ready and start update ticker
+	t.ready = true
 	go t.updateLoop()
 }
 
 func (t *TUI) updateLoop() {
-	ticker := time.NewTicker(200 * time.Millisecond) // 5 FPS
+	ticker := time.NewTicker(1000 * time.Millisecond) // Slower: 1 FPS
 	defer ticker.Stop()
 
-	for range ticker.C {
-		t.app.QueueUpdateDraw(func() {
-			t.updateDisplay()
-		})
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-ticker.C:
+			// Only update if the app is ready and still running
+			if t.ready && t.app != nil {
+				t.app.QueueUpdateDraw(func() {
+					t.updateDisplay()
+				})
+			}
+		}
 	}
 }
 
 func (t *TUI) updateDisplay() {
+	// Get snapshot once to avoid multiple calls during update
 	snapshot := t.telemetry.Snapshot()
 
 	// Update status
@@ -181,8 +202,18 @@ func (t *TUI) updateDisplay() {
 		status = "[red]● ERROR"
 	}
 	uptime := time.Duration(snapshot.UptimeSeconds * float64(time.Second))
-	t.statusText.SetText(fmt.Sprintf("%s\nUptime: %v\nLast Event: %.1fs ago",
-		status, uptime.Truncate(time.Second), time.Now().Sub(time.Unix(snapshot.SyncWindowTo, 0)).Seconds()))
+
+	// Handle case where SyncWindowTo might be 0
+	var lastEventText string
+	if snapshot.SyncWindowTo > 0 {
+		lastEventTime := time.Unix(snapshot.SyncWindowTo, 0)
+		lastEventText = fmt.Sprintf("%.1fs ago", time.Since(lastEventTime).Seconds())
+	} else {
+		lastEventText = "Never"
+	}
+
+	t.statusText.SetText(fmt.Sprintf("%s\nUptime: %v\nLast Event: %s",
+		status, uptime.Truncate(time.Second), lastEventText))
 
 	// Update current window
 	if snapshot.SyncWindowFrom > 0 && snapshot.SyncWindowTo > 0 {
@@ -244,8 +275,9 @@ func (t *TUI) updateDisplay() {
 
 	// Update recent errors
 	errorText := ""
+	maxErrors := 8 // Reduce to prevent scrolling
 	for i, err := range snapshot.RecentErrors {
-		if i >= 10 { // Show last 10 errors
+		if i >= maxErrors {
 			break
 		}
 		errorText += fmt.Sprintf("[yellow]• [white]%s\n", err)
@@ -253,7 +285,11 @@ func (t *TUI) updateDisplay() {
 	if errorText == "" {
 		errorText = "[green]No recent errors"
 	}
-	t.errorsList.SetText(errorText)
+
+	// Only update if text has changed to reduce flicker
+	if t.errorsList.GetText(false) != errorText {
+		t.errorsList.SetText(errorText)
+	}
 
 	// Set error if we have one
 	if t.lastError != "" {
@@ -266,6 +302,26 @@ func (t *TUI) SetError(err string) {
 }
 
 func (t *TUI) Run() error {
+	// Set up input capture first, before starting the app
+	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyCtrlC:
+			t.app.Stop()
+			return nil
+		case tcell.KeyEscape:
+			t.app.Stop()
+			return nil
+		default:
+			// Consume all other input to prevent it from being printed
+			return nil
+		}
+	})
+
+	// Ensure we properly close the done channel
+	defer func() {
+		close(t.done)
+	}()
+
 	return t.app.Run()
 }
 
