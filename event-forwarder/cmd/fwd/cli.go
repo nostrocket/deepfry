@@ -66,7 +66,7 @@ func (c *CLI) Stop() {
 // printStatus prints current telemetry status
 func (c *CLI) printStatus() {
 	snapshot := c.telemetry.Snapshot()
-	
+
 	// Only print if there are changes or significant activity
 	if c.shouldPrintStatus(snapshot) {
 		c.logger.Printf("Status - Events: received=%d, forwarded=%d, rate=%.1f/s, errors=%d",
@@ -74,12 +74,12 @@ func (c *CLI) printStatus() {
 			snapshot.EventsForwarded,
 			snapshot.EventsPerSecond,
 			snapshot.ErrorsTotal)
-		
+
 		// Print connection status
 		c.logger.Printf("Connections - Source: %t, DeepFry: %t",
 			snapshot.SourceRelayConnected,
 			snapshot.DeepFryRelayConnected)
-		
+
 		// Print sync info if available
 		if snapshot.SyncWindowFrom > 0 {
 			c.logger.Printf("Sync window: %d to %d, lag: %.1fs, mode: %s",
@@ -89,7 +89,7 @@ func (c *CLI) printStatus() {
 				snapshot.CurrentSyncMode)
 		}
 	}
-	
+
 	c.lastSnapshot = snapshot
 }
 
@@ -99,23 +99,23 @@ func (c *CLI) shouldPrintStatus(snapshot telemetry.Snapshot) bool {
 	if c.lastSnapshot.EventsReceived == 0 && c.lastSnapshot.EventsForwarded == 0 {
 		return true
 	}
-	
+
 	// Print if event counts changed
 	if snapshot.EventsReceived != c.lastSnapshot.EventsReceived ||
 		snapshot.EventsForwarded != c.lastSnapshot.EventsForwarded {
 		return true
 	}
-	
+
 	// Print if there are errors
 	if snapshot.ErrorsTotal > c.lastSnapshot.ErrorsTotal {
 		return true
 	}
-	
+
 	// Print if connection status changed
 	if snapshot.SourceRelayConnected != c.lastSnapshot.SourceRelayConnected ||
 		snapshot.DeepFryRelayConnected != c.lastSnapshot.DeepFryRelayConnected {
 		return true
 	}
-	
+
 	return false
 }
