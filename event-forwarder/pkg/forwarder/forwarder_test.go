@@ -13,6 +13,7 @@ import (
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/crypto"
 	"event-forwarder/pkg/nsync"
+	"event-forwarder/pkg/telemetry"
 	"event-forwarder/pkg/testutil"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -78,11 +79,15 @@ func createTestLogger() *log.Logger {
 	return log.New(os.Stdout, "[TEST] ", log.LstdFlags)
 }
 
+func createNoopTelemetry() telemetry.TelemetryPublisher {
+	return telemetry.NewNoopPublisher()
+}
+
 func TestNew(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	forwarder := New(cfg, logger)
+	forwarder := New(cfg, logger, createNoopTelemetry())
 
 	if forwarder.cfg != cfg {
 		t.Errorf("expected cfg to be %v, got %v", cfg, forwarder.cfg)
@@ -107,7 +112,7 @@ func TestNewWithRelays(t *testing.T) {
 	sourceRelay := &MockRelay{}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	if forwarder.cfg != cfg {
 		t.Errorf("expected cfg to be %v, got %v", cfg, forwarder.cfg)
@@ -132,7 +137,7 @@ func TestCloseRelays(t *testing.T) {
 	sourceRelay := &MockRelay{}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 	forwarder.closeRelays()
 
 	if !sourceRelay.CloseCalled {
@@ -147,7 +152,7 @@ func TestCloseRelays_NilRelays(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	forwarder := New(cfg, logger)
+	forwarder := New(cfg, logger, createNoopTelemetry())
 	// Should not panic when relays are nil
 	forwarder.closeRelays()
 }
@@ -159,7 +164,7 @@ func TestGetOrCreateWindow_NoLastWindow(t *testing.T) {
 		QuerySyncReturn: []*nostr.Event{}, // No existing sync events
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -199,7 +204,7 @@ func TestGetOrCreateWindow_WithLastWindow(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -227,7 +232,7 @@ func TestGetOrCreateWindow_QueryError(t *testing.T) {
 		QuerySyncError: errors.New("query failed"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	_, err := forwarder.getOrCreateWindow(context.Background())
 	if err == nil {
@@ -250,7 +255,7 @@ func TestSyncWindow_Success(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -307,7 +312,7 @@ func TestSyncWindow_QueryError(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -338,7 +343,7 @@ func TestSyncWindow_PublishError(t *testing.T) {
 		PublishError: errors.New("publish failed"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -378,7 +383,7 @@ func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
 		EventPublishError: errors.New("event publish failed"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -427,7 +432,7 @@ func TestSyncLoop_ContextCancellation(t *testing.T) {
 	sourceRelay := &MockRelay{}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	startWindow := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -458,7 +463,7 @@ func TestSyncLoop_WindowProgression(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Create a window that's already past (should sync immediately)
 	pastTime := time.Now().UTC().Add(-10 * time.Second)
@@ -496,7 +501,7 @@ func TestSyncLoop_SyncWindowError(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Create a window that's already past (should sync immediately)
 	pastTime := time.Now().UTC().Add(-10 * time.Second)
@@ -528,7 +533,7 @@ func TestConnectRelays_SourceRelayError(t *testing.T) {
 	cfg.SourceRelayURL = "invalid://url"
 	logger := createTestLogger()
 
-	forwarder := New(cfg, logger)
+	forwarder := New(cfg, logger, createNoopTelemetry())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -547,7 +552,7 @@ func TestConnectRelays_DeepfryRelayError(t *testing.T) {
 	cfg.DeepFryRelayURL = "invalid://url"
 	logger := createTestLogger()
 
-	forwarder := New(cfg, logger)
+	forwarder := New(cfg, logger, createNoopTelemetry())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -569,7 +574,7 @@ func TestStart_GetWindowError(t *testing.T) {
 		QuerySyncError: errors.New("failed to get window"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// For NewWithRelays, Start still calls connectRelays which will fail
 	// So we test getOrCreateWindow directly instead
@@ -601,7 +606,7 @@ func TestGetOrCreateWindow_NextWindow(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -635,7 +640,7 @@ func TestSyncWindow_LargeEventBatch(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -663,7 +668,7 @@ func TestSyncWindow_NilEvent(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -695,7 +700,7 @@ func TestSyncLoop_CurrentTimeWindow(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Create a window that's current (should wait)
 	now := time.Now().UTC()
@@ -732,7 +737,7 @@ func TestCloseRelays_PartialFailure(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{} // This one succeeds
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Should call both Close methods despite first failure
 	forwarder.closeRelays()
@@ -754,7 +759,7 @@ func TestSyncWindow_TimestampConversion(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Use specific timestamps to verify conversion
 	window := nsync.Window{
@@ -811,7 +816,7 @@ func TestSyncWindow_CompleteFlow(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -879,7 +884,7 @@ func TestStart_WithMockRelays(t *testing.T) {
 	logger := createTestLogger()
 
 	// Use New() instead of NewWithRelays so it will try to connect
-	forwarder := New(cfg, logger)
+	forwarder := New(cfg, logger, createNoopTelemetry())
 
 	// Create a context that cancels quickly to prevent actual connection attempts
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -906,7 +911,7 @@ func TestStart_SuccessfulSync(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Mock the syncLoop by calling getOrCreateWindow directly
 	window, err := forwarder.getOrCreateWindow(context.Background())
@@ -940,7 +945,7 @@ func TestGetOrCreateWindow_InvalidSyncEvent(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// Should return error when sync event has invalid timestamps
 	_, err := forwarder.getOrCreateWindow(context.Background())
@@ -968,7 +973,7 @@ func TestGetOrCreateWindow_MissingSyncEventTags(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// Should return error when sync event has missing tags
 	_, err := forwarder.getOrCreateWindow(context.Background())
@@ -987,7 +992,7 @@ func TestGetOrCreateWindow_EmptyResponse(t *testing.T) {
 		QuerySyncReturn: []*nostr.Event{}, // No sync events
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -1016,7 +1021,7 @@ func TestSyncWindow_EmptyEvents(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -1054,7 +1059,7 @@ func TestSyncWindow_MaxBatchLimit(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -1088,7 +1093,7 @@ func TestCloseRelays_WithErrors(t *testing.T) {
 		CloseError: errors.New("deepfry close failed"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	// Should not panic even if Close returns errors
 	forwarder.closeRelays()
@@ -1110,7 +1115,7 @@ func TestSyncWindow_ContextCancellation(t *testing.T) {
 	}
 	deepfryRelay := &MockRelay{}
 
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay)
+	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),

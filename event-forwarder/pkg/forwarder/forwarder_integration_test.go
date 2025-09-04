@@ -8,6 +8,7 @@ import (
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/crypto"
 	"event-forwarder/pkg/nsync"
+	"event-forwarder/pkg/telemetry"
 	"event-forwarder/pkg/testutil"
 	"log"
 	"os"
@@ -70,7 +71,7 @@ func TestForwarderRealRelayIntegration(t *testing.T) {
 		logger := createIntegrationTestLogger()
 
 		// Create forwarder (will connect to real relays)
-		forwarder := New(cfg, logger)
+		forwarder := New(cfg, logger, telemetry.NewNoopPublisher())
 
 		// Create a context with timeout for the entire test
 		ctx, cancel := context.WithTimeout(context.Background(), testDuration)
@@ -144,7 +145,7 @@ func TestForwarderRealRelayIntegration(t *testing.T) {
 		logger := createIntegrationTestLogger()
 
 		// Create forwarder with real relays
-		forwarder := New(cfg, logger)
+		forwarder := New(cfg, logger, telemetry.NewNoopPublisher())
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
