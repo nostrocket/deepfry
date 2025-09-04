@@ -8,9 +8,9 @@ type Snapshot struct {
 	EventsForwardedByKind map[int]uint64
 
 	// Sync state
-	SyncLagSeconds float64
-	SyncWindowFrom int64
-	SyncWindowTo   int64
+	SyncLagSeconds  float64
+	SyncWindowFrom  int64
+	SyncWindowTo    int64
 	CurrentSyncMode string
 
 	// Connection status

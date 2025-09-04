@@ -253,7 +253,7 @@ func (t *TUI) updateDisplay() {
 	if snapshot.SyncWindowFrom > 0 && snapshot.SyncWindowTo > 0 {
 		from := time.Unix(snapshot.SyncWindowFrom, 0).Format("15:04:05")
 		to := time.Unix(snapshot.SyncWindowTo, 0).Format("15:04:05")
-		
+
 		// Format sync mode with color
 		var modeText string
 		switch snapshot.CurrentSyncMode {
@@ -264,7 +264,7 @@ func (t *TUI) updateDisplay() {
 		default:
 			modeText = "[gray]UNKNOWN[white]"
 		}
-		
+
 		t.currentWindow.SetText(fmt.Sprintf("Mode: %s\nFrom: %s\nTo: %s\nLag: %.1fs",
 			modeText, from, to, snapshot.SyncLagSeconds))
 	}
