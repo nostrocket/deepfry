@@ -211,6 +211,6 @@ func GetKindName(kind int) string {
 	case kind >= 39000 && kind <= 39009: // Interpreted from "39000-9"
 		return "Group metadata events"
 	default:
-		return fmt.Sprintf("Kind (%d)", kind)
+		return fmt.Sprintf("Kind %d", kind)
 	}
 }

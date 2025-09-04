@@ -26,8 +26,8 @@ func TestGetKindName(t *testing.T) {
 		input    int
 		expected string
 	}{
-		{0, "Metadata"},
-		{1, "Text Note"},
+		{0, "User Metadata"},
+		{1, "Short Text Note"},
 		{999, "Kind 999"},
 	}
 
