@@ -16,6 +16,7 @@ func parseCLIFlags() (*FlagSource, bool) {
 	syncWindowSeconds := flag.Int(FlagSyncWindowSeconds, 0, HelpSyncWindowSeconds)
 	syncMaxBatch := flag.Int(FlagSyncMaxBatch, 0, HelpSyncMaxBatch)
 	syncMaxCatchupLagSeconds := flag.Int(FlagSyncMaxCatchupLagSeconds, 0, HelpSyncMaxCatchupLagSeconds)
+	syncStartTime := flag.String(FlagSyncStartTime, "", HelpSyncStartTime)
 	networkInitialBackoffSeconds := flag.Int(FlagNetworkInitialBackoffSeconds, 0, HelpNetworkInitialBackoffSeconds)
 	networkMaxBackoffSeconds := flag.Int(FlagNetworkMaxBackoffSeconds, 0, HelpNetworkMaxBackoffSeconds)
 	networkBackoffJitter := flag.Float64(FlagNetworkBackoffJitter, 0, HelpNetworkBackoffJitter)
@@ -47,6 +48,9 @@ func parseCLIFlags() (*FlagSource, bool) {
 	}
 	if *syncMaxCatchupLagSeconds != 0 {
 		flagSource.Set(KeySyncMaxCatchupLagSeconds, *syncMaxCatchupLagSeconds)
+	}
+	if *syncStartTime != "" {
+		flagSource.Set(KeySyncStartTime, *syncStartTime)
 	}
 	if *networkInitialBackoffSeconds != 0 {
 		flagSource.Set(KeyNetworkInitialBackoffSeconds, *networkInitialBackoffSeconds)
@@ -81,6 +85,7 @@ func printUsage() {
 	fmt.Printf("  --%s int            %s (default: %d)\n", FlagSyncWindowSeconds, HelpSyncWindowSeconds, DefaultSyncWindowSeconds)
 	fmt.Printf("  --%s int                 %s (default: %d)\n", FlagSyncMaxBatch, HelpSyncMaxBatch, DefaultSyncMaxBatch)
 	fmt.Printf("  --%s int   %s (default: %d)\n", FlagSyncMaxCatchupLagSeconds, HelpSyncMaxCatchupLagSeconds, DefaultSyncMaxCatchupLagSeconds)
+	fmt.Printf("  --%s string                %s\n", FlagSyncStartTime, HelpSyncStartTime)
 	fmt.Printf("  --%s int %s (default: %d)\n", FlagNetworkInitialBackoffSeconds, HelpNetworkInitialBackoffSeconds, DefaultNetworkInitialBackoffSeconds)
 	fmt.Printf("  --%s int   %s (default: %d)\n", FlagNetworkMaxBackoffSeconds, HelpNetworkMaxBackoffSeconds, DefaultNetworkMaxBackoffSeconds)
 	fmt.Printf("  --%s float      %s (default: %.1f)\n", FlagNetworkBackoffJitter, HelpNetworkBackoffJitter, DefaultNetworkBackoffJitter)
@@ -95,6 +100,7 @@ func printUsage() {
 	fmt.Printf("  %-36s %s\n", KeySyncWindowSeconds, EnvDescSyncWindowSeconds)
 	fmt.Printf("  %-36s %s\n", KeySyncMaxBatch, EnvDescSyncMaxBatch)
 	fmt.Printf("  %-36s %s\n", KeySyncMaxCatchupLagSeconds, EnvDescSyncMaxCatchupLagSeconds)
+	fmt.Printf("  %-36s %s\n", KeySyncStartTime, EnvDescSyncStartTime)
 	fmt.Printf("  %-36s %s\n", KeyNetworkInitialBackoffSeconds, EnvDescNetworkInitialBackoffSeconds)
 	fmt.Printf("  %-36s %s\n", KeyNetworkMaxBackoffSeconds, EnvDescNetworkMaxBackoffSeconds)
 	fmt.Printf("  %-36s %s\n", KeyNetworkBackoffJitter, EnvDescNetworkBackoffJitter)

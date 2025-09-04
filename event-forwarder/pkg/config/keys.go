@@ -14,6 +14,7 @@ const (
 	KeySyncWindowSeconds        = "SYNC_WINDOW_SECONDS"
 	KeySyncMaxBatch             = "SYNC_MAX_BATCH"
 	KeySyncMaxCatchupLagSeconds = "SYNC_MAX_CATCHUP_LAG_SECONDS"
+	KeySyncStartTime            = "SYNC_START_TIME"
 
 	// Network configuration keys
 	KeyNetworkInitialBackoffSeconds = "NETWORK_INITIAL_BACKOFF_SECONDS"
@@ -31,6 +32,7 @@ const (
 	DefaultSyncWindowSeconds        = 5
 	DefaultSyncMaxBatch             = 1000
 	DefaultSyncMaxCatchupLagSeconds = 10
+	DefaultSyncStartTime            = "" // Empty means start from recent
 
 	// Network defaults
 	DefaultNetworkInitialBackoffSeconds = 1
@@ -51,6 +53,7 @@ const (
 	FlagSyncWindowSeconds            = "sync-window-seconds"
 	FlagSyncMaxBatch                 = "sync-max-batch"
 	FlagSyncMaxCatchupLagSeconds     = "sync-max-catchup-lag-seconds"
+	FlagSyncStartTime                = "sync-start-time"
 	FlagNetworkInitialBackoffSeconds = "network-initial-backoff-seconds"
 	FlagNetworkMaxBackoffSeconds     = "network-max-backoff-seconds"
 	FlagNetworkBackoffJitter         = "network-backoff-jitter"
@@ -72,6 +75,7 @@ const (
 	HelpSyncWindowSeconds            = "Sync window in seconds"
 	HelpSyncMaxBatch                 = "Max sync batch size"
 	HelpSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"
+	HelpSyncStartTime                = "Sync start time (RFC3339 format, e.g., 2020-01-01T00:00:00Z)"
 	HelpNetworkInitialBackoffSeconds = "Initial backoff in seconds"
 	HelpNetworkMaxBackoffSeconds     = "Max backoff in seconds"
 	HelpNetworkBackoffJitter         = "Backoff jitter"
@@ -86,6 +90,7 @@ const (
 	EnvDescSyncWindowSeconds            = "Sync window in seconds"
 	EnvDescSyncMaxBatch                 = "Max sync batch size"
 	EnvDescSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"
+	EnvDescSyncStartTime                = "Sync start time (RFC3339 format)"
 	EnvDescNetworkInitialBackoffSeconds = "Initial backoff in seconds"
 	EnvDescNetworkMaxBackoffSeconds     = "Max backoff in seconds"
 	EnvDescNetworkBackoffJitter         = "Backoff jitter"

@@ -90,10 +90,15 @@ type TUI struct {
 	kindTable     *tview.Table
 	errorsList    *tview.TextView
 	currentWindow *tview.TextView
+	progressBar   *tview.TextView
+	timelineView  *tview.TextView
 
 	// State
-	lastError string
-	ready     bool
+	lastError        string
+	ready            bool
+	syncStartTime    time.Time // Configured sync start time
+	syncStartTimeSet bool      // Whether start time has been determined
+	targetEndTime    time.Time // Current time (target end)
 
 	// Control channels
 	done chan struct{}
@@ -107,6 +112,14 @@ func NewTUI(telemetryReader telemetry.TelemetryReader, cfg *config.Config) *TUI 
 		config:    cfg,
 		done:      make(chan struct{}),
 	}
+
+	// Parse sync start time if configured
+	if startTime, err := cfg.Sync.GetStartTime(); err == nil && !startTime.IsZero() {
+		tui.syncStartTime = startTime
+		tui.syncStartTimeSet = true
+	}
+	// If no start time configured, we'll set it dynamically from first SyncWindowFrom
+	tui.targetEndTime = time.Now()
 
 	tui.setupUI()
 	return tui
@@ -138,10 +151,27 @@ func (t *TUI) setupUI() {
 		SetDynamicColors(true)
 	t.currentWindow.SetBorder(true).SetTitle(" Current Window ")
 
-	// Setup layout
+	// Create progress bar for sync timeline
+	t.progressBar = tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter)
+	t.progressBar.SetBorder(true).SetTitle(" Sync Progress ")
+
+	// Create timeline view showing key dates
+	t.timelineView = tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter)
+	t.timelineView.SetBorder(true).SetTitle(" Timeline ")
+
+	// Setup layout with new progress components
 	topRow := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(t.statusText, 0, 1, false).
 		AddItem(t.currentWindow, 0, 1, false)
+
+	// Add progress row
+	progressRow := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(t.progressBar, 0, 2, false).
+		AddItem(t.timelineView, 0, 1, false)
 
 	middleRow := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(t.relayTable, 0, 1, false).
@@ -153,6 +183,7 @@ func (t *TUI) setupUI() {
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(topRow, 5, 0, false).
+		AddItem(progressRow, 4, 0, false).
 		AddItem(middleRow, 8, 0, false).
 		AddItem(bottomRow, 0, 1, false)
 
@@ -196,6 +227,9 @@ func (t *TUI) updateDisplay() {
 	// Get snapshot once to avoid multiple calls during update
 	snapshot := t.telemetry.Snapshot()
 
+	// Update target end time to current time
+	t.targetEndTime = time.Now()
+
 	// Update status
 	status := "[green]● RUNNING"
 	if t.lastError != "" {
@@ -223,19 +257,22 @@ func (t *TUI) updateDisplay() {
 			from, to, snapshot.SyncLagSeconds))
 	}
 
+	// Update progress bar and timeline
+	t.updateProgressDisplay(snapshot)
+
 	// Update relay status
 	t.relayTable.Clear()
 	t.relayTable.SetCell(0, 0, tview.NewTableCell("Source:").SetTextColor(tview.Styles.SecondaryTextColor))
-	sourceStatus := "[red]●DISC"
+	sourceStatus := "[red]● DISC"
 	if snapshot.SourceRelayConnected {
-		sourceStatus = "[green]●CONN"
+		sourceStatus = "[green]● CONN"
 	}
 	t.relayTable.SetCell(0, 1, tview.NewTableCell(sourceStatus))
 
 	t.relayTable.SetCell(1, 0, tview.NewTableCell("DeepFry:").SetTextColor(tview.Styles.SecondaryTextColor))
-	deepfryStatus := "[red]●DISC"
+	deepfryStatus := "[red]● DISC"
 	if snapshot.DeepFryRelayConnected {
-		deepfryStatus = "[green]●CONN"
+		deepfryStatus = "[green]● CONN"
 	}
 	t.relayTable.SetCell(1, 1, tview.NewTableCell(deepfryStatus))
 
@@ -295,6 +332,90 @@ func (t *TUI) updateDisplay() {
 	if t.lastError != "" {
 		t.statusText.SetText(fmt.Sprintf("[red]● ERROR\n%s", t.lastError))
 	}
+}
+
+func (t *TUI) updateProgressDisplay(snapshot telemetry.Snapshot) {
+	// Set start time from first SyncWindowFrom if not already configured
+	if !t.syncStartTimeSet && snapshot.SyncWindowFrom > 0 {
+		t.syncStartTime = time.Unix(snapshot.SyncWindowFrom, 0)
+		t.syncStartTimeSet = true
+	}
+
+	// Calculate progress based on sync timeline
+	totalDuration := t.targetEndTime.Sub(t.syncStartTime)
+
+	var currentPosition time.Time
+	var progressPercent float64
+
+	if snapshot.SyncWindowTo > 0 {
+		currentPosition = time.Unix(snapshot.SyncWindowTo, 0)
+		if t.syncStartTimeSet {
+			elapsed := currentPosition.Sub(t.syncStartTime)
+			if totalDuration > 0 {
+				progressPercent = float64(elapsed) / float64(totalDuration) * 100
+				if progressPercent > 100 {
+					progressPercent = 100
+				}
+			}
+		}
+	}
+
+	// Create visual progress bar
+	barWidth := 50
+	filledWidth := int(float64(barWidth) * progressPercent / 100)
+	if filledWidth > barWidth {
+		filledWidth = barWidth
+	}
+
+	progressBar := ""
+	for i := 0; i < barWidth; i++ {
+		if i < filledWidth {
+			progressBar += "█"
+		} else {
+			progressBar += "░"
+		}
+	}
+
+	// Color the progress bar based on status
+	progressColor := "green"
+	if progressPercent < 10 {
+		progressColor = "red"
+	} else if progressPercent < 50 {
+		progressColor = "yellow"
+	}
+
+	progressText := fmt.Sprintf("[%s]%s[white] %.1f%%\n", progressColor, progressBar, progressPercent)
+
+	// Add current sync position info
+	if !currentPosition.IsZero() {
+		progressText += fmt.Sprintf("Position: %s\n", currentPosition.Format("2006-01-02 15:04:05"))
+		remaining := t.targetEndTime.Sub(currentPosition)
+		if remaining > 0 {
+			progressText += fmt.Sprintf("Remaining: %v", remaining.Truncate(time.Second))
+		} else {
+			progressText += "[green]✓ Caught up!"
+		}
+	} else {
+		progressText += "Waiting for sync to start..."
+	}
+
+	t.progressBar.SetText(progressText)
+
+	// Update timeline view
+	var timelineText string
+	if t.syncStartTimeSet {
+		timelineText = fmt.Sprintf("Start: %s\n", t.syncStartTime.Format("2006-01-02 15:04"))
+		timelineText += fmt.Sprintf("Target: %s\n", t.targetEndTime.Format("2006-01-02 15:04"))
+
+		if !currentPosition.IsZero() {
+			timelineText += fmt.Sprintf("Current: %s", currentPosition.Format("2006-01-02 15:04"))
+		}
+	} else {
+		timelineText = "Waiting for sync data...\n"
+		timelineText += fmt.Sprintf("Target: %s", t.targetEndTime.Format("2006-01-02 15:04"))
+	}
+
+	t.timelineView.SetText(timelineText)
 }
 
 func (t *TUI) SetError(err string) {

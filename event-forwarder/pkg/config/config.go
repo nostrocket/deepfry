@@ -2,6 +2,7 @@ package config
 
 import (
 	"event-forwarder/pkg/crypto"
+	"time"
 )
 
 type Config struct {
@@ -18,6 +19,7 @@ type SyncConfig struct {
 	WindowSeconds        int
 	MaxBatch             int
 	MaxCatchupLagSeconds int
+	StartTime            string // RFC3339 format
 }
 
 type NetworkConfig struct {
@@ -54,6 +56,7 @@ func Load() (*Config, error) {
 			WindowSeconds:        resolver.ResolveInt(KeySyncWindowSeconds, DefaultSyncWindowSeconds),
 			MaxBatch:             resolver.ResolveInt(KeySyncMaxBatch, DefaultSyncMaxBatch),
 			MaxCatchupLagSeconds: resolver.ResolveInt(KeySyncMaxCatchupLagSeconds, DefaultSyncMaxCatchupLagSeconds),
+			StartTime:            resolver.ResolveString(KeySyncStartTime, DefaultSyncStartTime),
 		},
 		Network: NetworkConfig{
 			InitialBackoffSeconds: resolver.ResolveInt(KeyNetworkInitialBackoffSeconds, DefaultNetworkInitialBackoffSeconds),
@@ -77,4 +80,12 @@ func Load() (*Config, error) {
 	cfg.NostrKeyPair = *keyPair
 
 	return cfg, nil
+}
+
+// GetStartTime returns the parsed start time or zero time if not set
+func (s *SyncConfig) GetStartTime() (time.Time, error) {
+	if s.StartTime == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, s.StartTime)
 }
