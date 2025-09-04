@@ -47,9 +47,9 @@ const (
 // CLI flag name constants
 const (
 	// CLI flag names (kebab-case for command line)
-	FlagSourceRelayURL               = "source-relay-url"
-	FlagDeepFryRelayURL              = "deepfry-relay-url"
-	FlagNostrSecretKey               = "nostr-secret-key"
+	FlagSourceRelayURL               = "source"
+	FlagDeepFryRelayURL              = "deepfry"
+	FlagNostrSecretKey               = "secret-key"
 	FlagSyncWindowSeconds            = "sync-window-seconds"
 	FlagSyncMaxBatch                 = "sync-max-batch"
 	FlagSyncMaxCatchupLagSeconds     = "sync-max-catchup-lag-seconds"

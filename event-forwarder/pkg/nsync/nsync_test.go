@@ -20,42 +20,10 @@ var testKeyPair = crypto.KeyPair{
 	PublicKeyBech32:  testutil.TestPK,
 }
 
-type MockRelay struct {
-	QuerySyncReturn []*nostr.Event
-	QuerySyncError  error
-	PublishError    error
-}
-
-func (m *MockRelay) QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error) {
-	return m.QuerySyncReturn, m.QuerySyncError
-}
-
-func (m *MockRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
-	if m.QuerySyncError != nil {
-		return nil, m.QuerySyncError
-	}
-	ch := make(chan *nostr.Event, len(m.QuerySyncReturn))
-	for _, event := range m.QuerySyncReturn {
-		ch <- event
-	}
-	close(ch)
-	return ch, nil
-}
-
-func (m *MockRelay) Publish(ctx context.Context, event nostr.Event) error {
-	return m.PublishError
-}
-
-func (m *MockRelay) Close() error {
-	return nil
-}
-
-func (m *MockRelay) URL() string {
-	return "mock://relay"
-}
+// Reuse testutil.MockRelay for relay mocking to keep tests DRY
 
 func TestNewSyncTracker(t *testing.T) {
-	mockRelay := &MockRelay{}
+	mockRelay := &testutil.MockRelay{}
 	cfg := &config.Config{
 		SourceRelayURL: "wss://source.relay",
 		NostrSecretKey: testutil.TestSK,
@@ -120,7 +88,7 @@ func TestGetLastWindow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockRelay := &MockRelay{
+			mockRelay := &testutil.MockRelay{
 				QuerySyncReturn: tt.mockEvents,
 				QuerySyncError:  tt.mockError,
 			}
@@ -171,7 +139,7 @@ func TestUpdateWindow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockRelay := &MockRelay{
+			mockRelay := &testutil.MockRelay{
 				PublishError: tt.mockError,
 			}
 
@@ -267,7 +235,7 @@ func TestParseWindow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockRelay := &MockRelay{}
+			mockRelay := &testutil.MockRelay{}
 			cfg := &config.Config{SourceRelayURL: "wss://source.relay"}
 			tracker := NewSyncTracker(mockRelay, cfg)
 

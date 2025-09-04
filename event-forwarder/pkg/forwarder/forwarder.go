@@ -169,6 +169,16 @@ func (f *Forwarder) closeRelays() {
 }
 
 func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error) {
+
+	if f.cfg.Sync.StartTime != "" {
+		startTime, err := time.Parse(time.RFC3339, f.cfg.Sync.StartTime)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start time format: %w", err)
+		}
+		window := nsync.NewWindowFromStart(startTime.UTC(), time.Duration(f.cfg.Sync.WindowSeconds)*time.Second)
+		return &window, nil
+	}
+
 	lastWindow, err := f.syncTracker.GetLastWindow(ctx)
 	if err != nil {
 		return nil, err

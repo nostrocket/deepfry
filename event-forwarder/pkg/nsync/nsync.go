@@ -127,3 +127,10 @@ func NewWindow(duration time.Duration) Window {
 		To:   windowStart.Add(duration),
 	}
 }
+
+func NewWindowFromStart(startTime time.Time, duration time.Duration) Window {
+	return Window{
+		From: startTime.UTC(),
+		To:   startTime.Add(duration).UTC(),
+	}
+}

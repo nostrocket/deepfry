@@ -26,100 +26,7 @@ var testKeyPair = crypto.KeyPair{
 	PublicKeyBech32:  testutil.TestPK,
 }
 
-// MockRelay implements the relay.Relay interface for testing
-type MockRelay struct {
-	QuerySyncReturn   []*nostr.Event
-	QuerySyncError    error
-	QueryEventsReturn chan *nostr.Event
-	QueryEventsError  error
-	SubscribeReturn   *nostr.Subscription
-	SubscribeError    error
-	PublishError      error
-	CloseError        error
-	QuerySyncCalls    []nostr.Filter
-	QueryEventsCalls  []nostr.Filter
-	SubscribeCalls    []nostr.Filters
-	PublishCalls      []nostr.Event
-	CloseCalled       bool
-}
-
-func (m *MockRelay) QuerySync(ctx context.Context, filter nostr.Filter) ([]*nostr.Event, error) {
-	m.QuerySyncCalls = append(m.QuerySyncCalls, filter)
-	return m.QuerySyncReturn, m.QuerySyncError
-}
-
-func (m *MockRelay) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
-	m.QueryEventsCalls = append(m.QueryEventsCalls, filter)
-	if m.QueryEventsError != nil {
-		return nil, m.QueryEventsError
-	}
-
-	// If no specific channel is set, create one from QuerySyncReturn
-	if m.QueryEventsReturn == nil {
-		ch := make(chan *nostr.Event, len(m.QuerySyncReturn))
-		for _, event := range m.QuerySyncReturn {
-			ch <- event
-		}
-		close(ch)
-		return ch, nil
-	}
-
-	return m.QueryEventsReturn, nil
-}
-
-func (m *MockRelay) Subscribe(ctx context.Context, filters nostr.Filters, opts ...nostr.SubscriptionOption) (*nostr.Subscription, error) {
-	m.SubscribeCalls = append(m.SubscribeCalls, filters)
-	if m.SubscribeError != nil {
-		return nil, m.SubscribeError
-	}
-
-	// If no specific subscription is set, create a simple mock one
-	if m.SubscribeReturn == nil {
-		events := make(chan *nostr.Event, len(m.QuerySyncReturn))
-		eose := make(chan struct{}, 1)
-		closed := make(chan string, 1)
-
-		// Create a mock subscription with a dummy relay reference
-		sub := &nostr.Subscription{
-			Events:            events,
-			EndOfStoredEvents: eose,
-			ClosedReason:      closed,
-		}
-
-		// Populate with mock events and signal EOSE in a goroutine
-		go func() {
-			defer close(events)
-
-			for _, event := range m.QuerySyncReturn {
-				select {
-				case events <- event:
-				case <-ctx.Done():
-					return
-				}
-			}
-
-			// Signal end of stored events
-			select {
-			case eose <- struct{}{}:
-			case <-ctx.Done():
-			}
-		}()
-
-		return sub, nil
-	}
-
-	return m.SubscribeReturn, nil
-}
-
-func (m *MockRelay) Publish(ctx context.Context, event nostr.Event) error {
-	m.PublishCalls = append(m.PublishCalls, event)
-	return m.PublishError
-}
-
-func (m *MockRelay) Close() error {
-	m.CloseCalled = true
-	return m.CloseError
-}
+// Use shared testutil.MockRelay for relay mocking to reduce duplication
 
 func createTestConfig() *config.Config {
 	return &config.Config{
@@ -178,8 +85,8 @@ func TestNew(t *testing.T) {
 func TestNewWithRelays(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	sourceRelay := &MockRelay{}
-	deepfryRelay := &MockRelay{}
+	sourceRelay := &testutil.MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -203,8 +110,8 @@ func TestNewWithRelays(t *testing.T) {
 func TestCloseRelays(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	sourceRelay := &MockRelay{}
-	deepfryRelay := &MockRelay{}
+	sourceRelay := &testutil.MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 	forwarder.closeRelays()
@@ -229,11 +136,11 @@ func TestCloseRelays_NilRelays(t *testing.T) {
 func TestGetOrCreateWindow_NoLastWindow(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{}, // No existing sync events
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -261,7 +168,7 @@ func TestGetOrCreateWindow_WithLastWindow(t *testing.T) {
 
 	lastWindowTo := time.Unix(1640998800, 0)
 
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{
 			{
 				Tags: nostr.Tags{
@@ -273,7 +180,7 @@ func TestGetOrCreateWindow_WithLastWindow(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -297,11 +204,11 @@ func TestGetOrCreateWindow_WithLastWindow(t *testing.T) {
 func TestGetOrCreateWindow_QueryError(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncError: errors.New("query failed"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	_, err := forwarder.getOrCreateWindow(context.Background())
 	if err == nil {
@@ -319,10 +226,10 @@ func TestSyncWindow_Success(t *testing.T) {
 		{ID: "event2", Content: "test content 2"},
 	}
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: mockEvents,
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -376,10 +283,10 @@ func TestSyncWindow_QueryError(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QueryEventsError: errors.New("query failed"),
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -405,10 +312,10 @@ func TestSyncWindow_PublishError(t *testing.T) {
 		{ID: "event1", Content: "test content 1"},
 	}
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: mockEvents,
 	}
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		PublishError: errors.New("publish failed"),
 	}
 
@@ -442,7 +349,7 @@ func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
 		{ID: "event1", Content: "test content 1"},
 	}
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: mockEvents,
 	}
 
@@ -525,8 +432,8 @@ func (r *ConditionalErrorRelay) Close() error {
 func TestSyncLoop_ContextCancellation(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	sourceRelay := &MockRelay{}
-	deepfryRelay := &MockRelay{}
+	sourceRelay := &testutil.MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -554,10 +461,10 @@ func TestSyncLoop_WindowProgression(t *testing.T) {
 	cfg.Sync.MaxCatchupLagSeconds = 2 // Allow 2 second lag
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{},
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -592,10 +499,10 @@ func TestSyncLoop_SyncWindowError(t *testing.T) {
 	cfg.Sync.MaxCatchupLagSeconds = 1
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncError: errors.New("query failed"),
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -666,11 +573,11 @@ func TestStart_GetWindowError(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncError: errors.New("failed to get window"),
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// For NewWithRelays, Start still calls connectRelays which will fail
 	// So we test getOrCreateWindow directly instead
@@ -690,7 +597,7 @@ func TestGetOrCreateWindow_NextWindow(t *testing.T) {
 	lastWindowFrom := time.Unix(1640995200, 0)
 	lastWindowTo := time.Unix(1640998800, 0)
 
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{
 			{
 				Tags: nostr.Tags{
@@ -702,7 +609,7 @@ func TestGetOrCreateWindow_NextWindow(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -731,10 +638,10 @@ func TestSyncWindow_LargeEventBatch(t *testing.T) {
 		{ID: "event2", Content: "content2"},
 	}
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: mockEvents,
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -759,10 +666,10 @@ func TestSyncWindow_NilEvent(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{nil}, // Should not cause panic
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -791,10 +698,10 @@ func TestSyncLoop_CurrentTimeWindow(t *testing.T) {
 	cfg.Sync.MaxCatchupLagSeconds = 1
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{},
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -828,10 +735,10 @@ func TestCloseRelays_PartialFailure(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		CloseError: errors.New("source close failed"),
 	}
-	deepfryRelay := &MockRelay{} // This one succeeds
+	deepfryRelay := &testutil.MockRelay{} // This one succeeds
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -850,10 +757,10 @@ func TestSyncWindow_TimestampConversion(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{},
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -907,10 +814,10 @@ func TestSyncWindow_CompleteFlow(t *testing.T) {
 		},
 	}
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: events,
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -1002,10 +909,10 @@ func TestStart_SuccessfulSync(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{}, // No existing sync events
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -1029,7 +936,7 @@ func TestGetOrCreateWindow_InvalidSyncEvent(t *testing.T) {
 	logger := createTestLogger()
 
 	// Return a sync event with invalid tags
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{
 			{
 				Tags: nostr.Tags{
@@ -1041,7 +948,7 @@ func TestGetOrCreateWindow_InvalidSyncEvent(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// Should return error when sync event has invalid timestamps
 	_, err := forwarder.getOrCreateWindow(context.Background())
@@ -1058,7 +965,7 @@ func TestGetOrCreateWindow_MissingSyncEventTags(t *testing.T) {
 	logger := createTestLogger()
 
 	// Return a sync event with missing required tags
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{
 			{
 				Tags: nostr.Tags{
@@ -1069,7 +976,7 @@ func TestGetOrCreateWindow_MissingSyncEventTags(t *testing.T) {
 		},
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	// Should return error when sync event has missing tags
 	_, err := forwarder.getOrCreateWindow(context.Background())
@@ -1084,11 +991,11 @@ func TestGetOrCreateWindow_MissingSyncEventTags(t *testing.T) {
 func TestGetOrCreateWindow_EmptyResponse(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{}, // No sync events
 	}
 
-	forwarder := NewWithRelays(cfg, logger, &MockRelay{}, deepfryRelay, createNoopTelemetry())
+	forwarder := NewWithRelays(cfg, logger, &testutil.MockRelay{}, deepfryRelay, createNoopTelemetry())
 
 	window, err := forwarder.getOrCreateWindow(context.Background())
 	if err != nil {
@@ -1112,10 +1019,10 @@ func TestSyncWindow_EmptyEvents(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{}, // No events to sync
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -1146,14 +1053,14 @@ func TestSyncWindow_MaxBatchLimit(t *testing.T) {
 	cfg.Sync.MaxBatch = 2 // Set small batch size
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: []*nostr.Event{
 			{ID: "event1"},
 			{ID: "event2"},
 			{ID: "event3"}, // This should not be returned due to limit
 		},
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
@@ -1182,10 +1089,10 @@ func TestCloseRelays_WithErrors(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		CloseError: errors.New("source close failed"),
 	}
-	deepfryRelay := &MockRelay{
+	deepfryRelay := &testutil.MockRelay{
 		CloseError: errors.New("deepfry close failed"),
 	}
 
@@ -1206,10 +1113,10 @@ func TestSyncWindow_ContextCancellation(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
-	sourceRelay := &MockRelay{
+	sourceRelay := &testutil.MockRelay{
 		QueryEventsError: context.Canceled,
 	}
-	deepfryRelay := &MockRelay{}
+	deepfryRelay := &testutil.MockRelay{}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
 
