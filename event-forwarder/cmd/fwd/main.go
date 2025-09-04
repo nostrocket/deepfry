@@ -5,13 +5,13 @@ import (
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/forwarder"
 	"event-forwarder/pkg/telemetry"
+	"event-forwarder/pkg/utils" // Add this import
 	"event-forwarder/pkg/version"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -263,16 +263,16 @@ func (t *TUI) updateDisplay() {
 	// Update relay status
 	t.relayTable.Clear()
 	t.relayTable.SetCell(0, 0, tview.NewTableCell("Source:").SetTextColor(tview.Styles.SecondaryTextColor))
-	sourceStatus := "[red]● DISC"
+	sourceStatus := "[red]✘ DISC"
 	if snapshot.SourceRelayConnected {
-		sourceStatus = "[green]● CONN"
+		sourceStatus = "[green]✓ CONNECTED"
 	}
 	t.relayTable.SetCell(0, 1, tview.NewTableCell(sourceStatus))
 
 	t.relayTable.SetCell(1, 0, tview.NewTableCell("DeepFry:").SetTextColor(tview.Styles.SecondaryTextColor))
-	deepfryStatus := "[red]● DISC"
+	deepfryStatus := "[red]✘ DISC"
 	if snapshot.DeepFryRelayConnected {
-		deepfryStatus = "[green]● CONN"
+		deepfryStatus = "[green]✓ CONNECTED"
 	}
 	t.relayTable.SetCell(1, 1, tview.NewTableCell(deepfryStatus))
 
@@ -280,11 +280,11 @@ func (t *TUI) updateDisplay() {
 	t.statsTable.Clear()
 	t.statsTable.SetCell(0, 0, tview.NewTableCell("Received:").SetTextColor(tview.Styles.SecondaryTextColor))
 	t.statsTable.SetCell(0, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)",
-		formatNumber(snapshot.EventsReceived), snapshot.EventsPerSecond)))
+		utils.FormatNumber(snapshot.EventsReceived), snapshot.EventsPerSecond))) // Use utils.FormatNumber
 
 	t.statsTable.SetCell(1, 0, tview.NewTableCell("Forwarded:").SetTextColor(tview.Styles.SecondaryTextColor))
 	t.statsTable.SetCell(1, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)",
-		formatNumber(snapshot.EventsForwarded), snapshot.ForwardsPerSecond)))
+		utils.FormatNumber(snapshot.EventsForwarded), snapshot.ForwardsPerSecond))) // Use utils.FormatNumber
 
 	t.statsTable.SetCell(2, 0, tview.NewTableCell("Errors:").SetTextColor(tview.Styles.SecondaryTextColor))
 	errorRate := 0.0
@@ -292,22 +292,21 @@ func (t *TUI) updateDisplay() {
 		errorRate = float64(snapshot.ErrorsTotal) / float64(snapshot.EventsReceived) * 100
 	}
 	t.statsTable.SetCell(2, 1, tview.NewTableCell(fmt.Sprintf("%s (%.2f%%)",
-		formatNumber(snapshot.ErrorsTotal), errorRate)))
+		utils.FormatNumber(snapshot.ErrorsTotal), errorRate))) // Use utils.FormatNumber
 
 	t.statsTable.SetCell(3, 0, tview.NewTableCell("Queue:").SetTextColor(tview.Styles.SecondaryTextColor))
 	t.statsTable.SetCell(3, 1, tview.NewTableCell(fmt.Sprintf("%.0f%%", snapshot.ChannelUtilization)))
 
 	// Update event kinds
 	t.kindTable.Clear()
-	row := 0
-	for kind, count := range snapshot.EventsForwardedByKind {
-		if row >= 10 { // Limit display
-			break
-		}
-		kindName := getKindName(kind)
-		t.kindTable.SetCell(row, 0, tview.NewTableCell(kindName).SetTextColor(tview.Styles.SecondaryTextColor))
-		t.kindTable.SetCell(row, 1, tview.NewTableCell(formatNumber(count)))
-		row++
+
+	// Use the utility function to get sorted kind counts
+	sortedKinds := utils.SortEventKindsByCount(snapshot.EventsForwardedByKind)
+
+	for i, kc := range sortedKinds {
+		kindName := utils.GetKindName(kc.Kind)
+		t.kindTable.SetCell(i, 0, tview.NewTableCell(kindName).SetTextColor(tview.Styles.SecondaryTextColor))
+		t.kindTable.SetCell(i, 1, tview.NewTableCell(utils.FormatNumber(kc.Count)))
 	}
 
 	// Update recent errors
@@ -317,7 +316,7 @@ func (t *TUI) updateDisplay() {
 		if i >= maxErrors {
 			break
 		}
-		errorText += fmt.Sprintf("[yellow]• [white]%s\n", err)
+		errorText += fmt.Sprintf("[yellow]✘ [white]%s\n", err)
 	}
 	if errorText == "" {
 		errorText = "[green]No recent errors"
@@ -444,45 +443,4 @@ func (t *TUI) Run() error {
 	}()
 
 	return t.app.Run()
-}
-
-func formatNumber(n uint64) string {
-	str := strconv.FormatUint(n, 10)
-	if len(str) <= 3 {
-		return str
-	}
-
-	result := ""
-	for i, c := range str {
-		if i > 0 && (len(str)-i)%3 == 0 {
-			result += ","
-		}
-		result += string(c)
-	}
-	return result
-}
-
-func getKindName(kind int) string {
-	switch kind {
-	case 0:
-		return "Metadata"
-	case 1:
-		return "Text Note"
-	case 2:
-		return "Relay List"
-	case 3:
-		return "Contacts"
-	case 4:
-		return "DM"
-	case 5:
-		return "Event Delete"
-	case 6:
-		return "Repost"
-	case 7:
-		return "Reaction"
-	case 8:
-		return "Badge Award"
-	default:
-		return fmt.Sprintf("Kind %d", kind)
-	}
 }
