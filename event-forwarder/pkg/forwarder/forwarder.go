@@ -225,10 +225,12 @@ func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) err
 			}
 			currentWindow = currentWindow.Next(windowDuration)
 			f.currentWindow = &currentWindow
-		} else {
-			// Wait a bit before checking again
-			time.Sleep(time.Second)
+			// Continue immediately to next window without delay
+			continue
 		}
+
+		// Small delay to prevent busy waiting
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
