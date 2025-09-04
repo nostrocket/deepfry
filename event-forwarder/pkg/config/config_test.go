@@ -67,7 +67,7 @@ func TestLoad(t *testing.T) {
 		}()
 
 		// Set CLI args to override some env vars
-		os.Args = []string{"test", "--source-relay-url=wss://cli.relay", "--sync-window-seconds=20"}
+		os.Args = []string{"test", "--source=wss://cli.relay", "--sync-window-seconds=20"}
 
 		cfg, err := Load()
 		if err != nil {
@@ -187,7 +187,7 @@ func TestComplexConfigValues(t *testing.T) {
 
 	// Override some values with CLI
 	os.Args = []string{"test",
-		"--source-relay-url=wss://cli.source.relay",
+		"--source=wss://cli.source.relay",
 		"--sync-window-seconds=25",
 		"--network-backoff-jitter=0.5",
 	}

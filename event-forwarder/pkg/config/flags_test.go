@@ -35,7 +35,7 @@ func TestParseCLIFlags(t *testing.T) {
 		// Reset flag for testing
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-		os.Args = []string{"test", "--source-relay-url=wss://test.relay", "--sync-window-seconds=15"}
+		os.Args = []string{"test", "--source=wss://test.relay", "--sync-window-seconds=15"}
 		flagSource, showHelp := parseCLIFlags()
 
 		if showHelp {
