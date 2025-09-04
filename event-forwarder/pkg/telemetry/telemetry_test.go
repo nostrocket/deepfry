@@ -61,6 +61,48 @@ func TestAggregator_SyncModeTracking(t *testing.T) {
 	}
 }
 
+func TestAggregator_RealtimeProgressTracking(t *testing.T) {
+	clock := &MockClock{current: time.Unix(1640995200, 0)}
+	cfg := DefaultConfig()
+	aggregator := NewAggregator(clock, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	aggregator.Start(ctx)
+	defer aggregator.Stop()
+
+	// Initial state should have 0 events since update
+	snapshot := aggregator.Snapshot()
+	if snapshot.EventsSinceUpdate != 0 {
+		t.Errorf("expected initial events since update to be 0, got %d", snapshot.EventsSinceUpdate)
+	}
+
+	// Publish real-time progress update
+	aggregator.Publish(NewRealtimeProgressUpdated(125))
+
+	// Give aggregator time to process
+	time.Sleep(10 * time.Millisecond)
+
+	// Check events since update was updated
+	snapshot = aggregator.Snapshot()
+	if snapshot.EventsSinceUpdate != 125 {
+		t.Errorf("expected events since update to be 125, got %d", snapshot.EventsSinceUpdate)
+	}
+
+	// Update to full window (250 events, should reset to 0)
+	aggregator.Publish(NewRealtimeProgressUpdated(0))
+
+	// Give aggregator time to process
+	time.Sleep(10 * time.Millisecond)
+
+	// Check events since update was reset
+	snapshot = aggregator.Snapshot()
+	if snapshot.EventsSinceUpdate != 0 {
+		t.Errorf("expected events since update to be reset to 0, got %d", snapshot.EventsSinceUpdate)
+	}
+}
+
 func TestAggregator_EventCounting(t *testing.T) {
 	clock := &MockClock{current: time.Unix(1000, 0)}
 	cfg := DefaultConfig()
@@ -205,6 +247,8 @@ func TestEventTypes(t *testing.T) {
 		{"SyncProgressUpdated", NewSyncProgressUpdated(1, 2), "sync_progress_updated"},
 		{"ConnectionStatusChanged", NewConnectionStatusChanged("test", true), "connection_status_changed"},
 		{"ForwarderError", NewForwarderError(context.DeadlineExceeded, "test", ErrorSeverityInfo), "forwarder_error"},
+		{"SyncModeChanged", NewSyncModeChanged("realtime", "test"), "sync_mode_changed"},
+		{"RealtimeProgressUpdated", NewRealtimeProgressUpdated(125), "realtime_progress_updated"},
 	}
 
 	for _, tc := range testCases {

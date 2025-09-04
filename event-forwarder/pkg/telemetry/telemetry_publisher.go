@@ -116,6 +116,21 @@ func NewSyncModeChanged(mode, reason string) SyncModeChanged {
 	}
 }
 
+type RealtimeProgressUpdated struct {
+	timestamp         time.Time
+	EventsSinceUpdate int
+}
+
+func (e RealtimeProgressUpdated) Timestamp() time.Time { return e.timestamp }
+func (e RealtimeProgressUpdated) EventType() string    { return "realtime_progress_updated" }
+
+func NewRealtimeProgressUpdated(eventsSinceUpdate int) RealtimeProgressUpdated {
+	return RealtimeProgressUpdated{
+		timestamp:         time.Now(),
+		EventsSinceUpdate: eventsSinceUpdate,
+	}
+}
+
 type ErrorSeverity int
 
 const (

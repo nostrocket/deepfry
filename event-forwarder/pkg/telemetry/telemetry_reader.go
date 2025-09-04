@@ -8,10 +8,11 @@ type Snapshot struct {
 	EventsForwardedByKind map[int]uint64
 
 	// Sync state
-	SyncLagSeconds  float64
-	SyncWindowFrom  int64
-	SyncWindowTo    int64
-	CurrentSyncMode string
+	SyncLagSeconds    float64
+	SyncWindowFrom    int64
+	SyncWindowTo      int64
+	CurrentSyncMode   string
+	EventsSinceUpdate int
 
 	// Connection status
 	SourceRelayConnected  bool

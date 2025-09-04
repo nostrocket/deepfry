@@ -386,12 +386,14 @@ func (f *Forwarder) realtimeLoop(ctx context.Context) error {
 
 			// Update sync window every 250 events
 			f.eventsSinceUpdate++
+			f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
 			if f.eventsSinceUpdate >= EventsPerWindowUpdate {
 				if err := f.updateRealtimeWindow(ctx); err != nil {
 					f.logger.Printf("error updating real-time window: %v", err)
 					// Continue without failing - this is not critical
 				}
 				f.eventsSinceUpdate = 0
+				f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
 			}
 		}
 	}

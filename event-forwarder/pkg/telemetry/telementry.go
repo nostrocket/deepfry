@@ -58,6 +58,7 @@ type Aggregator struct {
 	syncWindowFrom        int64
 	syncWindowTo          int64
 	currentSyncMode       string
+	eventsSinceUpdate     int
 	sourceRelayConnected  bool
 	deepFryRelayConnected bool
 
@@ -184,6 +185,7 @@ func (a *Aggregator) Snapshot() Snapshot {
 		SyncWindowFrom:        a.syncWindowFrom,
 		SyncWindowTo:          a.syncWindowTo,
 		CurrentSyncMode:       a.currentSyncMode,
+		EventsSinceUpdate:     a.eventsSinceUpdate,
 		SourceRelayConnected:  a.sourceRelayConnected,
 		DeepFryRelayConnected: a.deepFryRelayConnected,
 		RecentErrors:          recentErrors,
@@ -249,6 +251,9 @@ func (a *Aggregator) handleEvent(event TelemetryEvent) {
 
 	case SyncModeChanged:
 		a.currentSyncMode = e.Mode
+
+	case RealtimeProgressUpdated:
+		a.eventsSinceUpdate = e.EventsSinceUpdate
 	}
 }
 

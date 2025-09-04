@@ -346,6 +346,67 @@ func (t *TUI) updateDisplay() {
 }
 
 func (t *TUI) updateProgressDisplay(snapshot telemetry.Snapshot) {
+	switch snapshot.CurrentSyncMode {
+	case "realtime":
+		t.updateRealtimeProgressDisplay(snapshot)
+	default: // "windowed" or unknown
+		t.updateWindowedProgressDisplay(snapshot)
+	}
+}
+
+func (t *TUI) updateRealtimeProgressDisplay(snapshot telemetry.Snapshot) {
+	// In real-time mode, show progress toward next window update (0-250 events)
+	const maxEvents = 250
+	eventsSinceUpdate := snapshot.EventsSinceUpdate
+	if eventsSinceUpdate > maxEvents {
+		eventsSinceUpdate = maxEvents
+	}
+
+	progressPercent := float64(eventsSinceUpdate) / float64(maxEvents) * 100
+
+	// Create visual progress bar
+	barWidth := 50
+	filledWidth := int(float64(barWidth) * progressPercent / 100)
+	if filledWidth > barWidth {
+		filledWidth = barWidth
+	}
+
+	progressBar := ""
+	for i := 0; i < barWidth; i++ {
+		if i < filledWidth {
+			progressBar += "█"
+		} else {
+			progressBar += "░"
+		}
+	}
+
+	// Color the progress bar - green since we're in real-time
+	progressColor := "green"
+	if eventsSinceUpdate >= maxEvents {
+		progressColor = "cyan" // Full, about to reset
+	}
+
+	progressText := fmt.Sprintf("[%s]%s[white] %.1f%%\n", progressColor, progressBar, progressPercent)
+	progressText += fmt.Sprintf("Events to window update: %d/%d\n", eventsSinceUpdate, maxEvents)
+
+	if eventsSinceUpdate >= maxEvents {
+		progressText += "[cyan]✓ Ready for window update!"
+	} else {
+		remaining := maxEvents - eventsSinceUpdate
+		progressText += fmt.Sprintf("Remaining: %d events", remaining)
+	}
+
+	t.progressBar.SetText(progressText)
+
+	// Update timeline view for real-time mode
+	timelineText := "[green]REAL-TIME MODE[white]\n"
+	timelineText += fmt.Sprintf("Window updates every %d events\n", maxEvents)
+	timelineText += fmt.Sprintf("Current progress: %d/%d", eventsSinceUpdate, maxEvents)
+
+	t.timelineView.SetText(timelineText)
+}
+
+func (t *TUI) updateWindowedProgressDisplay(snapshot telemetry.Snapshot) {
 	// Set start time from first SyncWindowFrom if not already configured
 	if !t.syncStartTimeSet && snapshot.SyncWindowFrom > 0 {
 		t.syncStartTime = time.Unix(snapshot.SyncWindowFrom, 0)
