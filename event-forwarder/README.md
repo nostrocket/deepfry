@@ -49,19 +49,30 @@ go run cmd/fwd/main.go --help
 ### Basic Usage
 
 ```bash
-# Run with command line flags
+# Run with command line flags (TUI mode)
 ./bin/fwd --source wss://relay.damus.io \
           --deepfry wss://your-deepfry-relay.com \
           --secret-key nsec1abc123...
+
+# Run in quiet mode (CLI mode)
+./bin/fwd --source wss://relay.damus.io \
+          --deepfry wss://your-deepfry-relay.com \
+          --secret-key nsec1abc123... \
+          --quiet
 
 # Or use environment variables
 export SOURCE_RELAY_URL="wss://relay.damus.io"
 export DEEPFRY_RELAY_URL="wss://your-deepfry-relay.com"
 export NOSTR_SYNC_SECKEY="nsec1abc123..."
+export QUIET_MODE="true"
 ./bin/fwd
 ```
 
-### TUI Interface
+### Interface Modes
+
+The application supports two interface modes:
+
+#### TUI Mode (Default)
 
 The application provides a real-time terminal user interface showing:
 
@@ -84,6 +95,35 @@ The application provides a real-time terminal user interface showing:
 - **Event Kinds**: Breakdown of event types being processed
 - **Current Window**: Active sync window progress and timeline
 
+#### CLI Mode (Quiet Mode)
+
+When run with `--quiet` flag, the application operates in headless mode suitable for:
+
+- **Server deployments** - No interactive terminal required
+- **Logging systems** - Structured output to stdout/stderr
+- **Automation** - Script-friendly operation
+- **Resource efficiency** - Lower memory footprint
+
+**CLI Mode Features**:
+
+- Periodic status updates every 10 seconds
+- Structured log output with timestamps
+- Error messages to stderr
+- Connection status monitoring
+- Event processing statistics
+
+**Example CLI Output**:
+
+```text
+[fwd] 2025/09/04 10:30:15 Starting Event Forwarder in quiet mode
+[fwd] 2025/09/04 10:30:15 Source: wss://relay.damus.io
+[fwd] 2025/09/04 10:30:15 DeepFry: wss://your-relay.com
+[fwd] 2025/09/04 10:30:15 Sync window: 5 seconds
+[fwd] 2025/09/04 10:30:25 Status - Events: received=150, forwarded=147, rate=15.2/s, errors=0
+[fwd] 2025/09/04 10:30:25 Connections - Source: true, DeepFry: true
+[fwd] 2025/09/04 10:30:25 Sync window: 1693824615 to 1693824620, lag: 0.5s, mode: realtime
+```
+
 ## Configuration
 
 ### Command Line Flags
@@ -93,6 +133,7 @@ The application provides a real-time terminal user interface showing:
 | `--source` | Source relay URL (WebSocket) | ✅ | - |
 | `--deepfry` | DeepFry relay URL (WebSocket) | ✅ | - |
 | `--secret-key` | Nostr secret key (nsec or hex) | ✅ | - |
+| `--quiet` | Run in quiet mode (no TUI, log to stdout/stderr) | ❌ | false |
 | `--sync-window-seconds` | Sync window duration | ❌ | 5 |
 | `--sync-max-batch` | Max events per batch | ❌ | 1000 |
 | `--sync-max-catchup-lag-seconds` | Max catchup lag tolerance | ❌ | 10 |
@@ -113,6 +154,7 @@ All command line flags can be set via environment variables. CLI flags take prec
 | `SOURCE_RELAY_URL` | `--source` | Source relay WebSocket URL |
 | `DEEPFRY_RELAY_URL` | `--deepfry` | DeepFry relay WebSocket URL |
 | `NOSTR_SYNC_SECKEY` | `--secret-key` | Nostr secret key |
+| `QUIET_MODE` | `--quiet` | Run in quiet mode (no TUI) |
 | `SYNC_WINDOW_SECONDS` | `--sync-window-seconds` | Sync window duration in seconds |
 | `SYNC_MAX_BATCH` | `--sync-max-batch` | Maximum events per batch |
 | `SYNC_MAX_CATCHUP_LAG_SECONDS` | `--sync-max-catchup-lag-seconds` | Max acceptable lag in seconds |
@@ -143,12 +185,22 @@ All command line flags can be set via environment variables. CLI flags take prec
           --sync-window-seconds 3600
 ```
 
+#### Quiet mode for server deployment
+
+```bash
+./bin/fwd --source wss://relay.damus.io \
+          --deepfry wss://your-relay.com \
+          --secret-key nsec1abc123... \
+          --quiet
+```
+
 #### Production environment with custom timeouts
 
 ```bash
 export SOURCE_RELAY_URL="wss://production-source.com"
 export DEEPFRY_RELAY_URL="wss://production-deepfry.com"
 export NOSTR_SYNC_SECKEY="nsec1productionkey..."
+export QUIET_MODE="true"
 export TIMEOUT_PUBLISH_SECONDS="30"
 export TIMEOUT_SUBSCRIBE_SECONDS="30"
 export NETWORK_MAX_BACKOFF_SECONDS="120"
@@ -244,6 +296,23 @@ If the event statistics remain at zero:
    ./bin/fwd --source wss://relay.damus.io --deepfry wss://your-relay.com --secret-key nsec1...
    ```
 
+#### CLI Mode Issues
+
+When using `--quiet` mode:
+
+1. **No Output**: If you see no status updates, events may not be flowing. Check relay connectivity and sync window.
+2. **Log Redirection**: To save logs to a file:
+
+   ```bash
+   ./bin/fwd --quiet --source wss://relay.damus.io --deepfry wss://your-relay.com --secret-key nsec1... > app.log 2>&1
+   ```
+
+3. **Silent Failures**: Check stderr output for error messages:
+
+   ```bash
+   ./bin/fwd --quiet --source wss://relay.damus.io --deepfry wss://your-relay.com --secret-key nsec1... 2> errors.log
+   ```
+
 #### Connection Errors
 
 - **"failed to connect to source relay"**: Source relay URL is invalid or unreachable
@@ -258,11 +327,14 @@ If the event statistics remain at zero:
 
 ### Debug Mode
 
-For detailed debugging, check the application's telemetry events:
+For detailed debugging in either mode:
 
 ```bash
-# Run with verbose logging (implementation pending)
-./bin/fwd --log-level debug
+# TUI mode with extended window
+./bin/fwd --sync-window-seconds 3600 --source wss://relay.damus.io --deepfry wss://your-relay.com --secret-key nsec1...
+
+# CLI mode with verbose output
+./bin/fwd --quiet --sync-window-seconds 3600 --source wss://relay.damus.io --deepfry wss://your-relay.com --secret-key nsec1...
 ```
 
 ### Performance Tuning

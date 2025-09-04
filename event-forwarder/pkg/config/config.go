@@ -10,6 +10,7 @@ type Config struct {
 	DeepFryRelayURL string
 	NostrSecretKey  string
 	NostrKeyPair    crypto.KeyPair
+	QuietMode       bool
 	Sync            SyncConfig
 	Network         NetworkConfig
 	Timeouts        TimeoutConfig
@@ -52,6 +53,7 @@ func Load() (*Config, error) {
 		SourceRelayURL:  resolver.ResolveString(KeySourceRelayURL, ""),
 		DeepFryRelayURL: resolver.ResolveString(KeyDeepFryRelayURL, ""),
 		NostrSecretKey:  resolver.ResolveString(KeyNostrSecretKey, ""),
+		QuietMode:       resolver.ResolveBool(KeyQuietMode, DefaultQuietMode),
 		Sync: SyncConfig{
 			WindowSeconds:        resolver.ResolveInt(KeySyncWindowSeconds, DefaultSyncWindowSeconds),
 			MaxBatch:             resolver.ResolveInt(KeySyncMaxBatch, DefaultSyncMaxBatch),

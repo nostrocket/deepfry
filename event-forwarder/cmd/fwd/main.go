@@ -43,9 +43,14 @@ func main() {
 	telemetryConfig := telemetry.DefaultConfig()
 	aggregator := telemetry.NewAggregator(telemetry.RealClock{}, telemetryConfig)
 
-	// Create a silent logger to avoid interfering with TUI
-	// All logging is handled through telemetry instead
-	logger := log.New(io.Discard, "", 0)
+	// Create logger - either quiet for CLI mode or discarded for TUI mode
+	var logger *log.Logger
+	if cfg.QuietMode {
+		logger = log.New(os.Stdout, "[fwd] ", log.LstdFlags)
+	} else {
+		// Create a silent logger to avoid interfering with TUI
+		logger = log.New(io.Discard, "", 0)
+	}
 
 	// Create forwarder with telemetry
 	fwd := forwarder.New(cfg, logger, aggregator)
@@ -58,22 +63,40 @@ func main() {
 	aggregator.Start(ctx)
 	defer aggregator.Stop()
 
-	// Start TUI
-	tui := NewTUI(aggregator, cfg)
+	if cfg.QuietMode {
+		// Run in CLI mode
+		cli := NewCLI(aggregator, cfg, logger)
 
-	// Start forwarder in background after TUI is set up
-	go func() {
-		// Small delay to let TUI initialize completely
-		time.Sleep(100 * time.Millisecond)
-		if err := fwd.Start(ctx); err != nil && err != context.Canceled {
-			tui.SetError(fmt.Sprintf("Forwarder error: %v", err))
+		// Start forwarder in background
+		go func() {
+			if err := fwd.Start(ctx); err != nil && err != context.Canceled {
+				cli.SetError(fmt.Sprintf("Forwarder error: %v", err))
+			}
+		}()
+
+		// Run CLI (blocking)
+		if err := cli.Run(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "CLI error: %v\n", err)
+			os.Exit(1)
 		}
-	}()
+	} else {
+		// Run in TUI mode
+		tui := NewTUI(aggregator, cfg)
 
-	// Run TUI (blocking)
-	if err := tui.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-		os.Exit(1)
+		// Start forwarder in background after TUI is set up
+		go func() {
+			// Small delay to let TUI initialize completely
+			time.Sleep(100 * time.Millisecond)
+			if err := fwd.Start(ctx); err != nil && err != context.Canceled {
+				tui.SetError(fmt.Sprintf("Forwarder error: %v", err))
+			}
+		}()
+
+		// Run TUI (blocking)
+		if err := tui.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 

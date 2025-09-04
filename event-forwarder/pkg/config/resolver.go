@@ -38,3 +38,13 @@ func (r *ConfigResolver) ResolveFloat(key string, defaultValue float64) float64 
 	}
 	return defaultValue
 }
+
+// ResolveBool resolves bool value from sources in order of precedence
+func (r *ConfigResolver) ResolveBool(key string, defaultValue bool) bool {
+	for _, source := range r.sources {
+		if value, found := source.GetBool(key); found {
+			return value
+		}
+	}
+	return defaultValue
+}

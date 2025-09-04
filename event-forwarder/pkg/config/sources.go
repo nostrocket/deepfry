@@ -10,6 +10,7 @@ type ConfigSource interface {
 	GetString(key string) (string, bool)
 	GetInt(key string) (int, bool)
 	GetFloat(key string) (float64, bool)
+	GetBool(key string) (bool, bool)
 }
 
 // EnvSource implements ConfigSource for environment variables
@@ -40,6 +41,17 @@ func (e *EnvSource) GetFloat(key string) (float64, bool) {
 		return f, true
 	}
 	return 0, false
+}
+
+func (e *EnvSource) GetBool(key string) (bool, bool) {
+	value := os.Getenv(key)
+	if value == "" {
+		return false, false
+	}
+	if b, err := strconv.ParseBool(value); err == nil {
+		return b, true
+	}
+	return false, false
 }
 
 // FlagSource implements ConfigSource for command-line flags
@@ -80,4 +92,13 @@ func (f *FlagSource) GetFloat(key string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func (f *FlagSource) GetBool(key string) (bool, bool) {
+	if value, exists := f.values[key]; exists {
+		if b, ok := value.(bool); ok {
+			return b, true
+		}
+	}
+	return false, false
 }

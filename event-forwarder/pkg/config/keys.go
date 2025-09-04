@@ -10,6 +10,9 @@ const (
 	KeyDeepFryRelayURL = "DEEPFRY_RELAY_URL"
 	KeyNostrSecretKey  = "NOSTR_SYNC_SECKEY"
 
+	// UI configuration keys
+	KeyQuietMode = "QUIET_MODE"
+
 	// Sync configuration keys
 	KeySyncWindowSeconds        = "SYNC_WINDOW_SECONDS"
 	KeySyncMaxBatch             = "SYNC_MAX_BATCH"
@@ -39,6 +42,9 @@ const (
 	DefaultNetworkMaxBackoffSeconds     = 30
 	DefaultNetworkBackoffJitter         = 0.2
 
+	// UI defaults
+	DefaultQuietMode = false
+
 	// Timeout defaults
 	DefaultTimeoutPublishSeconds   = 10
 	DefaultTimeoutSubscribeSeconds = 10
@@ -50,6 +56,7 @@ const (
 	FlagSourceRelayURL               = "source"
 	FlagDeepFryRelayURL              = "deepfry"
 	FlagNostrSecretKey               = "secret-key"
+	FlagQuietMode                    = "quiet"
 	FlagSyncWindowSeconds            = "sync-window-seconds"
 	FlagSyncMaxBatch                 = "sync-max-batch"
 	FlagSyncMaxCatchupLagSeconds     = "sync-max-catchup-lag-seconds"
@@ -72,6 +79,7 @@ const (
 	HelpSourceRelayURL               = "Source relay URL (required)"
 	HelpDeepFryRelayURL              = "DeepFry relay URL (required)"
 	HelpNostrSecretKey               = "Nostr secret key (required)"
+	HelpQuietMode                    = "Run in quiet mode (no TUI, log to stdout/stderr)"
 	HelpSyncWindowSeconds            = "Sync window in seconds"
 	HelpSyncMaxBatch                 = "Max sync batch size"
 	HelpSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"
@@ -87,6 +95,7 @@ const (
 	EnvDescSourceRelayURL               = "Source relay URL"
 	EnvDescDeepFryRelayURL              = "DeepFry relay URL"
 	EnvDescNostrSecretKey               = "Nostr secret key"
+	EnvDescQuietMode                    = "Run in quiet mode (no TUI)"
 	EnvDescSyncWindowSeconds            = "Sync window in seconds"
 	EnvDescSyncMaxBatch                 = "Max sync batch size"
 	EnvDescSyncMaxCatchupLagSeconds     = "Max catchup lag in seconds"

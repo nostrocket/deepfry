@@ -13,6 +13,7 @@ func parseCLIFlags() (*FlagSource, bool) {
 	sourceRelayURL := flag.String(FlagSourceRelayURL, "", HelpSourceRelayURL)
 	deepFryRelayURL := flag.String(FlagDeepFryRelayURL, "", HelpDeepFryRelayURL)
 	nostrSecretKey := flag.String(FlagNostrSecretKey, "", HelpNostrSecretKey)
+	quietMode := flag.Bool(FlagQuietMode, false, HelpQuietMode)
 	syncWindowSeconds := flag.Int(FlagSyncWindowSeconds, 0, HelpSyncWindowSeconds)
 	syncMaxBatch := flag.Int(FlagSyncMaxBatch, 0, HelpSyncMaxBatch)
 	syncMaxCatchupLagSeconds := flag.Int(FlagSyncMaxCatchupLagSeconds, 0, HelpSyncMaxCatchupLagSeconds)
@@ -39,6 +40,9 @@ func parseCLIFlags() (*FlagSource, bool) {
 	}
 	if *nostrSecretKey != "" {
 		flagSource.Set(KeyNostrSecretKey, *nostrSecretKey)
+	}
+	if *quietMode {
+		flagSource.Set(KeyQuietMode, *quietMode)
 	}
 	if *syncWindowSeconds != 0 {
 		flagSource.Set(KeySyncWindowSeconds, *syncWindowSeconds)
@@ -82,6 +86,7 @@ func printUsage() {
 	fmt.Printf("  --%s string            %s\n", FlagSourceRelayURL, HelpSourceRelayURL)
 	fmt.Printf("  --%s string           %s\n", FlagDeepFryRelayURL, HelpDeepFryRelayURL)
 	fmt.Printf("  --%s string            %s\n", FlagNostrSecretKey, HelpNostrSecretKey)
+	fmt.Printf("  --%s                             %s\n", FlagQuietMode, HelpQuietMode)
 	fmt.Printf("  --%s int            %s (default: %d)\n", FlagSyncWindowSeconds, HelpSyncWindowSeconds, DefaultSyncWindowSeconds)
 	fmt.Printf("  --%s int                 %s (default: %d)\n", FlagSyncMaxBatch, HelpSyncMaxBatch, DefaultSyncMaxBatch)
 	fmt.Printf("  --%s int   %s (default: %d)\n", FlagSyncMaxCatchupLagSeconds, HelpSyncMaxCatchupLagSeconds, DefaultSyncMaxCatchupLagSeconds)
@@ -97,6 +102,7 @@ func printUsage() {
 	fmt.Printf("  %-36s %s\n", KeySourceRelayURL, EnvDescSourceRelayURL)
 	fmt.Printf("  %-36s %s\n", KeyDeepFryRelayURL, EnvDescDeepFryRelayURL)
 	fmt.Printf("  %-36s %s\n", KeyNostrSecretKey, EnvDescNostrSecretKey)
+	fmt.Printf("  %-36s %s\n", KeyQuietMode, EnvDescQuietMode)
 	fmt.Printf("  %-36s %s\n", KeySyncWindowSeconds, EnvDescSyncWindowSeconds)
 	fmt.Printf("  %-36s %s\n", KeySyncMaxBatch, EnvDescSyncMaxBatch)
 	fmt.Printf("  %-36s %s\n", KeySyncMaxCatchupLagSeconds, EnvDescSyncMaxCatchupLagSeconds)
