@@ -17,20 +17,20 @@ func (RealClock) Now() time.Time { return time.Now() }
 
 // Config for telemetry settings
 type Config struct {
-	BufferSize          int     `default:"1000"`
+	BufferSize           int     `default:"1000"`
 	DropThresholdPercent float64 `default:"90.0"`
-	RefreshIntervalMs   int     `default:"200"`
-	MaxRecentErrors     int     `default:"50"`
-	RateWindowSeconds   int     `default:"10"`
+	RefreshIntervalMs    int     `default:"200"`
+	MaxRecentErrors      int     `default:"50"`
+	RateWindowSeconds    int     `default:"10"`
 }
 
 func DefaultConfig() Config {
 	return Config{
-		BufferSize:          1000,
+		BufferSize:           1000,
 		DropThresholdPercent: 90.0,
-		RefreshIntervalMs:   200,
-		MaxRecentErrors:     50,
-		RateWindowSeconds:   10,
+		RefreshIntervalMs:    200,
+		MaxRecentErrors:      50,
+		RateWindowSeconds:    10,
 	}
 }
 
@@ -248,23 +248,23 @@ func (a *Aggregator) handleEvent(event TelemetryEvent) {
 
 func (a *Aggregator) addEventTime(t time.Time) {
 	cutoff := t.Add(-time.Duration(a.cfg.RateWindowSeconds) * time.Second)
-	
+
 	// Remove old entries
 	for len(a.eventTimes) > 0 && a.eventTimes[0].Before(cutoff) {
 		a.eventTimes = a.eventTimes[1:]
 	}
-	
+
 	a.eventTimes = append(a.eventTimes, t)
 }
 
 func (a *Aggregator) addForwardTime(t time.Time) {
 	cutoff := t.Add(-time.Duration(a.cfg.RateWindowSeconds) * time.Second)
-	
+
 	// Remove old entries
 	for len(a.forwardTimes) > 0 && a.forwardTimes[0].Before(cutoff) {
 		a.forwardTimes = a.forwardTimes[1:]
 	}
-	
+
 	a.forwardTimes = append(a.forwardTimes, t)
 }
 
@@ -282,46 +282,46 @@ func (a *Aggregator) calculateRate(times []time.Time, now time.Time) float64 {
 	if len(times) == 0 {
 		return 0.0
 	}
-	
+
 	cutoff := now.Add(-time.Duration(a.cfg.RateWindowSeconds) * time.Second)
 	count := 0
-	
+
 	for _, t := range times {
 		if t.After(cutoff) {
 			count++
 		}
 	}
-	
+
 	return float64(count) / float64(a.cfg.RateWindowSeconds)
 }
 
 func (a *Aggregator) calculateLatencyMetrics() (float64, float64) {
 	validLatencies := make([]time.Duration, 0)
-	
+
 	for _, lat := range a.latencies {
 		if lat > 0 {
 			validLatencies = append(validLatencies, lat)
 		}
 	}
-	
+
 	if len(validLatencies) == 0 {
 		return 0.0, 0.0
 	}
-	
+
 	// Calculate average
 	var sum time.Duration
 	for _, lat := range validLatencies {
 		sum += lat
 	}
 	avg := float64(sum) / float64(len(validLatencies)) / float64(time.Millisecond)
-	
+
 	// Calculate P95 (simple approximation)
 	// For more accuracy, you'd want to sort and take the 95th percentile
 	p95Index := int(float64(len(validLatencies)) * 0.95)
 	if p95Index >= len(validLatencies) {
 		p95Index = len(validLatencies) - 1
 	}
-	
+
 	// Simple approximation - for production you'd want proper sorting
 	maxLatency := validLatencies[0]
 	for _, lat := range validLatencies {
@@ -330,6 +330,6 @@ func (a *Aggregator) calculateLatencyMetrics() (float64, float64) {
 		}
 	}
 	p95 := float64(maxLatency) / float64(time.Millisecond)
-	
+
 	return avg, p95
 }

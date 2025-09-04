@@ -91,7 +91,7 @@ func TestAggregator_ErrorTracking(t *testing.T) {
 	// Send error events
 	err1 := NewForwarderError(context.DeadlineExceeded, "relay_timeout", ErrorSeverityWarning)
 	err2 := NewForwarderError(context.Canceled, "context_cancel", ErrorSeverityError)
-	
+
 	agg.Publish(err1)
 	agg.Publish(err2)
 
@@ -146,7 +146,7 @@ func TestAggregator_SyncProgress(t *testing.T) {
 
 func TestNoopPublisher(t *testing.T) {
 	noop := NewNoopPublisher()
-	
+
 	// Should not panic
 	noop.Publish(NewEventReceived("test", 1, "test"))
 	noop.Publish(NewEventForwarded("test", 1, time.Millisecond))

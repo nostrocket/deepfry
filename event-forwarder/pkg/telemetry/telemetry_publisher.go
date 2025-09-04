@@ -16,7 +16,7 @@ type EventReceived struct {
 }
 
 func (e EventReceived) Timestamp() time.Time { return e.timestamp }
-func (e EventReceived) EventType() string   { return "event_received" }
+func (e EventReceived) EventType() string    { return "event_received" }
 
 func NewEventReceived(relayURL string, eventKind int, eventID string) EventReceived {
 	return EventReceived{
@@ -35,7 +35,7 @@ type EventForwarded struct {
 }
 
 func (e EventForwarded) Timestamp() time.Time { return e.timestamp }
-func (e EventForwarded) EventType() string   { return "event_forwarded" }
+func (e EventForwarded) EventType() string    { return "event_forwarded" }
 
 func NewEventForwarded(relayURL string, kind int, latency time.Duration) EventForwarded {
 	return EventForwarded{
@@ -53,7 +53,7 @@ type SyncProgressUpdated struct {
 }
 
 func (e SyncProgressUpdated) Timestamp() time.Time { return e.timestamp }
-func (e SyncProgressUpdated) EventType() string   { return "sync_progress_updated" }
+func (e SyncProgressUpdated) EventType() string    { return "sync_progress_updated" }
 
 func NewSyncProgressUpdated(from, to int64) SyncProgressUpdated {
 	return SyncProgressUpdated{
@@ -70,7 +70,7 @@ type ConnectionStatusChanged struct {
 }
 
 func (e ConnectionStatusChanged) Timestamp() time.Time { return e.timestamp }
-func (e ConnectionStatusChanged) EventType() string   { return "connection_status_changed" }
+func (e ConnectionStatusChanged) EventType() string    { return "connection_status_changed" }
 
 func NewConnectionStatusChanged(relayURL string, connected bool) ConnectionStatusChanged {
 	return ConnectionStatusChanged{
@@ -88,7 +88,7 @@ type ForwarderError struct {
 }
 
 func (e ForwarderError) Timestamp() time.Time { return e.timestamp }
-func (e ForwarderError) EventType() string   { return "forwarder_error" }
+func (e ForwarderError) EventType() string    { return "forwarder_error" }
 
 func NewForwarderError(err error, context string, severity ErrorSeverity) ForwarderError {
 	return ForwarderError{

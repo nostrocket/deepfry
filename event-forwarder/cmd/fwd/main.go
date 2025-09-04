@@ -57,7 +57,7 @@ func main() {
 
 	// Start TUI
 	tui := NewTUI(aggregator, cfg)
-	
+
 	// Start forwarder in background
 	go func() {
 		if err := fwd.Start(ctx); err != nil && err != context.Canceled {
@@ -200,7 +200,7 @@ func (t *TUI) updateDisplay() {
 		sourceStatus = "[green]●CONN"
 	}
 	t.relayTable.SetCell(0, 1, tview.NewTableCell(sourceStatus))
-	
+
 	t.relayTable.SetCell(1, 0, tview.NewTableCell("DeepFry:").SetTextColor(tview.Styles.SecondaryTextColor))
 	deepfryStatus := "[red]●DISC"
 	if snapshot.DeepFryRelayConnected {
@@ -211,11 +211,11 @@ func (t *TUI) updateDisplay() {
 	// Update stats
 	t.statsTable.Clear()
 	t.statsTable.SetCell(0, 0, tview.NewTableCell("Received:").SetTextColor(tview.Styles.SecondaryTextColor))
-	t.statsTable.SetCell(0, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)", 
+	t.statsTable.SetCell(0, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)",
 		formatNumber(snapshot.EventsReceived), snapshot.EventsPerSecond)))
 
 	t.statsTable.SetCell(1, 0, tview.NewTableCell("Forwarded:").SetTextColor(tview.Styles.SecondaryTextColor))
-	t.statsTable.SetCell(1, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)", 
+	t.statsTable.SetCell(1, 1, tview.NewTableCell(fmt.Sprintf("%s (%.1f/s)",
 		formatNumber(snapshot.EventsForwarded), snapshot.ForwardsPerSecond)))
 
 	t.statsTable.SetCell(2, 0, tview.NewTableCell("Errors:").SetTextColor(tview.Styles.SecondaryTextColor))
@@ -223,7 +223,7 @@ func (t *TUI) updateDisplay() {
 	if snapshot.EventsReceived > 0 {
 		errorRate = float64(snapshot.ErrorsTotal) / float64(snapshot.EventsReceived) * 100
 	}
-	t.statsTable.SetCell(2, 1, tview.NewTableCell(fmt.Sprintf("%s (%.2f%%)", 
+	t.statsTable.SetCell(2, 1, tview.NewTableCell(fmt.Sprintf("%s (%.2f%%)",
 		formatNumber(snapshot.ErrorsTotal), errorRate)))
 
 	t.statsTable.SetCell(3, 0, tview.NewTableCell("Queue:").SetTextColor(tview.Styles.SecondaryTextColor))
@@ -274,7 +274,7 @@ func formatNumber(n uint64) string {
 	if len(str) <= 3 {
 		return str
 	}
-	
+
 	result := ""
 	for i, c := range str {
 		if i > 0 && (len(str)-i)%3 == 0 {

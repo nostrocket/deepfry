@@ -19,13 +19,15 @@ The DeepFry Event Forwarder now includes a comprehensive telemetry system and Te
 ## Components
 
 ### 1. TelemetryPublisher Interface
+
 - **Purpose**: Event publishing from forwarder to aggregator
 - **Implementation**: Non-blocking, fire-and-forget pattern
 - **Events**: EventReceived, EventForwarded, ConnectionStatusChanged, ForwarderError, SyncProgressUpdated
 
-### 2. Aggregator 
+### 2. Aggregator
+
 - **Purpose**: Stateful processing of telemetry events
-- **Features**: 
+- **Features**:
   - Thread-safe metric collection
   - Rate calculations (events/second)
   - Latency tracking (avg, P95)
@@ -34,14 +36,16 @@ The DeepFry Event Forwarder now includes a comprehensive telemetry system and Te
 - **Performance**: Protected hot path with buffered channels
 
 ### 3. TelemetryReader Interface
+
 - **Purpose**: Snapshot-based data access for consumers
-- **Features**: 
+- **Features**:
   - Immutable snapshots prevent data races
   - Real-time metrics calculation
   - Connection status tracking
   - Sync window progress monitoring
 
 ### 4. TUI (Terminal User Interface)
+
 - **Framework**: `github.com/rivo/tview`
 - **Layout**: HTOP-style dashboard with multiple panels
 - **Refresh Rate**: 200ms (5 FPS)
@@ -55,6 +59,7 @@ The DeepFry Event Forwarder now includes a comprehensive telemetry system and Te
 ## Usage
 
 ### Starting the Application
+
 ```bash
 ./fwd
 ```
@@ -64,25 +69,30 @@ The TUI will automatically start and display real-time metrics.
 ### Key Metrics Displayed
 
 1. **Status Panel**
+
    - Running status (●RUNNING/●ERROR)
    - Uptime
    - Time since last event
 
-2. **Relay Panel** 
+2. **Relay Panel**
+
    - Source relay: ●CONN/●DISC
    - DeepFry relay: ●CONN/●DISC
 
 3. **Event Stats Panel**
+
    - Events received (total + rate/sec)
-   - Events forwarded (total + rate/sec) 
+   - Events forwarded (total + rate/sec)
    - Error count and percentage
    - Queue utilization
 
 4. **Event Types Panel**
+
    - Breakdown by Nostr event kind
    - Text Notes, Reactions, Reposts, etc.
 
 5. **Current Window Panel**
+
    - Sync window timeframe
    - Lag behind real-time
 
@@ -93,12 +103,14 @@ The TUI will automatically start and display real-time metrics.
 ## Testing
 
 ### Unit Tests
+
 ```bash
 go test ./pkg/telemetry/ -v    # Telemetry package tests
 go test ./pkg/forwarder/ -v    # Forwarder integration tests
 ```
 
-### Integration Tests  
+### Integration Tests
+
 ```bash
 go test -tags=integration ./pkg/forwarder/ -v
 ```
@@ -126,6 +138,7 @@ type Config struct {
 ## Future Extensions
 
 The interface-based design allows easy addition of:
+
 - Prometheus metrics exporter
 - JSON API endpoint
 - Alert thresholds
