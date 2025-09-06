@@ -35,6 +35,7 @@ type SyncStrategy interface {
 type TelemetrySink interface {
 	Start()
 	Stop()
+	EmitRaw(event telemetry.TelemetryEvent)
 	EmitConnection(relayName string, connected bool)
 	EmitEventReceived(relayURL string, kind int, id string)
 	EmitEventForwarded(relayURL string, kind int, latency time.Duration)

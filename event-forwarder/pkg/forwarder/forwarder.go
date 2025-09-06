@@ -39,10 +39,8 @@ type Forwarder struct {
 	// New: window manager abstraction
 	winMgr WindowManager
 
-	// Internal event channel for telemetry
-	eventCh         chan telemetry.TelemetryEvent
-	publisherCtx    context.Context
-	publisherCancel context.CancelFunc
+	// Telemetry adapter (keeps channels/goroutine out of orchestrator)
+	tsink TelemetrySink
 
 	// Sync mode tracking
 	currentSyncMode   string
@@ -54,7 +52,6 @@ func New(cfg *config.Config, logger *log.Logger, telemetryPublisher telemetry.Te
 	f := &Forwarder{
 		cfg:             cfg,
 		logger:          logger,
-		eventCh:         make(chan telemetry.TelemetryEvent, 100), // Buffered channel
 		currentSyncMode: SyncModeWindowed,                         // Start in windowed mode
 	}
 
@@ -77,7 +74,6 @@ func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryR
 		sourceRelay:     sourceRelay,
 		deepfryRelay:    deepfryRelay,
 		syncTracker:     nsync.NewSyncTracker(deepfryRelay, cfg),
-		eventCh:         make(chan telemetry.TelemetryEvent, 100),
 		currentSyncMode: SyncModeWindowed, // Start in windowed mode
 	}
 
@@ -94,49 +90,53 @@ func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryR
 
 // StartTelemetryPublisher starts a goroutine that publishes events to the telemetry publisher
 func (f *Forwarder) StartTelemetryPublisher(publisher telemetry.TelemetryPublisher) {
-	f.publisherCtx, f.publisherCancel = context.WithCancel(context.Background())
-	go func() {
-		for {
-			select {
-			case event := <-f.eventCh:
-				publisher.Publish(event)
-			case <-f.publisherCtx.Done():
-				return
-			}
-		}
-	}()
+	f.tsink = NewTelemetrySink(publisher)
+	f.tsink.Start()
 }
 
 // emitTelemetry sends an event to the internal channel (non-blocking)
 func (f *Forwarder) emitTelemetry(event telemetry.TelemetryEvent) {
-	select {
-	case f.eventCh <- event:
-	default:
-		// Channel full, drop event to avoid blocking
+	if f.tsink != nil {
+		f.tsink.EmitRaw(event)
 	}
 }
 
 // lightweight helpers used by strategies to reduce duplication
 func (f *Forwarder) emitTelemetryError(err error, where string) {
+	if f.tsink != nil {
+		f.tsink.EmitError(err, where, telemetry.ErrorSeverityError)
+		return
+	}
 	f.emitTelemetry(telemetry.NewForwarderError(err, where, telemetry.ErrorSeverityError))
 }
 func (f *Forwarder) emitTelemetryErrorSev(err error, where string, sev telemetry.ErrorSeverity) {
+	if f.tsink != nil {
+		f.tsink.EmitError(err, where, sev)
+		return
+	}
 	f.emitTelemetry(telemetry.NewForwarderError(err, where, sev))
 }
 func (f *Forwarder) emitTelemetryMsgSev(msg string, where string, sev telemetry.ErrorSeverity) {
 	// avoid non-constant format string vet warning by not using fmt.Errorf with variable format
+	if f.tsink != nil {
+		f.tsink.EmitError(fmt.Errorf("%s", msg), where, sev)
+		return
+	}
 	f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("%s", msg), where, sev))
 }
 func (f *Forwarder) emitTelemetryRealtimeProgress(n int) {
+	if f.tsink != nil {
+		f.tsink.EmitRaw(telemetry.NewRealtimeProgressUpdated(n))
+		return
+	}
 	f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(n))
 }
 
 // Close stops the telemetry publisher goroutine
 func (f *Forwarder) Close() {
-	if f.publisherCancel != nil {
-		f.publisherCancel()
+	if f.tsink != nil {
+		f.tsink.Stop()
 	}
-	close(f.eventCh)
 }
 
 func (f *Forwarder) Start(ctx context.Context) error {
@@ -235,7 +235,11 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 	f.logger.Printf("syncing window: %s to %s", window.From, window.To)
 
 	// Emit sync progress
-	f.emitTelemetry(telemetry.NewSyncProgressUpdated(window.From.Unix(), window.To.Unix()))
+	if f.tsink != nil {
+		f.tsink.EmitSyncProgress(window.From.Unix(), window.To.Unix())
+	} else {
+		f.emitTelemetry(telemetry.NewSyncProgressUpdated(window.From.Unix(), window.To.Unix()))
+	}
 
 	since := nostr.Timestamp(window.From.Unix())
 	until := nostr.Timestamp(window.To.Unix())
@@ -248,7 +252,11 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 
 	eventCh, err := f.sourceRelay.QueryEvents(ctx, filter)
 	if err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "relay_query", telemetry.ErrorSeverityWarning))
+		if f.tsink != nil {
+			f.tsink.EmitError(err, "relay_query", telemetry.ErrorSeverityWarning)
+		} else {
+			f.emitTelemetry(telemetry.NewForwarderError(err, "relay_query", telemetry.ErrorSeverityWarning))
+		}
 		return fmt.Errorf("failed to query events: %w", err)
 	}
 
@@ -265,24 +273,40 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 
 		if event == nil {
 			f.logger.Printf("skipping nil event")
-			f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("nil event"), "event_validation", telemetry.ErrorSeverityInfo))
+			if f.tsink != nil {
+				f.tsink.EmitError(fmt.Errorf("nil event"), "event_validation", telemetry.ErrorSeverityInfo)
+			} else {
+				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("nil event"), "event_validation", telemetry.ErrorSeverityInfo))
+			}
 			continue
 		}
 
 		// Record event received
-		f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
+		if f.tsink != nil {
+			f.tsink.EmitEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
+		} else {
+			f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
+		}
 
 		startTime := time.Now()
 		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
 			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
-			f.emitTelemetry(telemetry.NewForwarderError(err, "relay_publish", telemetry.ErrorSeverityWarning))
+			if f.tsink != nil {
+				f.tsink.EmitError(err, "relay_publish", telemetry.ErrorSeverityWarning)
+			} else {
+				f.emitTelemetry(telemetry.NewForwarderError(err, "relay_publish", telemetry.ErrorSeverityWarning))
+			}
 			// Do not reconnect/panic here; allow sync event to proceed (tests expect success when sync publish succeeds)
 			continue
 		}
 
 		// Record successful forward with latency
 		latency := time.Since(startTime)
-		f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
+		if f.tsink != nil {
+			f.tsink.EmitEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
+		} else {
+			f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
+		}
 		eventCount++
 	}
 
@@ -295,7 +319,11 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		updateErr = f.syncTracker.UpdateWindow(ctx, window)
 	}
 	if updateErr != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(updateErr, "sync_update", telemetry.ErrorSeverityWarning))
+		if f.tsink != nil {
+			f.tsink.EmitError(updateErr, "sync_update", telemetry.ErrorSeverityWarning)
+		} else {
+			f.emitTelemetry(telemetry.NewForwarderError(updateErr, "sync_update", telemetry.ErrorSeverityWarning))
+		}
 		// Force reconnect; this will panic if reconnect fails (expected by tests)
 		f.forceReconnect(ctx)
 		return fmt.Errorf("failed to update sync window: %w", updateErr)
@@ -320,7 +348,11 @@ func (f *Forwarder) switchToRealtimeMode(reason string) {
 	f.currentSyncMode = SyncModeRealtime
 	f.eventsSinceUpdate = 0
 	f.logger.Printf("switching to real-time sync mode: %s", reason)
-	f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeRealtime, reason))
+	if f.tsink != nil {
+		f.tsink.EmitModeChanged(SyncModeRealtime, reason)
+	} else {
+		f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeRealtime, reason))
+	}
 }
 
 // switchToWindowedMode changes the sync mode to windowed and emits telemetry
@@ -328,7 +360,11 @@ func (f *Forwarder) switchToWindowedMode(reason string) {
 	f.currentSyncMode = SyncModeWindowed
 	f.eventsSinceUpdate = 0
 	f.logger.Printf("switching to windowed sync mode: %s", reason)
-	f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeWindowed, reason))
+	if f.tsink != nil {
+		f.tsink.EmitModeChanged(SyncModeWindowed, reason)
+	} else {
+		f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeWindowed, reason))
+	}
 }
 
 // realtimeLoop handles real-time event forwarding
@@ -340,7 +376,11 @@ func (f *Forwarder) realtimeLoop(ctx context.Context) error {
 // processRealtimeEvent forwards a single event in real-time mode
 func (f *Forwarder) processRealtimeEvent(ctx context.Context, event *nostr.Event) error {
 	// Record event received
-	f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
+	if f.tsink != nil {
+		f.tsink.EmitEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
+	} else {
+		f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
+	}
 
 	startTime := time.Now()
 	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
@@ -350,7 +390,11 @@ func (f *Forwarder) processRealtimeEvent(ctx context.Context, event *nostr.Event
 
 	// Record successful forward with latency
 	latency := time.Since(startTime)
-	f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
+	if f.tsink != nil {
+		f.tsink.EmitEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
+	} else {
+		f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
+	}
 	return nil
 }
 
@@ -381,7 +425,11 @@ func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 	}
 
 	f.currentWindow = &updatedWindow
-	f.emitTelemetry(telemetry.NewSyncProgressUpdated(updatedWindow.From.Unix(), updatedWindow.To.Unix()))
+	if f.tsink != nil {
+		f.tsink.EmitSyncProgress(updatedWindow.From.Unix(), updatedWindow.To.Unix())
+	} else {
+		f.emitTelemetry(telemetry.NewSyncProgressUpdated(updatedWindow.From.Unix(), updatedWindow.To.Unix()))
+	}
 	return nil
 }
 
