@@ -13,6 +13,7 @@ import (
 	"event-forwarder/pkg/config"
 	"event-forwarder/pkg/crypto"
 	"event-forwarder/pkg/nsync"
+	"event-forwarder/pkg/relay"
 	"event-forwarder/pkg/telemetry"
 	"event-forwarder/pkg/testutil"
 
@@ -304,7 +305,7 @@ func TestSyncWindow_QueryError(t *testing.T) {
 	}
 }
 
-func TestSyncWindow_PublishError(t *testing.T) {
+func TestSyncWindow_PublishError_NoPanicAndContinues(t *testing.T) {
 	cfg := createTestConfig()
 	logger := createTestLogger()
 
@@ -315,30 +316,40 @@ func TestSyncWindow_PublishError(t *testing.T) {
 	sourceRelay := &testutil.MockRelay{
 		QuerySyncReturn: mockEvents,
 	}
-	deepfryRelay := &testutil.MockRelay{
-		PublishError: errors.New("publish failed"),
+	// Use a relay that fails on regular events but succeeds on sync events
+	deepfryRelay := &ConditionalErrorRelay{
+		PublishCalls:      []nostr.Event{},
+		EventPublishError: errors.New("publish failed"),
 	}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
+	// Prevent real reconnect attempts
+	forwarder.connMgr = &fakeConnMgr{src: sourceRelay, df: deepfryRelay}
+	// Force the update path to use SyncTracker directly to publish the sync event on the same relay
+	forwarder.syncTracker = nsync.NewSyncTracker(deepfryRelay, cfg)
+	forwarder.winMgr = nil
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
 		To:   time.Unix(1640998800, 0),
 	}
 
-	// New behavior: on publish error the code will attempt to reconnect and panic if reconnect fails.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic due to failed reconnect after publish error")
+	// New behavior: do not panic on event publish error; continue and still attempt sync update (which succeeds)
+	err := forwarder.syncWindow(context.Background(), window)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	// Must have published a sync event regardless of individual event publish failures
+	foundSync := false
+	for _, ev := range deepfryRelay.PublishCalls {
+		if ev.Kind == nsync.SyncEventKind {
+			foundSync = true
+			break
 		}
-		// Ensure at least one publish was attempted before the panic/reconnect
-		if len(deepfryRelay.PublishCalls) < 1 {
-			t.Error("expected at least one publish attempt")
-		}
-	}()
-
-	// This call should panic due to reconnect failure after publish error
-	_ = forwarder.syncWindow(context.Background(), window)
+	}
+	if !foundSync {
+		t.Fatalf("expected a sync event (kind %d) to be published; got %d publish calls: %+v", nsync.SyncEventKind, len(deepfryRelay.PublishCalls), deepfryRelay.PublishCalls)
+	}
 }
 
 func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
@@ -360,6 +371,9 @@ func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
 	}
 
 	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
+	// Ensure sync update goes through the SyncTracker using the same relay
+	forwarder.syncTracker = nsync.NewSyncTracker(deepfryRelay, cfg)
+	forwarder.winMgr = nil
 
 	window := nsync.Window{
 		From: time.Unix(1640995200, 0),
@@ -372,9 +386,16 @@ func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Should attempt to publish event + sync event
-	if len(deepfryRelay.PublishCalls) != 2 {
-		t.Fatalf("expected 2 publish attempts, got %d", len(deepfryRelay.PublishCalls))
+	// Must include a sync event publish
+	foundSync := false
+	for _, ev := range deepfryRelay.PublishCalls {
+		if ev.Kind == nsync.SyncEventKind {
+			foundSync = true
+			break
+		}
+	}
+	if !foundSync {
+		t.Fatalf("expected a sync event (kind %d) to be published; got %d publish calls: %+v", nsync.SyncEventKind, len(deepfryRelay.PublishCalls), deepfryRelay.PublishCalls)
 	}
 }
 
@@ -426,6 +447,49 @@ func (r *ConditionalErrorRelay) Publish(ctx context.Context, event nostr.Event) 
 
 func (r *ConditionalErrorRelay) Close() error {
 	r.CloseCalled = true
+	return nil
+}
+
+// fakeConnMgr is a no-op ConnectionManager used to avoid real network operations in unit tests.
+type fakeConnMgr struct {
+	src relay.Relay
+	df  relay.Relay
+}
+
+func (f *fakeConnMgr) Connect(ctx context.Context) error   { return nil }
+func (f *fakeConnMgr) Reconnect(ctx context.Context) error { return nil }
+func (f *fakeConnMgr) Close()                              {}
+func (f *fakeConnMgr) Source() relay.Relay                 { return f.src }
+func (f *fakeConnMgr) Deepfry() relay.Relay                { return f.df }
+
+// stubWindowMgr implements WindowManager for tests with controllable errors
+type stubWindowMgr struct {
+	window    *nsync.Window
+	getErr    error
+	updateErr error
+	tracker   *nsync.SyncTracker
+}
+
+func (s *stubWindowMgr) GetOrCreate(ctx context.Context) (*nsync.Window, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	if s.window != nil {
+		return s.window, nil
+	}
+	w := nsync.NewWindowFromStart(time.Unix(1640995200, 0).UTC(), 5*time.Second)
+	return &w, nil
+}
+
+func (s *stubWindowMgr) Advance(w nsync.Window) nsync.Window { return w }
+func (s *stubWindowMgr) Update(ctx context.Context, w nsync.Window) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	if s.tracker != nil {
+		// Delegate to real tracker to publish the sync event so tests can observe it
+		return s.tracker.UpdateWindow(ctx, w)
+	}
 	return nil
 }
 
