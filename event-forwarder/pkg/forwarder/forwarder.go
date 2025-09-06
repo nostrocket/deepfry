@@ -116,6 +116,21 @@ func (f *Forwarder) emitTelemetry(event telemetry.TelemetryEvent) {
 	}
 }
 
+// lightweight helpers used by strategies to reduce duplication
+func (f *Forwarder) emitTelemetryError(err error, where string) {
+	f.emitTelemetry(telemetry.NewForwarderError(err, where, telemetry.ErrorSeverityError))
+}
+func (f *Forwarder) emitTelemetryErrorSev(err error, where string, sev telemetry.ErrorSeverity) {
+	f.emitTelemetry(telemetry.NewForwarderError(err, where, sev))
+}
+func (f *Forwarder) emitTelemetryMsgSev(msg string, where string, sev telemetry.ErrorSeverity) {
+	// avoid non-constant format string vet warning by not using fmt.Errorf with variable format
+	f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("%s", msg), where, sev))
+}
+func (f *Forwarder) emitTelemetryRealtimeProgress(n int) {
+	f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(n))
+}
+
 // Close stops the telemetry publisher goroutine
 func (f *Forwarder) Close() {
 	if f.publisherCancel != nil {
@@ -211,46 +226,9 @@ func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error
 }
 
 func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) error {
-	currentWindow := *startWindow
-	f.currentWindow = &currentWindow
-	windowDuration := time.Duration(f.cfg.Sync.WindowSeconds) * time.Second
-
-	// Emit initial sync mode
-	f.emitTelemetry(telemetry.NewSyncModeChanged(f.currentSyncMode, "initial_mode"))
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Check if we should switch to real-time mode
-		if f.currentSyncMode == SyncModeWindowed && f.shouldSwitchToRealtime(currentWindow) {
-			f.switchToRealtimeMode("caught_up_to_current_time")
-			return f.realtimeLoop(ctx)
-		}
-
-		// Check if we should move to next window (windowed mode)
-		if f.currentSyncMode == SyncModeWindowed && time.Now().UTC().After(currentWindow.To.Add(time.Duration(f.cfg.Sync.MaxCatchupLagSeconds)*time.Second)) {
-			if err := f.syncWindow(ctx, currentWindow); err != nil {
-				f.logger.Printf("error syncing window %s to %s: %v", currentWindow.From, currentWindow.To, err)
-				time.Sleep(time.Second)
-				continue
-			}
-			if f.winMgr != nil {
-				currentWindow = f.winMgr.Advance(currentWindow)
-			} else {
-				currentWindow = currentWindow.Next(windowDuration)
-			}
-			f.currentWindow = &currentWindow
-			// Continue immediately to next window without delay
-			continue
-		}
-
-		// Small delay to prevent busy waiting
-		time.Sleep(100 * time.Millisecond)
-	}
+	// Delegate to strategy to improve separation of concerns
+	strat := NewWindowedStrategy(f, *startWindow)
+	return strat.Run(ctx)
 }
 
 func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
@@ -355,87 +333,8 @@ func (f *Forwarder) switchToWindowedMode(reason string) {
 
 // realtimeLoop handles real-time event forwarding
 func (f *Forwarder) realtimeLoop(ctx context.Context) error {
-	f.logger.Printf("starting real-time sync mode")
-
-	// Create filter without time constraints for real-time streaming
-	filter := nostr.Filter{
-		Limit: f.cfg.Sync.MaxBatch,
-	}
-
-	// Use Subscribe directly for real-time streaming (doesn't close on EOSE)
-	sub, err := f.sourceRelay.Subscribe(ctx, nostr.Filters{filter})
-	if err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "realtime_subscribe", telemetry.ErrorSeverityError))
-		// Fallback to windowed mode
-		f.switchToWindowedMode("realtime_subscribe_failed")
-		return f.fallbackToWindowedMode(ctx)
-	}
-
-	f.logger.Printf("real-time event stream established")
-
-	// Stream events in real-time, ignoring EOSE
-	for {
-		select {
-		case <-ctx.Done():
-			if sub != nil {
-				// Try to close gracefully, but don't panic if it fails
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							f.logger.Printf("error closing subscription: %v", r)
-						}
-					}()
-					sub.Close()
-				}()
-			}
-			return ctx.Err()
-		case <-sub.ClosedReason:
-			// Subscription was closed by relay, this is an error in real-time mode
-			f.logger.Printf("real-time subscription closed by relay, attempting to reconnect")
-			f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("subscription closed by relay"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
-
-			f.connectRelays(ctx) // Reconnect relays
-			return f.realtimeLoop(ctx)
-		case <-sub.EndOfStoredEvents:
-			// EOSE received - ignore it in real-time mode, keep listening for new events
-			f.logger.Printf("received EOSE in real-time mode, continuing to listen for new events")
-			continue
-		case event, ok := <-sub.Events:
-			if !ok {
-				// Events channel closed, attempt to reconnect
-				f.logger.Printf("real-time event channel closed, attempting to reconnect")
-				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("event channel closed"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
-
-				f.connectRelays(ctx) // Reconnect relays
-				return f.realtimeLoop(ctx)
-			}
-
-			if event == nil {
-				f.logger.Printf("skipping nil event in real-time mode")
-				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("nil event"), "realtime_event_validation", telemetry.ErrorSeverityInfo))
-				continue
-			}
-
-			// Process real-time event
-			if err := f.processRealtimeEvent(ctx, event); err != nil {
-				f.logger.Printf("error processing real-time event %s: %v", event.ID, err)
-				// Don't fail the entire loop for individual event errors
-				continue
-			}
-
-			// Update sync window every 250 events
-			f.eventsSinceUpdate++
-			f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
-			if f.eventsSinceUpdate >= EventsPerWindowUpdate {
-				if err := f.updateRealtimeWindow(ctx); err != nil {
-					f.logger.Printf("error updating real-time window: %v", err)
-					// Continue without failing - this is not critical
-				}
-				f.eventsSinceUpdate = 0
-				f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
-			}
-		}
-	}
+	strat := NewRealtimeStrategy(f)
+	return strat.Run(ctx)
 }
 
 // processRealtimeEvent forwards a single event in real-time mode
