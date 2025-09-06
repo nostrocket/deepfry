@@ -50,10 +50,6 @@ func (s *realtimeStrategy) Run(ctx context.Context) error {
 				f.connectRelays(ctx)
 				return f.realtimeLoop(ctx)
 			}
-			if event == nil {
-				f.emitTelemetryMsgSev("nil event", "realtime_event_validation", telemetry.ErrorSeverityInfo)
-				continue
-			}
 			if err := f.processRealtimeEvent(ctx, event); err != nil {
 				continue
 			}
