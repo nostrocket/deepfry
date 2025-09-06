@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"event-forwarder/pkg/nsync"
-	"event-forwarder/pkg/telemetry"
 )
 
 // shouldSwitchToRealtime determines if we should switch from windowed to real-time mode
@@ -22,11 +21,7 @@ func (f *Forwarder) switchToRealtimeMode(reason string) {
 	f.currentSyncMode = SyncModeRealtime
 	f.eventsSinceUpdate = 0
 	f.logger.Printf("switching to real-time sync mode: %s", reason)
-	if f.tsink != nil {
-		f.tsink.EmitModeChanged(SyncModeRealtime, reason)
-	} else {
-		f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeRealtime, reason))
-	}
+	f.emitTelemetryModeChanged(SyncModeRealtime, reason)
 }
 
 // switchToWindowedMode changes the sync mode to windowed and emits telemetry
@@ -34,9 +29,5 @@ func (f *Forwarder) switchToWindowedMode(reason string) {
 	f.currentSyncMode = SyncModeWindowed
 	f.eventsSinceUpdate = 0
 	f.logger.Printf("switching to windowed sync mode: %s", reason)
-	if f.tsink != nil {
-		f.tsink.EmitModeChanged(SyncModeWindowed, reason)
-	} else {
-		f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeWindowed, reason))
-	}
+	f.emitTelemetryModeChanged(SyncModeWindowed, reason)
 }
