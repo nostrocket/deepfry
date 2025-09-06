@@ -177,6 +177,33 @@ func (f *Forwarder) emitTelemetryConnectionStatus(relayType string, connected bo
 	f.emitTelemetry(telemetry.NewConnectionStatusChanged(relayType, connected))
 }
 
+// forwardEvent handles the complete event forwarding process with telemetry and error handling.
+// Returns true if the event was successfully forwarded, false if it should be skipped/retried.
+func (f *Forwarder) forwardEvent(ctx context.Context, event *nostr.Event, context string) bool {
+	// Validate event
+	if event == nil {
+		f.logger.Printf("skipping nil event")
+		f.emitTelemetryMsgSev("nil event", context+"_event_validation", telemetry.ErrorSeverityInfo)
+		return false
+	}
+
+	// Record event received
+	f.emitTelemetryEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
+
+	// Forward event with latency measurement
+	startTime := time.Now()
+	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
+		f.logger.Printf("failed to forward event %s: %v", event.ID, err)
+		f.emitTelemetryErrorSev(err, context+"_publish", telemetry.ErrorSeverityWarning)
+		return false
+	}
+
+	// Record successful forward with latency
+	latency := time.Since(startTime)
+	f.emitTelemetryEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
+	return true
+}
+
 // Close stops the telemetry publisher goroutine
 func (f *Forwarder) Close() {
 	if f.tsink != nil {
@@ -308,27 +335,10 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		default:
 		}
 
-		if event == nil {
-			f.logger.Printf("skipping nil event")
-			f.emitTelemetryMsgSev("nil event", "event_validation", telemetry.ErrorSeverityInfo)
-			continue
+		if f.forwardEvent(ctx, event, "relay") {
+			eventCount++
 		}
-
-		// Record event received
-		f.emitTelemetryEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
-
-		startTime := time.Now()
-		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
-			f.emitTelemetryErrorSev(err, "relay_publish", telemetry.ErrorSeverityWarning)
-			// Do not reconnect/panic here; allow sync event to proceed (tests expect success when sync publish succeeds)
-			continue
-		}
-
-		// Record successful forward with latency
-		latency := time.Since(startTime)
-		f.emitTelemetryEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
-		eventCount++
+		// Continue processing regardless of forward success/failure
 	}
 
 	// Update sync progress (publishes sync event)
@@ -360,19 +370,10 @@ func (f *Forwarder) realtimeLoop(ctx context.Context) error {
 
 // processRealtimeEvent forwards a single event in real-time mode
 func (f *Forwarder) processRealtimeEvent(ctx context.Context, event *nostr.Event) error {
-	// Record event received
-	f.emitTelemetryEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
-
-	startTime := time.Now()
-	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-		f.emitTelemetryErrorSev(err, "realtime_publish", telemetry.ErrorSeverityWarning)
-		return fmt.Errorf("failed to forward event: %w", err)
+	if f.forwardEvent(ctx, event, "realtime") {
+		return nil
 	}
-
-	// Record successful forward with latency
-	latency := time.Since(startTime)
-	f.emitTelemetryEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
-	return nil
+	return fmt.Errorf("failed to forward event")
 }
 
 // updateRealtimeWindow updates the sync window to reflect current progress in real-time mode
