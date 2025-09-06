@@ -36,6 +36,9 @@ type Forwarder struct {
 	// New: decoupled connection manager (backed by go-nostr)
 	connMgr ConnectionManager
 
+	// New: window manager abstraction
+	winMgr WindowManager
+
 	// Internal event channel for telemetry
 	eventCh         chan telemetry.TelemetryEvent
 	publisherCtx    context.Context
@@ -129,6 +132,7 @@ func (f *Forwarder) Start(ctx context.Context) error {
 	defer f.closeRelays()
 
 	f.syncTracker = nsync.NewSyncTracker(f.deepfryRelay, f.cfg)
+	f.winMgr = NewWindowManager(f.cfg, f.syncTracker)
 
 	// Get last sync window or create new one
 	window, err := f.getOrCreateWindow(ctx)
@@ -176,6 +180,10 @@ func (f *Forwarder) closeRelays() {
 }
 
 func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error) {
+	// Prefer window manager if available (set during Start). Fallback to inline logic for tests
+	if f.winMgr != nil {
+		return f.winMgr.GetOrCreate(ctx)
+	}
 
 	if f.cfg.Sync.StartTime != "" {
 		startTime, err := time.Parse(time.RFC3339, f.cfg.Sync.StartTime)
@@ -230,7 +238,11 @@ func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) err
 				time.Sleep(time.Second)
 				continue
 			}
-			currentWindow = currentWindow.Next(windowDuration)
+			if f.winMgr != nil {
+				currentWindow = f.winMgr.Advance(currentWindow)
+			} else {
+				currentWindow = currentWindow.Next(windowDuration)
+			}
 			f.currentWindow = &currentWindow
 			// Continue immediately to next window without delay
 			continue
@@ -297,11 +309,18 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 	}
 
 	// Update sync progress (publishes sync event)
-	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "sync_update", telemetry.ErrorSeverityWarning))
+	// Update sync progress (publishes sync event) via window manager when available
+	var updateErr error
+	if f.winMgr != nil {
+		updateErr = f.winMgr.Update(ctx, window)
+	} else {
+		updateErr = f.syncTracker.UpdateWindow(ctx, window)
+	}
+	if updateErr != nil {
+		f.emitTelemetry(telemetry.NewForwarderError(updateErr, "sync_update", telemetry.ErrorSeverityWarning))
 		// Force reconnect; this will panic if reconnect fails (expected by tests)
 		f.forceReconnect(ctx)
-		return fmt.Errorf("failed to update sync window: %w", err)
+		return fmt.Errorf("failed to update sync window: %w", updateErr)
 	}
 
 	f.logger.Printf("completed window sync: %d events forwarded", eventCount)
@@ -451,7 +470,13 @@ func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 		To:   now,
 	}
 
-	if err := f.syncTracker.UpdateWindow(ctx, updatedWindow); err != nil {
+	var err error
+	if f.winMgr != nil {
+		err = f.winMgr.Update(ctx, updatedWindow)
+	} else {
+		err = f.syncTracker.UpdateWindow(ctx, updatedWindow)
+	}
+	if err != nil {
 		f.emitTelemetry(telemetry.NewForwarderError(err, "realtime_window_update", telemetry.ErrorSeverityWarning))
 		return fmt.Errorf("failed to update real-time window: %w", err)
 	}
