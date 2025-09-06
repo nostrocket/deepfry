@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"event-forwarder/pkg/nsync"
-	"event-forwarder/pkg/telemetry"
 )
 
 // windowedStrategy implements SyncStrategy for windowed catch-up mode.
@@ -29,11 +28,7 @@ func (s *windowedStrategy) Run(ctx context.Context) error {
 
 	// Emit initial mode telemetry once
 	if !s.started {
-		if f.tsink != nil {
-			f.tsink.EmitModeChanged(f.currentSyncMode, "initial_mode")
-		} else {
-			f.emitTelemetry(telemetry.NewSyncModeChanged(f.currentSyncMode, "initial_mode"))
-		}
+		f.emitTelemetryModeChanged(f.currentSyncMode, "initial_mode")
 		s.started = true
 	}
 
