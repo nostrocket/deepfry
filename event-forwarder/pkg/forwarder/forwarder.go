@@ -33,6 +33,9 @@ type Forwarder struct {
 	deepfryRelay relay.Relay
 	syncTracker  *nsync.SyncTracker
 
+	// New: decoupled connection manager (backed by go-nostr)
+	connMgr ConnectionManager
+
 	// Internal event channel for telemetry
 	eventCh         chan telemetry.TelemetryEvent
 	publisherCtx    context.Context
@@ -51,6 +54,9 @@ func New(cfg *config.Config, logger *log.Logger, telemetryPublisher telemetry.Te
 		eventCh:         make(chan telemetry.TelemetryEvent, 100), // Buffered channel
 		currentSyncMode: SyncModeWindowed,                         // Start in windowed mode
 	}
+
+	// Initialize connection manager
+	f.connMgr = NewConnectionManager(cfg.SourceRelayURL, cfg.DeepFryRelayURL, f.emitTelemetry)
 
 	// Start telemetry publisher if provided
 	if telemetryPublisher != nil {
@@ -71,6 +77,9 @@ func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryR
 		eventCh:         make(chan telemetry.TelemetryEvent, 100),
 		currentSyncMode: SyncModeWindowed, // Start in windowed mode
 	}
+
+	// Initialize connection manager only with URLs, but since tests inject relays
+	// we won't use connMgr in this constructor to avoid overriding injected values.
 
 	// Start telemetry publisher if provided
 	if telemetryPublisher != nil {
@@ -134,34 +143,28 @@ func (f *Forwarder) Start(ctx context.Context) error {
 }
 
 func (f *Forwarder) connectRelays(ctx context.Context) error {
-
-	f.sourceRelay = f.attemptConnect(ctx, "source", f.cfg.SourceRelayURL)
-	f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", true))
-
-	f.deepfryRelay = f.attemptConnect(ctx, "deepfry", f.cfg.DeepFryRelayURL)
-	f.emitTelemetry(telemetry.NewConnectionStatusChanged("deepfry", true))
-
-	return nil
-}
-
-func (f *Forwarder) attemptConnect(ctx context.Context, name string, url string) *nostr.Relay {
-	max_attempts := 3
-	for attempt := 1; attempt <= max_attempts; attempt++ {
-		relay, err := nostr.RelayConnect(ctx, url)
-		if err != nil {
-			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, false))
-			f.emitTelemetry(telemetry.NewForwarderError(err, fmt.Sprintf("attempt %d failed to connect to %s_relay: %s", attempt, name, err), telemetry.ErrorSeverityError))
-		} else {
-			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, true))
-			return relay
-		}
-		time.Sleep(time.Second * time.Duration(attempt*2)) // Exponential backoff
+	// If tests injected relays, keep them and skip connMgr to preserve behavior
+	if f.sourceRelay != nil && f.deepfryRelay != nil {
+		return nil
 	}
-	log.Panicf("failed to connect to %s relay after %d attempts", name, max_attempts)
+	// Otherwise, use the connection manager to establish connections
+	if f.connMgr == nil {
+		f.connMgr = NewConnectionManager(f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, f.emitTelemetry)
+	}
+	if err := f.connMgr.Connect(ctx); err != nil {
+		return err
+	}
+	f.sourceRelay = f.connMgr.Source()
+	f.deepfryRelay = f.connMgr.Deepfry()
 	return nil
 }
 
 func (f *Forwarder) closeRelays() {
+	// Prefer connection manager when available to ensure symmetric telemetry
+	if f.connMgr != nil && f.sourceRelay == f.connMgr.Source() && f.deepfryRelay == f.connMgr.Deepfry() {
+		f.connMgr.Close()
+		return
+	}
 	if f.sourceRelay != nil {
 		f.sourceRelay.Close()
 		f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", false))
@@ -283,6 +286,7 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
 			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
 			f.emitTelemetry(telemetry.NewForwarderError(err, "relay_publish", telemetry.ErrorSeverityWarning))
+			// Do not reconnect/panic here; allow sync event to proceed (tests expect success when sync publish succeeds)
 			continue
 		}
 
@@ -292,10 +296,11 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		eventCount++
 	}
 
-	// Update sync progress
+	// Update sync progress (publishes sync event)
 	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
 		f.emitTelemetry(telemetry.NewForwarderError(err, "sync_update", telemetry.ErrorSeverityWarning))
-		f.connectRelays(ctx) // Reconnect relays
+		// Force reconnect; this will panic if reconnect fails (expected by tests)
+		f.forceReconnect(ctx)
 		return fmt.Errorf("failed to update sync window: %w", err)
 	}
 
@@ -468,4 +473,17 @@ func (f *Forwarder) fallbackToWindowedMode(ctx context.Context) error {
 
 	// Resume windowed sync
 	return f.syncLoop(ctx, window)
+}
+
+// forceReconnect ensures the connection manager is initialized and performs a reconnect.
+// It always uses the ConnectionManager path (ignores any injected relays) and will panic
+// if reconnect fails after retries (matching attemptConnect behaviour).
+func (f *Forwarder) forceReconnect(ctx context.Context) {
+	if f.connMgr == nil {
+		f.connMgr = NewConnectionManager(f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, f.emitTelemetry)
+	}
+	// Reconnect will panic inside if attempts are exhausted
+	_ = f.connMgr.Reconnect(ctx)
+	f.sourceRelay = f.connMgr.Source()
+	f.deepfryRelay = f.connMgr.Deepfry()
 }
