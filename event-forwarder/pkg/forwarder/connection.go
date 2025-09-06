@@ -60,7 +60,8 @@ func (c *connectionManagerImpl) attemptConnect(ctx context.Context, name, url st
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		r, err := nostr.RelayConnect(ctx, url)
 		if err != nil {
-			c.emitErr(err, fmt.Sprintf("attempt %d failed to connect to %s_relay: %s", attempt, name, err), telemetry.ErrorSeverityError)
+			c.emitErr(err, fmt.Sprintf("attempt %d/%d failed to connect to %s relay (%s): %s", 
+				attempt, maxAttempts, name, url, err), telemetry.ErrorSeverityError)
 			c.emitConn(name, false)
 		} else {
 			c.emitConn(name, true)
@@ -68,7 +69,7 @@ func (c *connectionManagerImpl) attemptConnect(ctx context.Context, name, url st
 		}
 		time.Sleep(time.Second * time.Duration(attempt*2)) // exponential backoff
 	}
-	log.Panicf("failed to connect to %s relay after %d attempts", name, maxAttempts)
+	log.Panicf("failed to connect to %s relay (%s) after %d attempts", name, url, maxAttempts)
 	return nil
 }
 
