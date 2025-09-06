@@ -1,10 +1,11 @@
 # DeepFry
+This provides deep fried nostr events for humble horse. The core problem we propose to solve is how to surface the most relevant signal in a sea of noise. 
 
-DeepFry is the backend stack that powers **Humble Horse** — a Nostr-based ecosystem for trust-aware content discovery, semantic search, and thread reconstruction.
+This monorepo contains the **StrFry relay** and all associated systems that feed, enhance, and query it. 
 
-This repository contains the **StrFry relay** and all backend subsystems that feed, enhance, and query it. The design keeps StrFry stock for maximum performance and NIP compliance, while surrounding it with additional services for discovery, trust scoring, and search.
+The design uses StrFry for maximum performance and NIP compliance, while surrounding it with additional services for discovery, trust scoring, and search.
 
-We welcome external contributors to help build the fastest and smartest relay stack in the Nostr network.
+We welcome external contributors. 
 
 ---
 
@@ -48,11 +49,11 @@ We welcome external contributors to help build the fastest and smartest relay st
 
 ## Contributing
 
-We welcome contributions from the community.
+We merge all PRs that solve exactly one clearly stated problem and don't break any existing functionality. 
 
 1. Fork the repository and create a branch.
 2. Work on your feature or fix.
-3. Submit a PR with a clear description and test coverage.
+3. Submit a PR with a clear one line description of the problem being solved. 
 
 ---
 
