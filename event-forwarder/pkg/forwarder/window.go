@@ -29,7 +29,8 @@ func (w *windowManagerImpl) GetOrCreate(ctx context.Context) (*nsync.Window, err
 	if w.cfg.Sync.StartTime != "" {
 		startTime, err := time.Parse(time.RFC3339, w.cfg.Sync.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("invalid start time format: %w", err)
+			return nil, fmt.Errorf("invalid start time format '%s' in window manager (expected RFC3339): %w", 
+				w.cfg.Sync.StartTime, err)
 		}
 		window := nsync.NewWindowFromStart(startTime.UTC(), w.windowDuration)
 		return &window, nil

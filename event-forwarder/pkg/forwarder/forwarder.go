@@ -182,8 +182,9 @@ func (f *Forwarder) emitTelemetryConnectionStatus(relayType string, connected bo
 func (f *Forwarder) forwardEvent(ctx context.Context, event *nostr.Event, context string) bool {
 	// Validate event
 	if event == nil {
-		f.logger.Printf("skipping nil event")
-		f.emitTelemetryMsgSev("nil event", context+"_event_validation", telemetry.ErrorSeverityInfo)
+		f.logger.Printf("skipping nil event in %s mode from %s", context, f.cfg.SourceRelayURL)
+		f.emitTelemetryMsgSev(fmt.Sprintf("nil event from %s", f.cfg.SourceRelayURL), 
+			context+"_event_validation", telemetry.ErrorSeverityInfo)
 		return false
 	}
 
@@ -193,7 +194,8 @@ func (f *Forwarder) forwardEvent(ctx context.Context, event *nostr.Event, contex
 	// Forward event with latency measurement
 	startTime := time.Now()
 	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-		f.logger.Printf("failed to forward event %s: %v", event.ID, err)
+		f.logger.Printf("failed to forward event %s (kind: %d, created_at: %d) to %s in %s mode: %v", 
+			event.ID, event.Kind, event.CreatedAt, f.cfg.DeepFryRelayURL, context, err)
 		f.emitTelemetryErrorSev(err, context+"_publish", telemetry.ErrorSeverityWarning)
 		return false
 	}
@@ -214,7 +216,8 @@ func (f *Forwarder) Close() {
 func (f *Forwarder) Start(ctx context.Context) error {
 	// Connect to relays
 	if err := f.connectRelays(ctx); err != nil {
-		return fmt.Errorf("failed to connect to relays: %w", err)
+		return fmt.Errorf("failed to connect to relays (source: %s, deepfry: %s): %w", 
+			f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, err)
 	}
 	defer f.closeRelays()
 
@@ -224,10 +227,13 @@ func (f *Forwarder) Start(ctx context.Context) error {
 	// Get last sync window or create new one
 	window, err := f.getOrCreateWindow(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get sync window: %w", err)
+		return fmt.Errorf("failed to get sync window (mode: %s, start_time: %s): %w", 
+			f.currentSyncMode, f.cfg.Sync.StartTime, err)
 	}
 
-	f.logger.Printf("starting sync from window: %s to %s", window.From, window.To)
+	f.logger.Printf("starting sync from window: %s to %s (mode: %s, duration: %v)", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+		f.currentSyncMode, window.To.Sub(window.From))
 
 	// Start syncing
 	return f.syncLoop(ctx, window)
@@ -275,7 +281,8 @@ func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error
 	if f.cfg.Sync.StartTime != "" {
 		startTime, err := time.Parse(time.RFC3339, f.cfg.Sync.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("invalid start time format: %w", err)
+			return nil, fmt.Errorf("invalid start time format '%s' (expected RFC3339): %w", 
+				f.cfg.Sync.StartTime, err)
 		}
 		window := nsync.NewWindowFromStart(startTime.UTC(), time.Duration(f.cfg.Sync.WindowSeconds)*time.Second)
 		return &window, nil
@@ -304,7 +311,9 @@ func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) err
 }
 
 func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
-	f.logger.Printf("syncing window: %s to %s", window.From, window.To)
+	f.logger.Printf("syncing window: %s to %s (batch_limit: %d, relay: %s)", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+		f.cfg.Sync.MaxBatch, f.cfg.SourceRelayURL)
 
 	// Emit sync progress
 	f.emitTelemetrySyncProgress(window.From.Unix(), window.To.Unix())
@@ -321,11 +330,14 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 	eventCh, err := f.sourceRelay.QueryEvents(ctx, filter)
 	if err != nil {
 		f.emitTelemetryErrorSev(err, "relay_query", telemetry.ErrorSeverityWarning)
-		return fmt.Errorf("failed to query events: %w", err)
+		return fmt.Errorf("failed to query events from relay %s (window: %s to %s, batch_limit: %d): %w", 
+			f.cfg.SourceRelayURL, window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+			f.cfg.Sync.MaxBatch, err)
 	}
 
 	eventCount := 0
-	f.logger.Printf("starting to forward events from window")
+	f.logger.Printf("starting to forward events from window %s to %s", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
 
 	// Stream events from channel and forward them
 	for event := range eventCh {
@@ -353,10 +365,12 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		f.emitTelemetryErrorSev(updateErr, "sync_update", telemetry.ErrorSeverityWarning)
 		// Force reconnect; this will panic if reconnect fails (expected by tests)
 		f.forceReconnect(ctx)
-		return fmt.Errorf("failed to update sync window: %w", updateErr)
+		return fmt.Errorf("failed to update sync window %s to %s (events_processed: %d): %w", 
+			window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), eventCount, updateErr)
 	}
 
-	f.logger.Printf("completed window sync: %d events forwarded", eventCount)
+	f.logger.Printf("completed window sync: %d events forwarded from %s to %s", 
+		eventCount, window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
 	return nil
 }
 
@@ -373,13 +387,17 @@ func (f *Forwarder) processRealtimeEvent(ctx context.Context, event *nostr.Event
 	if f.forwardEvent(ctx, event, "realtime") {
 		return nil
 	}
-	return fmt.Errorf("failed to forward event")
+	if event != nil {
+		return fmt.Errorf("failed to forward event %s (kind: %d, created_at: %d) in realtime mode", 
+			event.ID, event.Kind, event.CreatedAt)
+	}
+	return fmt.Errorf("failed to forward nil event in realtime mode")
 }
 
 // updateRealtimeWindow updates the sync window to reflect current progress in real-time mode
 func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 	if f.currentWindow == nil {
-		return fmt.Errorf("current window is nil")
+		return fmt.Errorf("current window is nil in realtime mode (sync_mode: %s)", f.currentSyncMode)
 	}
 
 	// Update window to current time (keeping same size)
@@ -399,7 +417,9 @@ func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 	}
 	if err != nil {
 		f.emitTelemetryErrorSev(err, "realtime_window_update", telemetry.ErrorSeverityWarning)
-		return fmt.Errorf("failed to update real-time window: %w", err)
+		return fmt.Errorf("failed to update real-time window from %s to %s (window_duration: %v): %w", 
+			f.currentWindow.From.Format(time.RFC3339), updatedWindow.To.Format(time.RFC3339), 
+			windowDuration, err)
 	}
 
 	f.currentWindow = &updatedWindow
@@ -409,12 +429,13 @@ func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 
 // fallbackToWindowedMode attempts to fallback to windowed sync mode when real-time fails
 func (f *Forwarder) fallbackToWindowedMode(ctx context.Context) error {
-	f.logger.Printf("attempting fallback to windowed sync mode")
+	f.logger.Printf("attempting fallback to windowed sync mode from %s mode", f.currentSyncMode)
 
 	// Get current window or create a new one
 	window, err := f.getOrCreateWindow(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get window for fallback: %w", err)
+		return fmt.Errorf("failed to get window for fallback to windowed mode (current_mode: %s): %w", 
+			f.currentSyncMode, err)
 	}
 
 	// Resume windowed sync
