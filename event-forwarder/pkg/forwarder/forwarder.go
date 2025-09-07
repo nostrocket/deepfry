@@ -134,26 +134,30 @@ func (f *Forwarder) Start(ctx context.Context) error {
 }
 
 func (f *Forwarder) connectRelays(ctx context.Context) error {
-	var err error
 
-	sourceRelay, err := nostr.RelayConnect(ctx, f.cfg.SourceRelayURL)
-	if err != nil {
-		f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", false))
-		f.emitTelemetry(telemetry.NewForwarderError(err, "source_relay_connect", telemetry.ErrorSeverityError))
-		return fmt.Errorf("failed to connect to source relay: %w", err)
-	}
-	f.sourceRelay = sourceRelay
+	f.sourceRelay = f.attemptConnect(ctx, "source", f.cfg.SourceRelayURL)
 	f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", true))
 
-	deepfryRelay, err := nostr.RelayConnect(ctx, f.cfg.DeepFryRelayURL)
-	if err != nil {
-		f.emitTelemetry(telemetry.NewConnectionStatusChanged("deepfry", false))
-		f.emitTelemetry(telemetry.NewForwarderError(err, "deepfry_relay_connect", telemetry.ErrorSeverityError))
-		return fmt.Errorf("failed to connect to deepfry relay: %w", err)
-	}
-	f.deepfryRelay = deepfryRelay
+	f.deepfryRelay = f.attemptConnect(ctx, "deepfry", f.cfg.DeepFryRelayURL)
 	f.emitTelemetry(telemetry.NewConnectionStatusChanged("deepfry", true))
 
+	return nil
+}
+
+func (f *Forwarder) attemptConnect(ctx context.Context, name string, url string) *nostr.Relay {
+	max_attempts := 3
+	for attempt := 1; attempt <= max_attempts; attempt++ {
+		relay, err := nostr.RelayConnect(ctx, url)
+		if err != nil {
+			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, false))
+			f.emitTelemetry(telemetry.NewForwarderError(err, fmt.Sprintf("attempt %d failed to connect to %s_relay: %s", attempt, name, err), telemetry.ErrorSeverityError))
+		} else {
+			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, true))
+			return relay
+		}
+		time.Sleep(time.Second * time.Duration(attempt*2)) // Exponential backoff
+	}
+	log.Panicf("failed to connect to %s relay after %d attempts", name, max_attempts)
 	return nil
 }
 
@@ -291,6 +295,7 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 	// Update sync progress
 	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
 		f.emitTelemetry(telemetry.NewForwarderError(err, "sync_update", telemetry.ErrorSeverityWarning))
+		f.connectRelays(ctx) // Reconnect relays
 		return fmt.Errorf("failed to update sync window: %w", err)
 	}
 
@@ -365,8 +370,7 @@ func (f *Forwarder) realtimeLoop(ctx context.Context) error {
 			f.logger.Printf("real-time subscription closed by relay, attempting to reconnect")
 			f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("subscription closed by relay"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
 
-			// Try to restart the real-time loop
-			time.Sleep(2 * time.Second)
+			f.connectRelays(ctx) // Reconnect relays
 			return f.realtimeLoop(ctx)
 		case <-sub.EndOfStoredEvents:
 			// EOSE received - ignore it in real-time mode, keep listening for new events
@@ -378,8 +382,7 @@ func (f *Forwarder) realtimeLoop(ctx context.Context) error {
 				f.logger.Printf("real-time event channel closed, attempting to reconnect")
 				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("event channel closed"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
 
-				// Try to restart the real-time loop
-				time.Sleep(2 * time.Second)
+				f.connectRelays(ctx) // Reconnect relays
 				return f.realtimeLoop(ctx)
 			}
 

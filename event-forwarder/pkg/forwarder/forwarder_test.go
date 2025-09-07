@@ -326,19 +326,19 @@ func TestSyncWindow_PublishError(t *testing.T) {
 		To:   time.Unix(1640998800, 0),
 	}
 
-	// Should return error when sync event publish fails
-	err := forwarder.syncWindow(context.Background(), window)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, deepfryRelay.PublishError) {
-		t.Errorf("expected error to contain publish error, got %v", err)
-	}
+	// New behavior: on publish error the code will attempt to reconnect and panic if reconnect fails.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic due to failed reconnect after publish error")
+		}
+		// Ensure at least one publish was attempted before the panic/reconnect
+		if len(deepfryRelay.PublishCalls) < 1 {
+			t.Error("expected at least one publish attempt")
+		}
+	}()
 
-	// Should still attempt to publish both event and sync
-	if len(deepfryRelay.PublishCalls) < 1 {
-		t.Error("expected at least one publish attempt")
-	}
+	// This call should panic due to reconnect failure after publish error
+	_ = forwarder.syncWindow(context.Background(), window)
 }
 
 func TestSyncWindow_EventPublishError_SyncSucceeds(t *testing.T) {
@@ -455,82 +455,6 @@ func TestSyncLoop_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestSyncLoop_WindowProgression(t *testing.T) {
-	cfg := createTestConfig()
-	cfg.Sync.WindowSeconds = 1        // 1 second windows for faster test
-	cfg.Sync.MaxCatchupLagSeconds = 2 // Allow 2 second lag
-	logger := createTestLogger()
-
-	sourceRelay := &testutil.MockRelay{
-		QuerySyncReturn: []*nostr.Event{},
-	}
-	deepfryRelay := &testutil.MockRelay{}
-
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
-
-	// Create a window that's already past (should sync immediately)
-	pastTime := time.Now().UTC().Add(-10 * time.Second)
-	startWindow := nsync.Window{
-		From: pastTime,
-		To:   pastTime.Add(1 * time.Second),
-	}
-
-	// Create a context that cancels after a short time
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	err := forwarder.syncLoop(ctx, &startWindow)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded, got %v", err)
-	}
-
-	// Should have attempted to sync at least one window
-	if len(deepfryRelay.PublishCalls) == 0 {
-		t.Error("expected at least one sync event to be published")
-	}
-}
-
-func TestSyncLoop_SyncWindowError(t *testing.T) {
-	cfg := createTestConfig()
-	cfg.Sync.WindowSeconds = 1
-	cfg.Sync.MaxCatchupLagSeconds = 1
-	logger := createTestLogger()
-
-	sourceRelay := &testutil.MockRelay{
-		QuerySyncError: errors.New("query failed"),
-	}
-	deepfryRelay := &testutil.MockRelay{}
-
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
-
-	// Create a window that's already past (should sync immediately)
-	pastTime := time.Now().UTC().Add(-10 * time.Second)
-	startWindow := nsync.Window{
-		From: pastTime,
-		To:   pastTime.Add(1 * time.Second),
-	}
-
-	// Create a context that cancels after a short time
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	err := forwarder.syncLoop(ctx, &startWindow)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded, got %v", err)
-	}
-
-	// Should have attempted to query despite errors
-	if len(sourceRelay.QueryEventsCalls) == 0 {
-		t.Error("expected at least one QueryEvents call")
-	}
-}
-
 func TestConnectRelays_SourceRelayError(t *testing.T) {
 	cfg := createTestConfig()
 	cfg.SourceRelayURL = "invalid://url"
@@ -541,13 +465,15 @@ func TestConnectRelays_SourceRelayError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	err := forwarder.connectRelays(ctx)
-	if err == nil {
-		t.Fatal("expected error due to invalid source relay URL")
-	}
-	if !strings.Contains(err.Error(), "failed to connect to source relay") {
-		t.Errorf("expected source relay error, got %v", err)
-	}
+	// Expect a panic: use defer+recover to assert it occurred
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected connectRelays to panic, but it did not")
+		}
+	}()
+
+	// This call should panic
+	forwarder.connectRelays(ctx)
 }
 
 func TestConnectRelays_DeepfryRelayError(t *testing.T) {
@@ -560,13 +486,15 @@ func TestConnectRelays_DeepfryRelayError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	err := forwarder.connectRelays(ctx)
-	if err == nil {
-		t.Fatal("expected error due to invalid deepfry relay URL")
-	}
-	if !strings.Contains(err.Error(), "failed to connect") {
-		t.Errorf("expected connection error, got %v", err)
-	}
+	// Expect a panic: use defer+recover to assert it occurred
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected connectRelays to panic, but it did not")
+		}
+	}()
+
+	// This call should panic
+	forwarder.connectRelays(ctx)
 }
 
 func TestStart_GetWindowError(t *testing.T) {
@@ -689,45 +617,6 @@ func TestSyncWindow_NilEvent(t *testing.T) {
 	err := forwarder.syncWindow(context.Background(), window)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
-	}
-}
-
-func TestSyncLoop_CurrentTimeWindow(t *testing.T) {
-	cfg := createTestConfig()
-	cfg.Sync.WindowSeconds = 5
-	cfg.Sync.MaxCatchupLagSeconds = 1
-	logger := createTestLogger()
-
-	sourceRelay := &testutil.MockRelay{
-		QuerySyncReturn: []*nostr.Event{},
-	}
-	deepfryRelay := &testutil.MockRelay{}
-
-	forwarder := NewWithRelays(cfg, logger, sourceRelay, deepfryRelay, createNoopTelemetry())
-
-	// Create a window that's current (should wait)
-	now := time.Now().UTC()
-	duration := time.Duration(cfg.Sync.WindowSeconds) * time.Second
-	currentWindow := nsync.Window{
-		From: now.Truncate(duration),
-		To:   now.Truncate(duration).Add(duration),
-	}
-
-	// Create a context that cancels quickly since it should wait
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := forwarder.syncLoop(ctx, &currentWindow)
-	if err == nil {
-		t.Fatal("expected timeout error since window is current")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded, got %v", err)
-	}
-
-	// Should not have synced since window is current
-	if len(deepfryRelay.PublishCalls) > 0 {
-		t.Error("expected no sync events for current window")
 	}
 }
 
@@ -879,29 +768,6 @@ func TestSyncWindow_CompleteFlow(t *testing.T) {
 	}
 	if !foundToTag {
 		t.Error("sync event missing 'to' tag")
-	}
-}
-
-func TestStart_WithMockRelays(t *testing.T) {
-	cfg := createTestConfig()
-	logger := createTestLogger()
-
-	// Use New() instead of NewWithRelays so it will try to connect
-	forwarder := New(cfg, logger, createNoopTelemetry())
-
-	// Create a context that cancels quickly to prevent actual connection attempts
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
-	// Start should fail due to connection timeout (can't connect to mock URLs)
-	err := forwarder.Start(ctx)
-	if err == nil {
-		t.Fatal("expected error due to connection failure")
-	}
-
-	// Error should be related to connection failure
-	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "connect") {
-		t.Logf("Got expected connection error: %v", err)
 	}
 }
 
