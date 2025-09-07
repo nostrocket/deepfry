@@ -23,7 +23,7 @@ LDFLAGS=-X 'event-forwarder/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build run test fmt vet tidy clean help
+.PHONY: all build run test fmt vet tidy clean help bench
 
 all: build
 
@@ -91,3 +91,15 @@ lint-fix:
         echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
         exit 1; \
     fi
+
+BENCHPKG ?= ./...
+BENCHFLAGS ?= -bench . -benchmem -run none -count=1
+
+ifdef BENCHTIME
+    BENCHFLAGS := $(BENCHFLAGS) -benchtime=$(BENCHTIME)
+endif
+
+bench:
+	@echo "Running benchmarks: pkg=$(BENCHPKG) flags=$(BENCHFLAGS)"
+	go test $(BENCHFLAGS) $(BENCHPKG)
+
