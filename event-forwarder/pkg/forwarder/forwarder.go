@@ -33,10 +33,14 @@ type Forwarder struct {
 	deepfryRelay relay.Relay
 	syncTracker  *nsync.SyncTracker
 
-	// Internal event channel for telemetry
-	eventCh         chan telemetry.TelemetryEvent
-	publisherCtx    context.Context
-	publisherCancel context.CancelFunc
+	// New: decoupled connection manager (backed by go-nostr)
+	connMgr ConnectionManager
+
+	// New: window manager abstraction
+	winMgr WindowManager
+
+	// Telemetry adapter (keeps channels/goroutine out of orchestrator)
+	tsink TelemetrySink
 
 	// Sync mode tracking
 	currentSyncMode   string
@@ -48,9 +52,11 @@ func New(cfg *config.Config, logger *log.Logger, telemetryPublisher telemetry.Te
 	f := &Forwarder{
 		cfg:             cfg,
 		logger:          logger,
-		eventCh:         make(chan telemetry.TelemetryEvent, 100), // Buffered channel
-		currentSyncMode: SyncModeWindowed,                         // Start in windowed mode
+		currentSyncMode: SyncModeWindowed, // Start in windowed mode
 	}
+
+	// Initialize connection manager
+	f.connMgr = NewConnectionManager(cfg.SourceRelayURL, cfg.DeepFryRelayURL, f.emitTelemetry)
 
 	// Start telemetry publisher if provided
 	if telemetryPublisher != nil {
@@ -68,9 +74,11 @@ func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryR
 		sourceRelay:     sourceRelay,
 		deepfryRelay:    deepfryRelay,
 		syncTracker:     nsync.NewSyncTracker(deepfryRelay, cfg),
-		eventCh:         make(chan telemetry.TelemetryEvent, 100),
 		currentSyncMode: SyncModeWindowed, // Start in windowed mode
 	}
+
+	// Initialize connection manager only with URLs, but since tests inject relays
+	// we won't use connMgr in this constructor to avoid overriding injected values.
 
 	// Start telemetry publisher if provided
 	if telemetryPublisher != nil {
@@ -82,102 +90,199 @@ func NewWithRelays(cfg *config.Config, logger *log.Logger, sourceRelay, deepfryR
 
 // StartTelemetryPublisher starts a goroutine that publishes events to the telemetry publisher
 func (f *Forwarder) StartTelemetryPublisher(publisher telemetry.TelemetryPublisher) {
-	f.publisherCtx, f.publisherCancel = context.WithCancel(context.Background())
-	go func() {
-		for {
-			select {
-			case event := <-f.eventCh:
-				publisher.Publish(event)
-			case <-f.publisherCtx.Done():
-				return
-			}
-		}
-	}()
+	f.tsink = NewTelemetrySink(publisher)
+	f.tsink.Start()
 }
 
 // emitTelemetry sends an event to the internal channel (non-blocking)
 func (f *Forwarder) emitTelemetry(event telemetry.TelemetryEvent) {
-	select {
-	case f.eventCh <- event:
-	default:
-		// Channel full, drop event to avoid blocking
+	if f.tsink != nil {
+		f.tsink.EmitRaw(event)
 	}
+}
+
+// lightweight helpers used by strategies to reduce duplication
+func (f *Forwarder) emitTelemetryError(err error, where string) {
+	if f.tsink != nil {
+		f.tsink.EmitError(err, where, telemetry.ErrorSeverityError)
+		return
+	}
+	f.emitTelemetry(telemetry.NewForwarderError(err, where, telemetry.ErrorSeverityError))
+}
+func (f *Forwarder) emitTelemetryErrorSev(err error, where string, sev telemetry.ErrorSeverity) {
+	if f.tsink != nil {
+		f.tsink.EmitError(err, where, sev)
+		return
+	}
+	f.emitTelemetry(telemetry.NewForwarderError(err, where, sev))
+}
+func (f *Forwarder) emitTelemetryMsgSev(msg string, where string, sev telemetry.ErrorSeverity) {
+	// avoid non-constant format string vet warning by not using fmt.Errorf with variable format
+	if f.tsink != nil {
+		f.tsink.EmitError(fmt.Errorf("%s", msg), where, sev)
+		return
+	}
+	f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("%s", msg), where, sev))
+}
+func (f *Forwarder) emitTelemetryRealtimeProgress(n int) {
+	if f.tsink != nil {
+		f.tsink.EmitRaw(telemetry.NewRealtimeProgressUpdated(n))
+		return
+	}
+	f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(n))
+}
+
+// emitTelemetryModeChanged emits a sync mode change event
+func (f *Forwarder) emitTelemetryModeChanged(mode string, reason string) {
+	if f.tsink != nil {
+		f.tsink.EmitModeChanged(mode, reason)
+		return
+	}
+	f.emitTelemetry(telemetry.NewSyncModeChanged(mode, reason))
+}
+
+// emitTelemetrySyncProgress emits sync progress update
+func (f *Forwarder) emitTelemetrySyncProgress(from, to int64) {
+	if f.tsink != nil {
+		f.tsink.EmitSyncProgress(from, to)
+		return
+	}
+	f.emitTelemetry(telemetry.NewSyncProgressUpdated(from, to))
+}
+
+// emitTelemetryEventReceived emits event received telemetry
+func (f *Forwarder) emitTelemetryEventReceived(relayURL string, kind int, eventID string) {
+	if f.tsink != nil {
+		f.tsink.EmitEventReceived(relayURL, kind, eventID)
+		return
+	}
+	f.emitTelemetry(telemetry.NewEventReceived(relayURL, kind, eventID))
+}
+
+// emitTelemetryEventForwarded emits event forwarded telemetry
+func (f *Forwarder) emitTelemetryEventForwarded(relayURL string, kind int, latency time.Duration) {
+	if f.tsink != nil {
+		f.tsink.EmitEventForwarded(relayURL, kind, latency)
+		return
+	}
+	f.emitTelemetry(telemetry.NewEventForwarded(relayURL, kind, latency))
+}
+
+// emitTelemetryConnectionStatus emits connection status change telemetry
+func (f *Forwarder) emitTelemetryConnectionStatus(relayType string, connected bool) {
+	if f.tsink != nil {
+		f.tsink.EmitRaw(telemetry.NewConnectionStatusChanged(relayType, connected))
+		return
+	}
+	f.emitTelemetry(telemetry.NewConnectionStatusChanged(relayType, connected))
+}
+
+// forwardEvent handles the complete event forwarding process with telemetry and error handling.
+// Returns true if the event was successfully forwarded, false if it should be skipped/retried.
+func (f *Forwarder) forwardEvent(ctx context.Context, event *nostr.Event, context string) bool {
+	// Validate event
+	if event == nil {
+		f.logger.Printf("skipping nil event in %s mode from %s", context, f.cfg.SourceRelayURL)
+		f.emitTelemetryMsgSev(fmt.Sprintf("nil event from %s", f.cfg.SourceRelayURL), 
+			context+"_event_validation", telemetry.ErrorSeverityInfo)
+		return false
+	}
+
+	// Record event received
+	f.emitTelemetryEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID)
+
+	// Forward event with latency measurement
+	startTime := time.Now()
+	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
+		f.logger.Printf("failed to forward event %s (kind: %d, created_at: %d) to %s in %s mode: %v", 
+			event.ID, event.Kind, event.CreatedAt, f.cfg.DeepFryRelayURL, context, err)
+		f.emitTelemetryErrorSev(err, context+"_publish", telemetry.ErrorSeverityWarning)
+		return false
+	}
+
+	// Record successful forward with latency
+	latency := time.Since(startTime)
+	f.emitTelemetryEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency)
+	return true
 }
 
 // Close stops the telemetry publisher goroutine
 func (f *Forwarder) Close() {
-	if f.publisherCancel != nil {
-		f.publisherCancel()
+	if f.tsink != nil {
+		f.tsink.Stop()
 	}
-	close(f.eventCh)
 }
 
 func (f *Forwarder) Start(ctx context.Context) error {
 	// Connect to relays
 	if err := f.connectRelays(ctx); err != nil {
-		return fmt.Errorf("failed to connect to relays: %w", err)
+		return fmt.Errorf("failed to connect to relays (source: %s, deepfry: %s): %w", 
+			f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, err)
 	}
 	defer f.closeRelays()
 
 	f.syncTracker = nsync.NewSyncTracker(f.deepfryRelay, f.cfg)
+	f.winMgr = NewWindowManager(f.cfg, f.syncTracker)
 
 	// Get last sync window or create new one
 	window, err := f.getOrCreateWindow(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get sync window: %w", err)
+		return fmt.Errorf("failed to get sync window (mode: %s, start_time: %s): %w", 
+			f.currentSyncMode, f.cfg.Sync.StartTime, err)
 	}
 
-	f.logger.Printf("starting sync from window: %s to %s", window.From, window.To)
+	f.logger.Printf("starting sync from window: %s to %s (mode: %s, duration: %v)", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+		f.currentSyncMode, window.To.Sub(window.From))
 
 	// Start syncing
 	return f.syncLoop(ctx, window)
 }
 
 func (f *Forwarder) connectRelays(ctx context.Context) error {
-
-	f.sourceRelay = f.attemptConnect(ctx, "source", f.cfg.SourceRelayURL)
-	f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", true))
-
-	f.deepfryRelay = f.attemptConnect(ctx, "deepfry", f.cfg.DeepFryRelayURL)
-	f.emitTelemetry(telemetry.NewConnectionStatusChanged("deepfry", true))
-
-	return nil
-}
-
-func (f *Forwarder) attemptConnect(ctx context.Context, name string, url string) *nostr.Relay {
-	max_attempts := 3
-	for attempt := 1; attempt <= max_attempts; attempt++ {
-		relay, err := nostr.RelayConnect(ctx, url)
-		if err != nil {
-			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, false))
-			f.emitTelemetry(telemetry.NewForwarderError(err, fmt.Sprintf("attempt %d failed to connect to %s_relay: %s", attempt, name, err), telemetry.ErrorSeverityError))
-		} else {
-			f.emitTelemetry(telemetry.NewConnectionStatusChanged(name, true))
-			return relay
-		}
-		time.Sleep(time.Second * time.Duration(attempt*2)) // Exponential backoff
+	// If tests injected relays, keep them and skip connMgr to preserve behavior
+	if f.sourceRelay != nil && f.deepfryRelay != nil {
+		return nil
 	}
-	log.Panicf("failed to connect to %s relay after %d attempts", name, max_attempts)
+	// Otherwise, use the connection manager to establish connections
+	if f.connMgr == nil {
+		f.connMgr = NewConnectionManager(f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, f.emitTelemetry)
+	}
+	if err := f.connMgr.Connect(ctx); err != nil {
+		return err
+	}
+	f.sourceRelay = f.connMgr.Source()
+	f.deepfryRelay = f.connMgr.Deepfry()
 	return nil
 }
 
 func (f *Forwarder) closeRelays() {
+	// Prefer connection manager when available to ensure symmetric telemetry
+	if f.connMgr != nil && f.sourceRelay == f.connMgr.Source() && f.deepfryRelay == f.connMgr.Deepfry() {
+		f.connMgr.Close()
+		return
+	}
 	if f.sourceRelay != nil {
 		f.sourceRelay.Close()
-		f.emitTelemetry(telemetry.NewConnectionStatusChanged("source", false))
+		f.emitTelemetryConnectionStatus("source", false)
 	}
 	if f.deepfryRelay != nil {
 		f.deepfryRelay.Close()
-		f.emitTelemetry(telemetry.NewConnectionStatusChanged("deepfry", false))
+		f.emitTelemetryConnectionStatus("deepfry", false)
 	}
 }
 
 func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error) {
+	// Prefer window manager if available (set during Start). Fallback to inline logic for tests
+	if f.winMgr != nil {
+		return f.winMgr.GetOrCreate(ctx)
+	}
 
 	if f.cfg.Sync.StartTime != "" {
 		startTime, err := time.Parse(time.RFC3339, f.cfg.Sync.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("invalid start time format: %w", err)
+			return nil, fmt.Errorf("invalid start time format '%s' (expected RFC3339): %w", 
+				f.cfg.Sync.StartTime, err)
 		}
 		window := nsync.NewWindowFromStart(startTime.UTC(), time.Duration(f.cfg.Sync.WindowSeconds)*time.Second)
 		return &window, nil
@@ -200,49 +305,18 @@ func (f *Forwarder) getOrCreateWindow(ctx context.Context) (*nsync.Window, error
 }
 
 func (f *Forwarder) syncLoop(ctx context.Context, startWindow *nsync.Window) error {
-	currentWindow := *startWindow
-	f.currentWindow = &currentWindow
-	windowDuration := time.Duration(f.cfg.Sync.WindowSeconds) * time.Second
-
-	// Emit initial sync mode
-	f.emitTelemetry(telemetry.NewSyncModeChanged(f.currentSyncMode, "initial_mode"))
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Check if we should switch to real-time mode
-		if f.currentSyncMode == SyncModeWindowed && f.shouldSwitchToRealtime(currentWindow) {
-			f.switchToRealtimeMode("caught_up_to_current_time")
-			return f.realtimeLoop(ctx)
-		}
-
-		// Check if we should move to next window (windowed mode)
-		if f.currentSyncMode == SyncModeWindowed && time.Now().UTC().After(currentWindow.To.Add(time.Duration(f.cfg.Sync.MaxCatchupLagSeconds)*time.Second)) {
-			if err := f.syncWindow(ctx, currentWindow); err != nil {
-				f.logger.Printf("error syncing window %s to %s: %v", currentWindow.From, currentWindow.To, err)
-				time.Sleep(time.Second)
-				continue
-			}
-			currentWindow = currentWindow.Next(windowDuration)
-			f.currentWindow = &currentWindow
-			// Continue immediately to next window without delay
-			continue
-		}
-
-		// Small delay to prevent busy waiting
-		time.Sleep(100 * time.Millisecond)
-	}
+	// Delegate to strategy to improve separation of concerns
+	strat := NewWindowedStrategy(f, *startWindow)
+	return strat.Run(ctx)
 }
 
 func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
-	f.logger.Printf("syncing window: %s to %s", window.From, window.To)
+	f.logger.Printf("syncing window: %s to %s (batch_limit: %d, relay: %s)", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+		f.cfg.Sync.MaxBatch, f.cfg.SourceRelayURL)
 
 	// Emit sync progress
-	f.emitTelemetry(telemetry.NewSyncProgressUpdated(window.From.Unix(), window.To.Unix()))
+	f.emitTelemetrySyncProgress(window.From.Unix(), window.To.Unix())
 
 	since := nostr.Timestamp(window.From.Unix())
 	until := nostr.Timestamp(window.To.Unix())
@@ -255,12 +329,15 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 
 	eventCh, err := f.sourceRelay.QueryEvents(ctx, filter)
 	if err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "relay_query", telemetry.ErrorSeverityWarning))
-		return fmt.Errorf("failed to query events: %w", err)
+		f.emitTelemetryErrorSev(err, "relay_query", telemetry.ErrorSeverityWarning)
+		return fmt.Errorf("failed to query events from relay %s (window: %s to %s, batch_limit: %d): %w", 
+			f.cfg.SourceRelayURL, window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), 
+			f.cfg.Sync.MaxBatch, err)
 	}
 
 	eventCount := 0
-	f.logger.Printf("starting to forward events from window")
+	f.logger.Printf("starting to forward events from window %s to %s", 
+		window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
 
 	// Stream events from channel and forward them
 	for event := range eventCh {
@@ -270,171 +347,57 @@ func (f *Forwarder) syncWindow(ctx context.Context, window nsync.Window) error {
 		default:
 		}
 
-		if event == nil {
-			f.logger.Printf("skipping nil event")
-			f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("nil event"), "event_validation", telemetry.ErrorSeverityInfo))
-			continue
+		if f.forwardEvent(ctx, event, "relay") {
+			eventCount++
 		}
-
-		// Record event received
-		f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
-
-		startTime := time.Now()
-		if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-			f.logger.Printf("failed to forward event %s: %v", event.ID, err)
-			f.emitTelemetry(telemetry.NewForwarderError(err, "relay_publish", telemetry.ErrorSeverityWarning))
-			continue
-		}
-
-		// Record successful forward with latency
-		latency := time.Since(startTime)
-		f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
-		eventCount++
+		// Continue processing regardless of forward success/failure
 	}
 
-	// Update sync progress
-	if err := f.syncTracker.UpdateWindow(ctx, window); err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "sync_update", telemetry.ErrorSeverityWarning))
-		f.connectRelays(ctx) // Reconnect relays
-		return fmt.Errorf("failed to update sync window: %w", err)
+	// Update sync progress (publishes sync event)
+	// Update sync progress (publishes sync event) via window manager when available
+	var updateErr error
+	if f.winMgr != nil {
+		updateErr = f.winMgr.Update(ctx, window)
+	} else {
+		updateErr = f.syncTracker.UpdateWindow(ctx, window)
+	}
+	if updateErr != nil {
+		f.emitTelemetryErrorSev(updateErr, "sync_update", telemetry.ErrorSeverityWarning)
+		// Force reconnect; this will panic if reconnect fails (expected by tests)
+		f.forceReconnect(ctx)
+		return fmt.Errorf("failed to update sync window %s to %s (events_processed: %d): %w", 
+			window.From.Format(time.RFC3339), window.To.Format(time.RFC3339), eventCount, updateErr)
 	}
 
-	f.logger.Printf("completed window sync: %d events forwarded", eventCount)
+	f.logger.Printf("completed window sync: %d events forwarded from %s to %s", 
+		eventCount, window.From.Format(time.RFC3339), window.To.Format(time.RFC3339))
 	return nil
 }
 
-// shouldSwitchToRealtime determines if we should switch from windowed to real-time mode
-func (f *Forwarder) shouldSwitchToRealtime(window nsync.Window) bool {
-	now := time.Now().UTC()
-	tolerance := time.Duration(RealtimeToleranceSeconds) * time.Second
-
-	// Only switch to real-time if window.To >= (now - small tolerance)
-	// This matches the user requirement: "when window.To >= time.Now() with sensible tolerance"
-	return window.To.After(now.Add(-tolerance)) || window.To.After(now) || window.To.Equal(now)
-}
-
-// switchToRealtimeMode changes the sync mode to real-time and emits telemetry
-func (f *Forwarder) switchToRealtimeMode(reason string) {
-	f.currentSyncMode = SyncModeRealtime
-	f.eventsSinceUpdate = 0
-	f.logger.Printf("switching to real-time sync mode: %s", reason)
-	f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeRealtime, reason))
-}
-
-// switchToWindowedMode changes the sync mode to windowed and emits telemetry
-func (f *Forwarder) switchToWindowedMode(reason string) {
-	f.currentSyncMode = SyncModeWindowed
-	f.eventsSinceUpdate = 0
-	f.logger.Printf("switching to windowed sync mode: %s", reason)
-	f.emitTelemetry(telemetry.NewSyncModeChanged(SyncModeWindowed, reason))
-}
+// Mode helpers moved to modes.go
 
 // realtimeLoop handles real-time event forwarding
 func (f *Forwarder) realtimeLoop(ctx context.Context) error {
-	f.logger.Printf("starting real-time sync mode")
-
-	// Create filter without time constraints for real-time streaming
-	filter := nostr.Filter{
-		Limit: f.cfg.Sync.MaxBatch,
-	}
-
-	// Use Subscribe directly for real-time streaming (doesn't close on EOSE)
-	sub, err := f.sourceRelay.Subscribe(ctx, nostr.Filters{filter})
-	if err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "realtime_subscribe", telemetry.ErrorSeverityError))
-		// Fallback to windowed mode
-		f.switchToWindowedMode("realtime_subscribe_failed")
-		return f.fallbackToWindowedMode(ctx)
-	}
-
-	f.logger.Printf("real-time event stream established")
-
-	// Stream events in real-time, ignoring EOSE
-	for {
-		select {
-		case <-ctx.Done():
-			if sub != nil {
-				// Try to close gracefully, but don't panic if it fails
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							f.logger.Printf("error closing subscription: %v", r)
-						}
-					}()
-					sub.Close()
-				}()
-			}
-			return ctx.Err()
-		case <-sub.ClosedReason:
-			// Subscription was closed by relay, this is an error in real-time mode
-			f.logger.Printf("real-time subscription closed by relay, attempting to reconnect")
-			f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("subscription closed by relay"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
-
-			f.connectRelays(ctx) // Reconnect relays
-			return f.realtimeLoop(ctx)
-		case <-sub.EndOfStoredEvents:
-			// EOSE received - ignore it in real-time mode, keep listening for new events
-			f.logger.Printf("received EOSE in real-time mode, continuing to listen for new events")
-			continue
-		case event, ok := <-sub.Events:
-			if !ok {
-				// Events channel closed, attempt to reconnect
-				f.logger.Printf("real-time event channel closed, attempting to reconnect")
-				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("event channel closed"), "realtime_disconnect", telemetry.ErrorSeverityWarning))
-
-				f.connectRelays(ctx) // Reconnect relays
-				return f.realtimeLoop(ctx)
-			}
-
-			if event == nil {
-				f.logger.Printf("skipping nil event in real-time mode")
-				f.emitTelemetry(telemetry.NewForwarderError(fmt.Errorf("nil event"), "realtime_event_validation", telemetry.ErrorSeverityInfo))
-				continue
-			}
-
-			// Process real-time event
-			if err := f.processRealtimeEvent(ctx, event); err != nil {
-				f.logger.Printf("error processing real-time event %s: %v", event.ID, err)
-				// Don't fail the entire loop for individual event errors
-				continue
-			}
-
-			// Update sync window every 250 events
-			f.eventsSinceUpdate++
-			f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
-			if f.eventsSinceUpdate >= EventsPerWindowUpdate {
-				if err := f.updateRealtimeWindow(ctx); err != nil {
-					f.logger.Printf("error updating real-time window: %v", err)
-					// Continue without failing - this is not critical
-				}
-				f.eventsSinceUpdate = 0
-				f.emitTelemetry(telemetry.NewRealtimeProgressUpdated(f.eventsSinceUpdate))
-			}
-		}
-	}
+	strat := NewRealtimeStrategy(f)
+	return strat.Run(ctx)
 }
 
 // processRealtimeEvent forwards a single event in real-time mode
 func (f *Forwarder) processRealtimeEvent(ctx context.Context, event *nostr.Event) error {
-	// Record event received
-	f.emitTelemetry(telemetry.NewEventReceived(f.cfg.SourceRelayURL, event.Kind, event.ID))
-
-	startTime := time.Now()
-	if err := f.deepfryRelay.Publish(ctx, *event); err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "realtime_publish", telemetry.ErrorSeverityWarning))
-		return fmt.Errorf("failed to forward event: %w", err)
+	if f.forwardEvent(ctx, event, "realtime") {
+		return nil
 	}
-
-	// Record successful forward with latency
-	latency := time.Since(startTime)
-	f.emitTelemetry(telemetry.NewEventForwarded(f.cfg.DeepFryRelayURL, event.Kind, latency))
-	return nil
+	if event != nil {
+		return fmt.Errorf("failed to forward event %s (kind: %d, created_at: %d) in realtime mode", 
+			event.ID, event.Kind, event.CreatedAt)
+	}
+	return fmt.Errorf("failed to forward nil event in realtime mode")
 }
 
 // updateRealtimeWindow updates the sync window to reflect current progress in real-time mode
 func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 	if f.currentWindow == nil {
-		return fmt.Errorf("current window is nil")
+		return fmt.Errorf("current window is nil in realtime mode (sync_mode: %s)", f.currentSyncMode)
 	}
 
 	// Update window to current time (keeping same size)
@@ -446,26 +409,48 @@ func (f *Forwarder) updateRealtimeWindow(ctx context.Context) error {
 		To:   now,
 	}
 
-	if err := f.syncTracker.UpdateWindow(ctx, updatedWindow); err != nil {
-		f.emitTelemetry(telemetry.NewForwarderError(err, "realtime_window_update", telemetry.ErrorSeverityWarning))
-		return fmt.Errorf("failed to update real-time window: %w", err)
+	var err error
+	if f.winMgr != nil {
+		err = f.winMgr.Update(ctx, updatedWindow)
+	} else {
+		err = f.syncTracker.UpdateWindow(ctx, updatedWindow)
+	}
+	if err != nil {
+		f.emitTelemetryErrorSev(err, "realtime_window_update", telemetry.ErrorSeverityWarning)
+		return fmt.Errorf("failed to update real-time window from %s to %s (window_duration: %v): %w", 
+			f.currentWindow.From.Format(time.RFC3339), updatedWindow.To.Format(time.RFC3339), 
+			windowDuration, err)
 	}
 
 	f.currentWindow = &updatedWindow
-	f.emitTelemetry(telemetry.NewSyncProgressUpdated(updatedWindow.From.Unix(), updatedWindow.To.Unix()))
+	f.emitTelemetrySyncProgress(updatedWindow.From.Unix(), updatedWindow.To.Unix())
 	return nil
 }
 
 // fallbackToWindowedMode attempts to fallback to windowed sync mode when real-time fails
 func (f *Forwarder) fallbackToWindowedMode(ctx context.Context) error {
-	f.logger.Printf("attempting fallback to windowed sync mode")
+	f.logger.Printf("attempting fallback to windowed sync mode from %s mode", f.currentSyncMode)
 
 	// Get current window or create a new one
 	window, err := f.getOrCreateWindow(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get window for fallback: %w", err)
+		return fmt.Errorf("failed to get window for fallback to windowed mode (current_mode: %s): %w", 
+			f.currentSyncMode, err)
 	}
 
 	// Resume windowed sync
 	return f.syncLoop(ctx, window)
+}
+
+// forceReconnect ensures the connection manager is initialized and performs a reconnect.
+// It always uses the ConnectionManager path (ignores any injected relays) and will panic
+// if reconnect fails after retries (matching attemptConnect behaviour).
+func (f *Forwarder) forceReconnect(ctx context.Context) {
+	if f.connMgr == nil {
+		f.connMgr = NewConnectionManager(f.cfg.SourceRelayURL, f.cfg.DeepFryRelayURL, f.emitTelemetry)
+	}
+	// Reconnect will panic inside if attempts are exhausted
+	_ = f.connMgr.Reconnect(ctx)
+	f.sourceRelay = f.connMgr.Source()
+	f.deepfryRelay = f.connMgr.Deepfry()
 }
