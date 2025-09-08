@@ -7,7 +7,7 @@ import (
 
 func TestJSONLIOAdapter_Input_Valid(t *testing.T) {
 	adapter := NewJSONLIOAdapter(&bytes.Buffer{})
-	input := []byte(`{"type":"new","event":"{\"id\":\"abc\",\"pubkey\":\"def\"}","receivedAt":123,"sourceType":"IP4","sourceInfo":"info"}`)
+	input := []byte(`{"type":"new","event":{"id":"abc","pubkey":"def"},"receivedAt":123,"sourceType":"IP4","sourceInfo":"info"}`)
 
 	msg, err := adapter.Input(input)
 	if err != nil {

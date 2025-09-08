@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"encoding/hex"
-	"fmt"
 	"log"
 	"testing"
 
@@ -29,9 +28,7 @@ func TestWhitelistHandler_Handle(t *testing.T) {
 		wl := whitelist.NewWhiteList([][32]byte{k})
 		h := NewWhitelistHandler(wl, logger)
 
-		input := InputMsg{
-			Event: fmt.Sprintf(`{"id":"evt-accept","pubkey":"%s"}`, hexKey),
-		}
+		input := InputMsg{Event: Event{ID: "evt-accept", Pubkey: hexKey}}
 		out, err := h.Handle(input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -58,9 +55,7 @@ func TestWhitelistHandler_Handle(t *testing.T) {
 		wl := whitelist.NewWhiteList(nil) // empty whitelist
 		h := NewWhitelistHandler(wl, logger)
 
-		input := InputMsg{
-			Event: fmt.Sprintf(`{"id":"evt-reject","pubkey":"%s"}`, hexKey),
-		}
+		input := InputMsg{Event: Event{ID: "evt-reject", Pubkey: hexKey}}
 		out, err := h.Handle(input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -81,9 +76,7 @@ func TestWhitelistHandler_Handle(t *testing.T) {
 		wl := whitelist.NewWhiteList(nil)
 		h := NewWhitelistHandler(wl, logger)
 
-		input := InputMsg{
-			Event: `not-json`,
-		}
+		input := InputMsg{Event: Event{}}
 		out, err := h.Handle(input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -105,9 +98,7 @@ func TestWhitelistHandler_Handle(t *testing.T) {
 		wl := whitelist.NewWhiteList(nil)
 		h := NewWhitelistHandler(wl, logger)
 
-		input := InputMsg{
-			Event: `{"id":"evt-nopub"}`,
-		}
+		input := InputMsg{Event: Event{ID: "evt-nopub"}}
 		out, err := h.Handle(input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

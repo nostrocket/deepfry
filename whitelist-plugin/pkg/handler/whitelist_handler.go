@@ -15,11 +15,15 @@ func NewWhitelistHandler(wl *whitelist.Whitelist, logger *log.Logger) *Whitelist
 }
 
 func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
-	// Extract event ID and pubkey from the event JSON
+	// Extract event ID and pubkey from the event
 	eventId, pubkey, err := input.ParseEvent()
 
 	if err != nil {
 		return Reject(eventId, RejectReasonNotInWoT), nil
+	}
+
+	if h.logger != nil {
+		h.logger.Printf("Handling event ID: %s", eventId)
 	}
 
 	// Check whitelist

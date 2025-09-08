@@ -41,11 +41,16 @@ const (
 	RejectReasonInternal  RejectReason = "rejected: internal error"
 )
 
+type Event struct {
+	ID     string `json:"id"`
+	Pubkey string `json:"pubkey"`
+}
+
 // InputMsg represents the input message structure for the Strfry plugin.
 // This is received as JSONL from the relay for new events.
 type InputMsg struct {
 	Type       string     `json:"type"`       // Currently always "new" (use EventType constant)
-	Event      string     `json:"event"`      // The full event JSON posted by the client (includes id, pubkey, etc.)
+	Event      Event      `json:"event"`      // The event object posted by the client (we only deserialize id and pubkey)
 	ReceivedAt int64      `json:"receivedAt"` // Unix timestamp of when the event was received by the relay
 	SourceType SourceType `json:"sourceType"` // Channel source: one of the SourceType constants
 	SourceInfo string     `json:"sourceInfo"` // Specifics of the source, e.g., an IP address
@@ -138,14 +143,9 @@ func RejectInternalWithError(eventId string, err error) OutputMsg {
 }
 
 func (i *InputMsg) ParseEvent() (id string, pubKey string, err error) {
-	var event struct {
-		ID     string `json:"id"`
-		Pubkey string `json:"pubkey"`
+	// With Event as a structured field, simply return the values and validate
+	if i.Event.ID == "" && i.Event.Pubkey == "" {
+		return "", "", fmt.Errorf("missing event fields: id and pubkey")
 	}
-
-	if err := json.Unmarshal([]byte(i.Event), &event); err != nil {
-		return "", "", err
-	}
-
-	return event.ID, event.Pubkey, nil
+	return i.Event.ID, i.Event.Pubkey, nil
 }

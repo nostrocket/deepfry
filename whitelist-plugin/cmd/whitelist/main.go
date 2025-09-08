@@ -80,7 +80,7 @@ func processLine(line []byte, h handler.Handler, ioAd handler.IOAdapter, logger 
 	outputMsg, err := h.Handle(inputMsg)
 	if err != nil {
 		logger.Printf("Handler error: %v", err)
-		return safeOutput(ioAd, handler.RejectInternalWithError(inputMsg.Event, err), logger)
+		return safeOutput(ioAd, handler.RejectInternalWithError(inputMsg.Event.ID, err), logger)
 	}
 
 	resp, err := ioAd.Output(outputMsg)
