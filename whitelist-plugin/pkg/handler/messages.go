@@ -37,7 +37,6 @@ type RejectReason string
 // Allowed RejectReason values.
 const (
 	RejectReasonNotInWoT RejectReason = "rejected: not in web of trust"
-	// Add more constants as needed, e.g., RejectReasonInvalidEvent = "rejected: invalid event"
 )
 
 // InputMsg represents the input message structure for the Strfry plugin.

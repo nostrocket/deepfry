@@ -9,7 +9,7 @@ import (
 )
 
 type WhitelistRefresher struct {
-	Whitelist  *Whitelist
+	whitelist  *Whitelist
 	keyRepo    repository.KeyRepository
 	interval   time.Duration
 	ctx        context.Context
@@ -22,7 +22,7 @@ type WhitelistRefresher struct {
 func NewWhitelistRefresher(keyRepo repository.KeyRepository, interval time.Duration, retryCount int, logger *log.Logger) *WhitelistRefresher {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &WhitelistRefresher{
-		Whitelist:  NewWhiteList([][32]byte{}),
+		whitelist:  NewWhiteList([][32]byte{}),
 		keyRepo:    keyRepo,
 		interval:   interval,
 		ctx:        ctx,
@@ -34,7 +34,6 @@ func NewWhitelistRefresher(keyRepo repository.KeyRepository, interval time.Durat
 }
 
 func (r *WhitelistRefresher) Start() {
-	r.refresh() // Initial refresh
 	r.waitGroup.Add(1)
 	go func() {
 		defer r.waitGroup.Done()
@@ -66,9 +65,13 @@ func (r *WhitelistRefresher) refresh() {
 			}
 			continue
 		}
-		r.Whitelist.UpdateKeys(keys)
-		r.logger.Printf("Whitelist refreshed with %d keys", len(keys))
+		r.whitelist.UpdateKeys(keys)
+		r.logger.Printf("whitelist refreshed with %d keys", len(keys))
 		return
 	}
 	r.logger.Printf("Refresh failed after %d attempts", r.retryCount+1)
+}
+
+func (r *WhitelistRefresher) Whitelist() *Whitelist {
+	return r.whitelist
 }
