@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"log"
 	"whitelist-plugin/pkg/whitelist"
 )
@@ -17,8 +16,8 @@ func NewWhitelistHandler(wl *whitelist.Whitelist, logger *log.Logger) *Whitelist
 
 func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
 	// Extract event ID and pubkey from the event JSON
-	eventId, pubkey, err := h.parseEvent(input.Event)
-	h.logger.Println("Handling event ID:", eventId, "with pubkey:", pubkey)
+	eventId, pubkey, err := input.ParseEvent()
+
 	if err != nil {
 		return Reject(eventId, RejectReasonNotInWoT), nil
 	}
@@ -31,15 +30,15 @@ func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
 	return Reject(eventId, RejectReasonNotInWoT), nil
 }
 
-func (h *WhitelistHandler) parseEvent(eventJSON string) (id, pubkey string, err error) {
-	var event struct {
-		ID     string `json:"id"`
-		Pubkey string `json:"pubkey"`
-	}
+// func (h *WhitelistHandler) parseEvent(eventJSON string) (id, pubkey string, err error) {
+// 	var event struct {
+// 		ID     string `json:"id"`
+// 		Pubkey string `json:"pubkey"`
+// 	}
 
-	if err := json.Unmarshal([]byte(eventJSON), &event); err != nil {
-		return "", "", err
-	}
+// 	if err := json.Unmarshal([]byte(eventJSON), &event); err != nil {
+// 		return "", "", err
+// 	}
 
-	return event.ID, event.Pubkey, nil
-}
+// 	return event.ID, event.Pubkey, nil
+// }

@@ -41,46 +41,63 @@ func main() {
 }
 
 func runEventLoop(ctx context.Context, h handler.Handler, io handler.IOAdapter, logger *log.Logger) error {
-	scanner := bufio.NewScanner(os.Stdin)
+	// Constants for buffer sizes (avoid magic numbers)
+	const (
+		initBuf = 64 * 1024
+		maxBuf  = 10 * 1024 * 1024
+	)
 
-	// Increase buffer size for large events
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	scanner := bufio.NewScanner(os.Stdin)
+	buf := make([]byte, 0, initBuf)
+	scanner.Buffer(buf, maxBuf)
 
 	for scanner.Scan() {
+		// graceful shutdown check
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		line := scanner.Bytes()
-
-		// Parse input
-		inputMsg, err := io.Input(line)
-		if err != nil {
-			logger.Printf("Invalid input: %v", err)
-			continue
-		}
-
-		// Process message
-		outputMsg, err := h.Handle(inputMsg)
-		if err != nil {
-			logger.Printf("Handler error: %v", err)
-			continue
-		}
-
-		// Write response
-		response, err := io.Output(outputMsg)
-		if err != nil {
-			logger.Printf("Failed to serialize output: %v", err)
-			continue
-		}
-
+		response := processLine(scanner.Bytes(), h, io, logger)
 		if _, err := os.Stdout.Write(response); err != nil {
 			return err
 		}
 	}
 
 	return scanner.Err()
+}
+
+// processLine is responsible for turning a raw line into a serialized response.
+func processLine(line []byte, h handler.Handler, ioAd handler.IOAdapter, logger *log.Logger) []byte {
+	logger.Printf("Received line: %s", line)
+	inputMsg, err := ioAd.Input(line)
+	if err != nil {
+		logger.Printf("Invalid input: %v", err)
+		return safeOutput(ioAd, handler.RejectMalformed(), logger)
+	}
+
+	outputMsg, err := h.Handle(inputMsg)
+	if err != nil {
+		logger.Printf("Handler error: %v", err)
+		return safeOutput(ioAd, handler.RejectInternalWithError(inputMsg.Event, err), logger)
+	}
+
+	resp, err := ioAd.Output(outputMsg)
+	if err != nil {
+		logger.Printf("Failed to serialize output: %v", err)
+		return safeOutput(ioAd, handler.RejectInternal(""), logger)
+	}
+	return resp
+}
+
+// safeOutput guarantees a serialized response, even if fallback serialization fails.
+func safeOutput(ioAd handler.IOAdapter, msg handler.OutputMsg, logger *log.Logger) []byte {
+	resp, err := ioAd.Output(msg)
+	if err != nil {
+		logger.Printf("Critical: failed to serialize fallback response: %v", err)
+		// last-resort newline to keep stream well-formed
+		return []byte("\n")
+	}
+	return resp
 }

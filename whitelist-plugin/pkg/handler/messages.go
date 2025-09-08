@@ -36,7 +36,9 @@ type RejectReason string
 
 // Allowed RejectReason values.
 const (
-	RejectReasonNotInWoT RejectReason = "rejected: not in web of trust"
+	RejectReasonNotInWoT  RejectReason = "rejected: not in web of trust"
+	RejectReasonMalformed RejectReason = "rejected: malformed event"
+	RejectReasonInternal  RejectReason = "rejected: internal error"
 )
 
 // InputMsg represents the input message structure for the Strfry plugin.
@@ -109,4 +111,41 @@ func Reject(eventId string, reason RejectReason) OutputMsg {
 		Action: ActionReject,
 		Msg:    string(reason),
 	}
+}
+
+func RejectMalformed() OutputMsg {
+	return OutputMsg{
+		Id:     "",
+		Action: ActionReject,
+		Msg:    string(RejectReasonMalformed),
+	}
+}
+
+func RejectInternal(eventId string) OutputMsg {
+	return OutputMsg{
+		Id:     eventId,
+		Action: ActionReject,
+		Msg:    string(RejectReasonInternal),
+	}
+}
+
+func RejectInternalWithError(eventId string, err error) OutputMsg {
+	return OutputMsg{
+		Id:     eventId,
+		Action: ActionReject,
+		Msg:    fmt.Sprintf("%s: %v", string(RejectReasonInternal), err),
+	}
+}
+
+func (i *InputMsg) ParseEvent() (id string, pubKey string, err error) {
+	var event struct {
+		ID     string `json:"id"`
+		Pubkey string `json:"pubkey"`
+	}
+
+	if err := json.Unmarshal([]byte(i.Event), &event); err != nil {
+		return "", "", err
+	}
+
+	return event.ID, event.Pubkey, nil
 }

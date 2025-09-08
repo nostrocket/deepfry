@@ -34,6 +34,10 @@ func NewWhitelistRefresher(keyRepo repository.KeyRepository, interval time.Durat
 }
 
 func (r *WhitelistRefresher) Start() {
+	// Initial refresh
+	r.refresh()
+
+	// Start periodic refresh
 	r.waitGroup.Add(1)
 	go func() {
 		defer r.waitGroup.Done()

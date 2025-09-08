@@ -12,6 +12,7 @@ var validCases = []struct {
 }{
 	{name: "valid message", msg: `{"type":"new","event":"{\"id\":\"eventid\",\"pubkey\":\"pubkey\",\"content\":\"content\"}","receivedAt":1625079600,"sourceType":"ip4","sourceInfo":"source info"}`},
 	{name: "missing fields", msg: `{"type": "new"}`},
+	{name: "actual message", msg: `{"event":{"content":"{\"peerId\":\"15ZgsH1Hupauf6IhCvcj\"}","created_at":1757318487,"id":"7d9d3f82ed97eac48f22549d9223e939dbda56c5818dbd06e6227694323ef4a1","kind":22712,"pubkey":"7eb315fcec3ff6b2205d0b5c846c33713ec70f1a8ba5f8612c2db12b95ae62a9","sig":"49aabcf459882d78c669686a4f23f60f4d144ba7ff10c20f672fcb344459cc71a49040365808edb568ad68bfff0aee75023c270310c794cb64c0bf4ede3dc9c9","tags":[["x","2n4y1851603c6q1w35616g6t3o6i1j552543313p"]]},"receivedAt":1757318499,"sourceInfo":"172.20.0.1","sourceType":"IP4","type":"new"}`},
 }
 
 var invalidCases = []struct {
