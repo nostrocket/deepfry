@@ -14,6 +14,7 @@ services:
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
       # Plugin directory (future search plugin etc.)
       - ./data/strfry-plugins:/app/plugins
+      - ./whitelist-plugin/bin/whitelist:/app/plugins/whitelist:ro
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
