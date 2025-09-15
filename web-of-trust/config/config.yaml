@@ -1,7 +1,7 @@
 # Web of Trust Crawler Configuration
 
 # Nostr relay to connect to for fetching follow lists
-relay_url: "wss://relay.damus.io"
+relay_url: "wss://relay.primal.net"
 
 # Dgraph server address
 dgraph_addr: "localhost:9080"

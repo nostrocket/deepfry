@@ -114,6 +114,15 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 			}
 			c.dbUpdateMutex.Unlock()
 			processed++
+		case <-sub.Context.Done():
+			if err := sub.Context.Err(); err != nil && err != context.Canceled {
+				c.logRelayError("subscription_context_error", err)
+			}
+			if processed == 0 {
+				return fmt.Errorf("subscription closed, processed %d/%d pubkeys", processed, len(pubkeys))
+			}
+			log.Printf("Subscription closed, processed %d/%d pubkeys", processed, len(pubkeys))
+			return nil
 		case <-ctx.Done():
 			if processed == 0 {
 				return fmt.Errorf("timeout waiting for kind 3 events")
@@ -196,4 +205,16 @@ func (c *Crawler) logSignatureValidationMetrics(pubkey string, valid bool) {
 
 	metricsJSON, _ := json.Marshal(metrics)
 	log.Printf("SIGNATURE_VALIDATION: %s", string(metricsJSON))
+}
+
+func (c *Crawler) logRelayError(errorType string, err error) {
+	metrics := map[string]interface{}{
+		"error_type":  errorType,
+		"error":       err.Error(),
+		"occurred_at": time.Now().Format(time.RFC3339),
+		"component":   "web-of-trust-crawler",
+	}
+
+	metricsJSON, _ := json.Marshal(metrics)
+	log.Printf("RELAY_ERROR: %s", string(metricsJSON))
 }
