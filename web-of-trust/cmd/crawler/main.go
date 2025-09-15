@@ -36,29 +36,9 @@ func main() {
 
 	// Print graph statistics on startup
 	ctx := context.Background()
-	totalPubkeys, err := dgraphClient.CountPubkeys(ctx)
-	if err != nil {
-		log.Printf("Warning: failed to count pubkeys: %v", err)
-	} else {
-		log.Printf("Total pubkeys in graph: %d", totalPubkeys)
-	}
 
 	// Default to 24 hours for stale threshold
 	threshold := time.Now().Unix() - (24 * 60 * 60)
-	stalePubkeys, err := dgraphClient.GetStalePubkeys(ctx, threshold)
-	if err != nil {
-		log.Printf("Warning: failed to get stale pubkeys: %v", err)
-	} else {
-		log.Printf("Stale pubkeys (>24h or never updated): %d", len(stalePubkeys))
-		for i, pubkey := range stalePubkeys {
-			if i < 10 { // Limit output to first 10
-				log.Printf("  %s", pubkey)
-			} else if i == 10 {
-				log.Printf("  ... and %d more", len(stalePubkeys)-10)
-				break
-			}
-		}
-	}
 
 	// Create crawler
 	crawlerCfg := crawler.Config{
@@ -75,8 +55,26 @@ func main() {
 
 	// Fetch follow list
 	ctx = context.Background()
-	if err := c.FetchAndUpdateFollows(ctx, cfg.PubkeyHex); err != nil {
-		log.Fatalf("Failed to fetch and update follows: %v", err)
+	for {
+		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, threshold)
+		if err != nil {
+			panic(err)
+		}
+		totalPubkeys, err := dgraphClient.CountPubkeys(ctx)
+		if err != nil {
+			panic(err)
+		}
+		if totalPubkeys == 0 {
+			pubkeys = append(pubkeys, cfg.PubkeyHex)
+		}
+		if len(pubkeys) == 0 {
+			break
+		}
+
+		if err := c.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
+			log.Printf("Failed to fetch and update follows: %v", err)
+			break
+		}
 	}
 
 	log.Printf("Successfully updated follow list for pubkey: %s", cfg.PubkeyHex)

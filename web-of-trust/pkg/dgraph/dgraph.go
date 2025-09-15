@@ -56,29 +56,6 @@ follows: [uid] @reverse .`
 // AddFollowers adds multiple follows edges from a single follower to multiple followees.
 // For kind 3 events, this completely replaces the user's follow list (replaceable event behavior).
 func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}) error {
-	if kind3createdAt == 0 {
-		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
-	}
-	if len(follows) == 0 {
-		return nil // nothing to do
-	}
-
-	// Filter out self-follows and empty keys, convert to slice
-	var validFollows []string
-	for followee := range follows {
-		if followee == signerPubkey {
-			continue // skip self-follows silently
-		}
-		if followee == "" {
-			continue // skip empty follows silently
-		}
-		validFollows = append(validFollows, followee)
-	}
-
-	if len(validFollows) == 0 {
-		return nil // nothing to do after filtering
-	}
-
 	lastUpdate := time.Now().Unix()
 
 	// First, get follower and existing follows
@@ -174,7 +151,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 	}
 
 	// Step 2: Add new follows
-	for i, followee := range validFollows {
+	followeeCounter := 0
+	for followee := range follows {
 		// Find or create followee
 		followeeQuery := fmt.Sprintf(`
 		{
@@ -186,7 +164,7 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		fresp, err := txn.Query(ctx, followeeQuery)
 		if err != nil {
 			txn.Discard(ctx)
-			return fmt.Errorf("query followee %d failed: %w", i, err)
+			return fmt.Errorf("query followee %s failed: %w", followee, err)
 		}
 
 		var followeeResult struct {
@@ -196,16 +174,17 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		}
 		if err := json.Unmarshal(fresp.Json, &followeeResult); err != nil {
 			txn.Discard(ctx)
-			return fmt.Errorf("unmarshal followee %d failed: %w", i, err)
+			return fmt.Errorf("unmarshal followee %s failed: %w", followee, err)
 		}
 
 		// Create/get followee
 		var followeeUID string
 		if len(followeeResult.Followee) == 0 {
 			// Create new followee
+			blankNodeID := fmt.Sprintf("followee%d", followeeCounter)
 			followeeNQuads := fmt.Sprintf(`
-				_:followee%d <pubkey> %q .
-			`, i, followee)
+				_:%s <pubkey> %q .
+			`, blankNodeID, followee)
 
 			mu := &api.Mutation{
 				SetNquads: []byte(followeeNQuads),
@@ -214,9 +193,9 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			assigned, err := txn.Mutate(ctx, mu)
 			if err != nil {
 				txn.Discard(ctx)
-				return fmt.Errorf("create followee %d failed: %w", i, err)
+				return fmt.Errorf("create followee %s failed: %w", followee, err)
 			}
-			followeeUID = assigned.Uids[fmt.Sprintf("followee%d", i)]
+			followeeUID = assigned.Uids[blankNodeID]
 		} else {
 			followeeUID = followeeResult.Followee[0].UID
 		}
@@ -233,6 +212,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		if _, err := txn.Mutate(ctx, mu); err != nil {
 			continue
 		}
+
+		followeeCounter++
 	}
 
 	// Commit all changes
@@ -414,4 +395,39 @@ func (c *Client) CountPubkeys(ctx context.Context) (int, error) {
 	}
 
 	return result.Count[0].Count, nil
+}
+
+// GetKind3CreatedAt returns the kind3CreatedAt unix timestamp for the given pubkey.
+// Returns 0 if the pubkey doesn't exist or has no kind3CreatedAt value.
+func (c *Client) GetKind3CreatedAt(ctx context.Context, pubkey string) (int64, error) {
+	query := fmt.Sprintf(`
+	{
+		pubkey_node(func: eq(pubkey, %q)) {
+			kind3CreatedAt
+		}
+	}`, pubkey)
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("query kind3CreatedAt failed: %w", err)
+	}
+
+	var result struct {
+		PubkeyNode []struct {
+			Kind3CreatedAt int64 `json:"kind3CreatedAt"`
+		} `json:"pubkey_node"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return 0, fmt.Errorf("unmarshal kind3CreatedAt failed: %w", err)
+	}
+
+	if len(result.PubkeyNode) == 0 {
+		return 0, nil // pubkey doesn't exist
+	}
+
+	return result.PubkeyNode[0].Kind3CreatedAt, nil
 }

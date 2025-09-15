@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"web-of-trust/pkg/dgraph"
@@ -13,9 +14,10 @@ import (
 )
 
 type Crawler struct {
-	relay    *nostr.Relay
-	dgClient *dgraph.Client
-	timeout  time.Duration
+	relay         *nostr.Relay
+	dgClient      *dgraph.Client
+	timeout       time.Duration
+	dbUpdateMutex sync.Mutex
 }
 
 type Config struct {
@@ -48,9 +50,10 @@ func New(cfg Config) (*Crawler, error) {
 	log.Printf("Connected to relay: %s", cfg.RelayURL)
 
 	return &Crawler{
-		relay:    relay,
-		dgClient: dgClient,
-		timeout:  cfg.Timeout,
+		relay:         relay,
+		dgClient:      dgClient,
+		timeout:       cfg.Timeout,
+		dbUpdateMutex: sync.Mutex{},
 	}, nil
 }
 
@@ -63,12 +66,12 @@ func (c *Crawler) Close() {
 	}
 }
 
-func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeyHex string) error {
-	// Create filter for kind 3 events from the specified pubkey
+func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) error {
+	// Create filter for kind 3 events from all specified pubkeys
 	filter := nostr.Filter{
-		Authors: []string{pubkeyHex},
+		Authors: pubkeys,
 		Kinds:   []int{3},
-		Limit:   1, // We only want the most recent follow list
+		Limit:   len(pubkeys), // Allow one event per pubkey
 	}
 
 	// Set timeout context
@@ -83,23 +86,53 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeyHex string) e
 	defer sub.Unsub()
 
 	// Wait for events
-	select {
-	case event := <-sub.Events:
-		if event == nil {
-			return fmt.Errorf("no kind 3 event found for pubkey: %s", pubkeyHex)
+	processed := 0
+	for processed < len(pubkeys) {
+		select {
+		case event := <-sub.Events:
+			if event == nil {
+				log.Printf("Received nil event, continuing...")
+				continue
+			}
+
+			log.Printf("Found kind 3 event: %s, created_at: %d, pubkey: %s", event.ID, event.CreatedAt, event.PubKey)
+
+			// Parse and update follows
+			c.dbUpdateMutex.Lock()
+			if err := c.updateFollowsFromEvent(ctx, event); err != nil {
+				c.dbUpdateMutex.Unlock()
+				return err
+			}
+			c.dbUpdateMutex.Unlock()
+			processed++
+		case <-ctx.Done():
+			if processed == 0 {
+				return fmt.Errorf("timeout waiting for kind 3 events")
+			}
+			log.Printf("Timeout reached, processed %d/%d pubkeys", processed, len(pubkeys))
+			return nil
 		}
-
-		log.Printf("Found kind 3 event: %s, created_at: %d", event.ID, event.CreatedAt)
-
-		// Parse and update follows
-		return c.updateFollowsFromEvent(ctx, event)
-
-	case <-ctx.Done():
-		return fmt.Errorf("timeout waiting for kind 3 event")
 	}
+
+	return nil
 }
 
 func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event) error {
+	// Check if this event is newer than what we already have
+	existingTimestamp, err := c.dgClient.GetKind3CreatedAt(ctx, event.PubKey)
+	if err != nil {
+		return fmt.Errorf("failed to get existing kind3CreatedAt: %w", err)
+	}
+
+	if existingTimestamp >= int64(event.CreatedAt) {
+		log.Printf("Skipping event %s (created_at: %d) - not newer than existing (created_at: %d)",
+			event.ID, event.CreatedAt, existingTimestamp)
+		return nil
+	}
+
+	log.Printf("Processing newer event %s (created_at: %d) - existing was (created_at: %d)",
+		event.ID, event.CreatedAt, existingTimestamp)
+
 	// Parse follows from p tags
 	var rawFollows []string
 	followsMap := make(map[string]struct{})
