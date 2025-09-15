@@ -18,7 +18,7 @@ import (
 // Schema used:
 //   pubkey: string @index(exact) @upsert .
 //   kind3CreatedAt: int .
-//   last_db_update: datetime .
+//   last_db_update: int .
 //   follows: uid @reverse .
 
 // Client wraps a dgo.Dgraph instance.
@@ -48,7 +48,7 @@ func (c *Client) Close() error {
 func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int .
-last_db_update: datetime .
+last_db_update: int .
 follows: [uid] @reverse .`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
@@ -62,7 +62,7 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
 	}
 
-	lastUpdate := time.Now()
+	lastUpdate := time.Now().Unix()
 
 	// First, check and get UIDs for both pubkeys
 	query := fmt.Sprintf(`
@@ -103,8 +103,8 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
 			_:follower <kind3CreatedAt> "%d" .
-			_:follower <last_db_update> %q .
-		`, signerPubkey, kind3createdAt, lastUpdate.Format(time.RFC3339))
+			_:follower <last_db_update> "%d" .
+		`, signerPubkey, kind3createdAt, lastUpdate)
 
 		mu := &api.Mutation{
 			SetNquads: []byte(followerNQuads),
@@ -121,8 +121,8 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 		followerUID = result.Follower[0].UID
 		updateNQuads := fmt.Sprintf(`
 			<%s> <kind3CreatedAt> "%d" .
-			<%s> <last_db_update> %q .
-		`, followerUID, kind3createdAt, followerUID, lastUpdate.Format(time.RFC3339))
+			<%s> <last_db_update> "%d" .
+		`, followerUID, kind3createdAt, followerUID, lastUpdate)
 
 		mu := &api.Mutation{
 			SetNquads: []byte(updateNQuads),
@@ -183,7 +183,7 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 		return nil // nothing to do
 	}
 
-	lastUpdate := time.Now()
+	lastUpdate := time.Now().Unix()
 
 	// First, ensure follower exists and get its UID
 	query := fmt.Sprintf(`
@@ -218,8 +218,8 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
 			_:follower <kind3CreatedAt> "%d" .
-			_:follower <last_db_update> %q .
-		`, signerPubkey, kind3createdAt, lastUpdate.Format(time.RFC3339))
+			_:follower <last_db_update> "%d" .
+		`, signerPubkey, kind3createdAt, lastUpdate)
 
 		mu := &api.Mutation{
 			SetNquads: []byte(followerNQuads),
@@ -236,8 +236,8 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 		followerUID = result.Follower[0].UID
 		updateNQuads := fmt.Sprintf(`
 			<%s> <kind3CreatedAt> "%d" .
-			<%s> <last_db_update> %q .
-		`, followerUID, kind3createdAt, followerUID, lastUpdate.Format(time.RFC3339))
+			<%s> <last_db_update> "%d" .
+		`, followerUID, kind3createdAt, followerUID, lastUpdate)
 
 		mu := &api.Mutation{
 			SetNquads: []byte(updateNQuads),
@@ -334,7 +334,7 @@ func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3c
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
 	}
 
-	lastUpdate := time.Now()
+	lastUpdate := time.Now().Unix()
 
 	// Query to find the nodes
 	q := `query {
@@ -346,7 +346,7 @@ func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3c
 	setNquads := `
 		uid(f) <pubkey> "` + signerPubkey + `" .
 		uid(f) <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
-		uid(f) <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`
+		uid(f) <last_db_update> "` + fmt.Sprintf("%d", lastUpdate) + `" .`
 
 	// Delete the edge
 	delNquads := `uid(f) <follows> uid(e) .`
