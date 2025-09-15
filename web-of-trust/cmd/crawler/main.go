@@ -1,6 +1,6 @@
 package main
 
-//todo: take a map of pubkeys to fetch instead of just the single seed address, then we can add all to the filter and process them in an event driven way, at the end of the loop query the db again for stale pubkeys and repeat until no more stale pubkeys.
+//todo: add multiple relay support
 import (
 	"context"
 	"fmt"

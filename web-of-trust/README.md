@@ -74,6 +74,7 @@ The main application that:
 ### Pubkeys Exporter (`cmd/pubkeys/`)
 
 A utility that:
+
 - Queries Dgraph for pubkeys with minimum follower counts
 - Exports results to timestamped CSV files
 - Useful for identifying popular/influential accounts
@@ -88,6 +89,7 @@ A utility that:
 ### Queries (`queries/`)
 
 Contains sample Dgraph queries for exploring the web of trust data:
+
 - Get all pubkeys with follow counts
 - Query specific user relationships
 - Explore multi-hop connections
@@ -96,7 +98,7 @@ Contains sample Dgraph queries for exploring the web of trust data:
 
 The service stores pubkeys as nodes in Dgraph with follow relationships as directed edges:
 
-```
+```text
 Pubkey Node:
 - pubkey (string): hex-encoded public key
 - kind3CreatedAt (timestamp): when the follow list was created
@@ -107,6 +109,7 @@ Pubkey Node:
 ## Integration
 
 This module is part of the DeepFry Nostr infrastructure:
+
 - **Input**: Nostr NIP-02 follow events from relays
 - **Output**: Web of trust graph in Dgraph
 - **Dependencies**: Dgraph database
@@ -117,6 +120,7 @@ This module is part of the DeepFry Nostr infrastructure:
 ### Dependencies
 
 Key dependencies (see `go.mod`):
+
 - `github.com/dgraph-io/dgo/v210`: Dgraph client
 - `github.com/nbd-wtf/go-nostr`: Nostr protocol implementation
 - `github.com/spf13/viper`: Configuration management
