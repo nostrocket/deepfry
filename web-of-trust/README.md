@@ -6,7 +6,7 @@ A Go service that crawls Nostr follow relationships (NIP-02) and builds a web of
 
 This module fetches follow lists from Nostr relays and stores them as a directed graph in Dgraph, enabling web-of-trust calculations and social graph analysis.
 
-[] Handle EOSE
+[] Handle multiple relays
 
 ## Quick Start
 

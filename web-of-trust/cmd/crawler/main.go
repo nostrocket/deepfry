@@ -70,6 +70,9 @@ func main() {
 		if len(pubkeys) == 0 {
 			break
 		}
+		// if len(pubkeys) > 20 {
+		// 	pubkeys = pubkeys[0:20]
+		// }
 
 		if err := c.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
 			log.Printf("Failed to fetch and update follows: %v", err)

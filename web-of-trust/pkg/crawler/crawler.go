@@ -73,6 +73,7 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 		Kinds:   []int{3},
 		Limit:   len(pubkeys), // Allow one event per pubkey
 	}
+	fmt.Println(filter)
 
 	// Set timeout context
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -87,7 +88,8 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 
 	// Wait for events
 	processed := 0
-	for processed < len(pubkeys) {
+	eoseReceived := false
+	for processed < len(pubkeys) && !eoseReceived {
 		select {
 		case event := <-sub.Events:
 			if event == nil {
@@ -114,6 +116,9 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 			}
 			c.dbUpdateMutex.Unlock()
 			processed++
+		case <-sub.EndOfStoredEvents:
+			log.Printf("EOSE received, processed %d/%d pubkeys", processed, len(pubkeys))
+			eoseReceived = true
 		case <-sub.Context.Done():
 			if err := sub.Context.Err(); err != nil && err != context.Canceled {
 				c.logRelayError("subscription_context_error", err)
@@ -130,6 +135,12 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 			log.Printf("Timeout reached, processed %d/%d pubkeys", processed, len(pubkeys))
 			return nil
 		}
+	}
+
+	// If we exit the loop due to EOSE but haven't processed all pubkeys,
+	// that means some pubkeys don't have kind 3 events stored on this relay
+	if eoseReceived && processed < len(pubkeys) {
+		log.Printf("EOSE received but only processed %d/%d pubkeys - some pubkeys may not have kind 3 events on this relay", processed, len(pubkeys))
 	}
 
 	return nil
