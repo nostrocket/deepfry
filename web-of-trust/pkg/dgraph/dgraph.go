@@ -46,7 +46,7 @@ func (c *Client) Close() error {
 
 // EnsureSchema sets the schema needed for this module.
 func (c *Client) EnsureSchema(ctx context.Context) error {
-	schema := `pubkey: string @index(exact) @upsert .
+	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int .
 last_db_update: datetime .
 follows: [uid] @reverse .`
