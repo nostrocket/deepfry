@@ -36,29 +36,31 @@
 
 # 3. Get top users by follower count
 {
-  popular_users(func: has(pubkey)) @cascade {
+  popular_users(func: has(pubkey), orderasc: follower_count) {
     uid
     pubkey
     kind3CreatedAt
     last_db_update
     follower_count: count(~follows)
-    ~follows
   }
 }
 
 # 4. Get users who follow each other (mutual follows)
 {
-  mutual_follows(func: has(pubkey)) @cascade {
+  # First find users who follow others
+  users(func: has(follows)) {
     uid
     pubkey
-    follows @filter(has(pubkey)) {
+    # For each of their follows, check if they follow back
+    mutual_follows: follows @filter(has(follows)) {
       uid
       pubkey
-      follows_back: ~follows @filter(uid(uid)) {
+      # This checks if the original user is in this user's follows
+      follows_back: follows @filter(uid($parent.uid)) {
         uid
-        pubkey
       }
-    }
+      # Only include this followee if they follow back
+    } @filter(has(follows_back))
   }
 }
 
@@ -74,12 +76,16 @@
 
 # 6. Count total nodes and edges
 {
-  stats() {
-    total_users: count(func: has(pubkey))
+  total_users(func: has(pubkey)) {
+    count(uid)
   }
   
-  all_with_follows(func: has(follows)) {
-    total_follow_edges: count(follows)
+  var(func: has(follows)) {
+    f_count as count(follows)
+  }
+  
+  total_follows() {
+    count: sum(val(f_count))
   }
 }
 
@@ -117,15 +123,15 @@
   }
 }
 
-# 10. Visualize follow relationships (good for graph view in Ratel)
+# 10. Visualize follow relationships (limited for performance)
 {
-  graph_view(func: has(pubkey)) {
+  graph_view(func: has(pubkey), first: 50) {
     uid
     pubkey
-    follows {
+    follows(first: 10) {
       uid
       pubkey
-      follows {
+      follows(first: 5) {
         uid
         pubkey
       }
@@ -148,6 +154,46 @@
   }
 }
 
-# 12. Clean up duplicates - merge follows from duplicate nodes
-# First, identify which UID has the most recent update
-# Then manually merge or delete duplicates
+# 12. Find oldest users by kind3CreatedAt
+{
+  oldest_users(func: has(pubkey), orderasc: kind3CreatedAt, first: 20) {
+    uid
+    pubkey
+    kind3CreatedAt
+    last_db_update
+    follows_count: count(follows)
+    followers_count: count(~follows)
+  }
+}
+
+# 13. Find most connected users (highest total of follows + followers)
+{
+  var(func: has(pubkey)) {
+    fc as count(follows)
+    frc as count(~follows)
+    total as math(fc + frc)
+  }
+  
+  connected_users(func: uid(total), orderdesc: val(total), first: 20) {
+    uid
+    pubkey
+    kind3CreatedAt
+    last_db_update
+    follows_count: val(fc)
+    followers_count: val(frc)
+    total_connections: val(total)
+  }
+}
+
+# 14. Clean up duplicates - merge follows from duplicate nodes
+# First, identify which UID has the most recent update:
+{
+  duplicates(func: eq(pubkey, "PUBKEY_TO_CHECK")) {
+    uid
+    pubkey
+    kind3CreatedAt
+    last_db_update
+    follows_count: count(follows)
+  }
+}
+# Then use DQL mutations to merge or delete duplicates
