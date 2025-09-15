@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/dgo/v210"
@@ -58,8 +59,11 @@ follows: [uid] @reverse .`
 func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}) error {
 	lastUpdate := time.Now().Unix()
 
-	// First, get follower and existing follows
-	query := fmt.Sprintf(`
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	// Step 1: Get follower and existing follows
+	followerQuery := fmt.Sprintf(`
 	{
 		follower(func: eq(pubkey, %q)) {
 			uid
@@ -70,14 +74,11 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		}
 	}`, signerPubkey)
 
-	txn := c.dg.NewTxn()
-	resp, err := txn.Query(ctx, query)
+	resp, err := txn.Query(ctx, followerQuery)
 	if err != nil {
-		txn.Discard(ctx)
 		return fmt.Errorf("query follower failed: %w", err)
 	}
 
-	// Parse query results
 	var result struct {
 		Follower []struct {
 			UID     string `json:"uid"`
@@ -88,7 +89,6 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		} `json:"follower"`
 	}
 	if err := json.Unmarshal(resp.Json, &result); err != nil {
-		txn.Discard(ctx)
 		return fmt.Errorf("unmarshal follower failed: %w", err)
 	}
 
@@ -110,7 +110,6 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		}
 		assigned, err := txn.Mutate(ctx, mu)
 		if err != nil {
-			txn.Discard(ctx)
 			return fmt.Errorf("create follower failed: %w", err)
 		}
 		followerUID = assigned.Uids["follower"]
@@ -133,87 +132,109 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			CommitNow: false,
 		}
 		if _, err := txn.Mutate(ctx, mu); err != nil {
-			txn.Discard(ctx)
 			return fmt.Errorf("update follower failed: %w", err)
 		}
 	}
 
-	// Step 1: Remove all existing follows (kind 3 is replaceable)
-	for _, uid := range existingFollows {
-		delNQuads := fmt.Sprintf(`<%s> <follows> <%s> .`, followerUID, uid)
+	// Step 2: Remove all existing follows (kind 3 is replaceable)
+	if len(existingFollows) > 0 {
+		var delNQuads string
+		for _, uid := range existingFollows {
+			delNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n", followerUID, uid)
+		}
 		mu := &api.Mutation{
 			DelNquads: []byte(delNQuads),
 			CommitNow: false,
 		}
 		if _, err := txn.Mutate(ctx, mu); err != nil {
-			continue
+			return fmt.Errorf("remove existing follows failed: %w", err)
 		}
 	}
 
-	// Step 2: Add new follows
-	followeeCounter := 0
-	for followee := range follows {
-		// Find or create followee
-		followeeQuery := fmt.Sprintf(`
-		{
-			followee(func: eq(pubkey, %q)) {
-				uid
-			}
-		}`, followee)
+	// Step 3: Bulk query all followees at once
+	if len(follows) > 0 {
+		followeeList := make([]string, 0, len(follows))
+		for followee := range follows {
+			followeeList = append(followeeList, followee)
+		}
 
-		fresp, err := txn.Query(ctx, followeeQuery)
+		// Build single query for all followees
+		var queryParts []string
+		for i, followee := range followeeList {
+			queryParts = append(queryParts, fmt.Sprintf(`followee_%d(func: eq(pubkey, %q)) { uid }`, i, followee))
+		}
+
+		bulkQuery := fmt.Sprintf("{ %s }", fmt.Sprintf(strings.Join(queryParts, "\n")))
+
+		bulkResp, err := txn.Query(ctx, bulkQuery)
 		if err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("query followee %s failed: %w", followee, err)
+			return fmt.Errorf("bulk query followees failed: %w", err)
 		}
 
-		var followeeResult struct {
-			Followee []struct {
-				UID string `json:"uid"`
-			} `json:"followee"`
+		// Parse bulk results
+		var bulkResult map[string][]struct {
+			UID string `json:"uid"`
 		}
-		if err := json.Unmarshal(fresp.Json, &followeeResult); err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("unmarshal followee %s failed: %w", followee, err)
+		if err := json.Unmarshal(bulkResp.Json, &bulkResult); err != nil {
+			return fmt.Errorf("unmarshal bulk followees failed: %w", err)
 		}
 
-		// Create/get followee
-		var followeeUID string
-		if len(followeeResult.Followee) == 0 {
-			// Create new followee
-			blankNodeID := fmt.Sprintf("followee%d", followeeCounter)
-			followeeNQuads := fmt.Sprintf(`
-				_:%s <pubkey> %q .
-			`, blankNodeID, followee)
+		// Step 4: Create missing followees in bulk
+		var createNQuads string
+		followeeUIDs := make([]string, len(followeeList))
 
+		for i, followee := range followeeList {
+			key := fmt.Sprintf("followee_%d", i)
+			if nodes, exists := bulkResult[key]; exists && len(nodes) > 0 {
+				// Followee exists
+				followeeUIDs[i] = nodes[0].UID
+			} else {
+				// Need to create followee
+				blankNodeID := fmt.Sprintf("new_followee_%d", i)
+				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n", blankNodeID, followee)
+				followeeUIDs[i] = "_:" + blankNodeID
+			}
+		}
+
+		// Create missing followees if any
+		if createNQuads != "" {
 			mu := &api.Mutation{
-				SetNquads: []byte(followeeNQuads),
+				SetNquads: []byte(createNQuads),
 				CommitNow: false,
 			}
 			assigned, err := txn.Mutate(ctx, mu)
 			if err != nil {
-				txn.Discard(ctx)
-				return fmt.Errorf("create followee %s failed: %w", followee, err)
+				return fmt.Errorf("create missing followees failed: %w", err)
 			}
-			followeeUID = assigned.Uids[blankNodeID]
-		} else {
-			followeeUID = followeeResult.Followee[0].UID
+
+			// Replace blank node references with actual UIDs
+			for i, uid := range followeeUIDs {
+				if strings.HasPrefix(uid, "_:") {
+					blankNodeID := uid[2:] // Remove "_:" prefix
+					if actualUID, exists := assigned.Uids[blankNodeID]; exists {
+						followeeUIDs[i] = actualUID
+					}
+				}
+			}
 		}
 
-		// Create the follows edge
-		edgeNQuads := fmt.Sprintf(`
-			<%s> <follows> <%s> .
-		`, followerUID, followeeUID)
-
-		mu := &api.Mutation{
-			SetNquads: []byte(edgeNQuads),
-			CommitNow: false,
-		}
-		if _, err := txn.Mutate(ctx, mu); err != nil {
-			continue
+		// Step 5: Create all follow edges in bulk
+		var edgeNQuads string
+		for _, followeeUID := range followeeUIDs {
+			if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
+				edgeNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n", followerUID, followeeUID)
+			}
 		}
 
-		followeeCounter++
+		if edgeNQuads != "" {
+			mu := &api.Mutation{
+				SetNquads: []byte(edgeNQuads),
+				CommitNow: false,
+			}
+			if _, err := txn.Mutate(ctx, mu); err != nil {
+				return fmt.Errorf("create follow edges failed: %w", err)
+			}
+		}
 	}
 
 	// Commit all changes
@@ -430,4 +451,40 @@ func (c *Client) GetKind3CreatedAt(ctx context.Context, pubkey string) (int64, e
 	}
 
 	return result.PubkeyNode[0].Kind3CreatedAt, nil
+}
+
+// GetPubkeysWithMinFollowers returns a map of pubkeys that have at least the specified number of followers.
+// The map uses pubkey as key with empty struct as value for memory-efficient set operations.
+func (c *Client) GetPubkeysWithMinFollowers(ctx context.Context, minFollowers int) (map[string]struct{}, error) {
+	query := fmt.Sprintf(`
+	{
+		popular(func: has(pubkey)) @filter(ge(count(~follows), %d)) {
+			pubkey
+		}
+	}`, minFollowers)
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query popular pubkeys failed: %w", err)
+	}
+
+	var result struct {
+		Popular []struct {
+			Pubkey string `json:"pubkey"`
+		} `json:"popular"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal popular pubkeys failed: %w", err)
+	}
+
+	pubkeys := make(map[string]struct{}, len(result.Popular))
+	for _, node := range result.Popular {
+		pubkeys[node.Pubkey] = struct{}{}
+	}
+
+	return pubkeys, nil
 }

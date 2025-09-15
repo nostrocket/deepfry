@@ -97,6 +97,15 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 
 			log.Printf("Found kind 3 event: %s, created_at: %d, pubkey: %s", event.ID, event.CreatedAt, event.PubKey)
 
+			// Validate event signature
+			if ok, err := event.CheckSignature(); !ok {
+				log.Printf("WARN: Invalid signature for event %s from pubkey %s: %v", event.ID, event.PubKey, err)
+				c.logSignatureValidationMetrics(event.PubKey, false)
+				processed++
+				continue //This continue statement is a control flow keyword in Go that skips the rest of the current iteration in a loop and jumps directly to the next iteration.
+			}
+			c.logSignatureValidationMetrics(event.PubKey, true)
+
 			// Parse and update follows
 			c.dbUpdateMutex.Lock()
 			if err := c.updateFollowsFromEvent(ctx, event); err != nil {
@@ -176,4 +185,16 @@ func (c *Crawler) logMetrics(pubkey string, followsCount int, duplicatesCount in
 
 	metricsJSON, _ := json.Marshal(metrics)
 	log.Printf("METRICS: %s", string(metricsJSON))
+}
+
+func (c *Crawler) logSignatureValidationMetrics(pubkey string, valid bool) {
+	metrics := map[string]interface{}{
+		"pubkey":          pubkey,
+		"signature_valid": valid,
+		"validated_at":    time.Now().Format(time.RFC3339),
+		"component":       "web-of-trust-crawler",
+	}
+
+	metricsJSON, _ := json.Marshal(metrics)
+	log.Printf("SIGNATURE_VALIDATION: %s", string(metricsJSON))
 }
