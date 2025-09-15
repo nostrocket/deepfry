@@ -1,15 +1,15 @@
 package main
 
+//todo: take a map of pubkeys to fetch instead of just the single seed address, then we can add all to the filter and process them in an event driven way, at the end of the loop query the db again for stale pubkeys and repeat until no more stale pubkeys.
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
+	"web-of-trust/pkg/crawler"
 	"web-of-trust/pkg/dgraph"
 
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/spf13/viper"
 )
@@ -27,30 +27,55 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Initialize Dgraph client
-	dgClient, err := dgraph.NewClient(cfg.DgraphAddr)
+	// Create dgraph client for startup stats
+	dgraphClient, err := dgraph.NewClient(cfg.DgraphAddr)
 	if err != nil {
-		log.Fatalf("Failed to connect to Dgraph: %v", err)
+		log.Fatalf("Failed to create dgraph client: %v", err)
 	}
-	defer dgClient.Close()
+	defer dgraphClient.Close()
 
-	// Ensure schema
+	// Print graph statistics on startup
 	ctx := context.Background()
-	if err := dgClient.EnsureSchema(ctx); err != nil {
-		log.Fatalf("Failed to ensure schema: %v", err)
-	}
-
-	// Connect to relay
-	relay, err := nostr.RelayConnect(context.Background(), cfg.RelayURL)
+	totalPubkeys, err := dgraphClient.CountPubkeys(ctx)
 	if err != nil {
-		log.Fatalf("Failed to connect to relay %s: %v", cfg.RelayURL, err)
+		log.Printf("Warning: failed to count pubkeys: %v", err)
+	} else {
+		log.Printf("Total pubkeys in graph: %d", totalPubkeys)
 	}
-	defer relay.Close()
 
-	log.Printf("Connected to relay: %s", cfg.RelayURL)
+	// Default to 24 hours for stale threshold
+	threshold := time.Now().Unix() - (24 * 60 * 60)
+	stalePubkeys, err := dgraphClient.GetStalePubkeys(ctx, threshold)
+	if err != nil {
+		log.Printf("Warning: failed to get stale pubkeys: %v", err)
+	} else {
+		log.Printf("Stale pubkeys (>24h or never updated): %d", len(stalePubkeys))
+		for i, pubkey := range stalePubkeys {
+			if i < 10 { // Limit output to first 10
+				log.Printf("  %s", pubkey)
+			} else if i == 10 {
+				log.Printf("  ... and %d more", len(stalePubkeys)-10)
+				break
+			}
+		}
+	}
+
+	// Create crawler
+	crawlerCfg := crawler.Config{
+		RelayURL:   cfg.RelayURL,
+		DgraphAddr: cfg.DgraphAddr,
+		Timeout:    cfg.Timeout,
+	}
+
+	c, err := crawler.New(crawlerCfg)
+	if err != nil {
+		log.Fatalf("Failed to create crawler: %v", err)
+	}
+	defer c.Close()
 
 	// Fetch follow list
-	if err := fetchAndUpdateFollows(ctx, relay, dgClient, cfg); err != nil {
+	ctx = context.Background()
+	if err := c.FetchAndUpdateFollows(ctx, cfg.PubkeyHex); err != nil {
 		log.Fatalf("Failed to fetch and update follows: %v", err)
 	}
 
@@ -96,86 +121,4 @@ func loadConfig() (*Config, error) {
 	// If decode fails, assume it's already hex
 
 	return &cfg, nil
-}
-
-func fetchAndUpdateFollows(ctx context.Context, relay *nostr.Relay, dgClient *dgraph.Client, cfg *Config) error {
-	// Create filter for kind 3 events from the specified pubkey
-	filter := nostr.Filter{
-		Authors: []string{cfg.PubkeyHex},
-		Kinds:   []int{3},
-		Limit:   1, // We only want the most recent follow list
-	}
-
-	// Set timeout context
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-
-	// Subscribe to events
-	sub, err := relay.Subscribe(ctx, []nostr.Filter{filter})
-	if err != nil {
-		return fmt.Errorf("failed to subscribe: %w", err)
-	}
-	defer sub.Unsub()
-
-	// Wait for events
-	select {
-	case event := <-sub.Events:
-		if event == nil {
-			return fmt.Errorf("no kind 3 event found for pubkey: %s", cfg.PubkeyHex)
-		}
-
-		log.Printf("Found kind 3 event: %s, created_at: %d", event.ID, event.CreatedAt)
-
-		// Parse and update follows
-		return updateFollowsFromEvent(ctx, dgClient, event)
-
-	case <-ctx.Done():
-		return fmt.Errorf("timeout waiting for kind 3 event")
-	}
-}
-
-func updateFollowsFromEvent(ctx context.Context, dgClient *dgraph.Client, event *nostr.Event) error {
-	// Parse follows from p tags
-	var rawFollows []string
-	followsMap := make(map[string]struct{})
-
-	for _, tag := range event.Tags {
-		if len(tag) >= 2 && tag[0] == "p" {
-			rawFollows = append(rawFollows, tag[1])
-			followsMap[tag[1]] = struct{}{}
-		}
-	}
-
-	uniqueFollowsCount := len(followsMap)
-	duplicatesCount := len(rawFollows) - uniqueFollowsCount
-
-	log.Printf("Found %d follows in event (%d unique, %d duplicates)", len(rawFollows), uniqueFollowsCount, duplicatesCount)
-
-	// Process all follows in one batch operation
-	if uniqueFollowsCount > 0 {
-		err := dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
-		if err != nil {
-			return fmt.Errorf("failed to add follows batch: %w", err)
-		}
-
-		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
-	}
-
-	// Log metrics
-	logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
-
-	return nil
-}
-
-func logMetrics(pubkey string, followsCount int, duplicatesCount int) {
-	metrics := map[string]interface{}{
-		"pubkey":           pubkey,
-		"follows_count":    followsCount,
-		"duplicates_count": duplicatesCount,
-		"processed_at":     time.Now().Format(time.RFC3339),
-		"component":        "web-of-trust-crawler",
-	}
-
-	metricsJSON, _ := json.Marshal(metrics)
-	log.Printf("METRICS: %s", string(metricsJSON))
 }

@@ -343,3 +343,75 @@ func (c *Client) RemovePubKeyIfNoFollowers(ctx context.Context, pubkey string) (
 
 	return true, nil
 }
+
+// GetStalePubkeys returns pubkeys with last_db_update older than the given threshold,
+// or pubkeys that don't have last_db_update set at all.
+// If olderThanUnix is not provided, defaults to 24 hours ago.
+// Results are sorted by age, with least recently updated first.
+func (c *Client) GetStalePubkeys(ctx context.Context, olderThanUnix int64) ([]string, error) {
+	query := fmt.Sprintf(`
+	{
+		stale(func: has(pubkey), orderasc: last_db_update) @filter(NOT has(last_db_update) OR lt(last_db_update, %d)) {
+			pubkey
+		}
+	}`, olderThanUnix)
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query stale pubkeys failed: %w", err)
+	}
+
+	var result struct {
+		Stale []struct {
+			Pubkey string `json:"pubkey"`
+		} `json:"stale"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal stale pubkeys failed: %w", err)
+	}
+
+	pubkeys := make([]string, len(result.Stale))
+	for i, node := range result.Stale {
+		pubkeys[i] = node.Pubkey
+	}
+
+	return pubkeys, nil
+}
+
+// CountPubkeys returns the total number of pubkeys in the graph.
+func (c *Client) CountPubkeys(ctx context.Context) (int, error) {
+	query := `
+	{
+		count(func: has(pubkey)) {
+			count(uid)
+		}
+	}`
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("query pubkey count failed: %w", err)
+	}
+
+	var result struct {
+		Count []struct {
+			Count int `json:"count"`
+		} `json:"count"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return 0, fmt.Errorf("unmarshal pubkey count failed: %w", err)
+	}
+
+	if len(result.Count) == 0 {
+		return 0, nil
+	}
+
+	return result.Count[0].Count, nil
+}
