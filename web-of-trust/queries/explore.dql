@@ -19,11 +19,13 @@
     pubkey
     kind3CreatedAt
     last_db_update
+    follows_count: count(follows)
     follows {
       uid
       pubkey
       kind3CreatedAt
     }
+    followers_count: count(~follows)
     followers: ~follows {
       uid
       pubkey
@@ -130,3 +132,22 @@
     }
   }
 }
+
+# 11. Debug duplicate nodes - find all nodes for a pubkey
+{
+  check_duplicates(func: eq(pubkey, "d91191e30e00444b942c0e82cad470b32af171764c2275bee0bd99377efd4075")) {
+    uid
+    pubkey
+    kind3CreatedAt
+    last_db_update
+    follows_count: count(follows)
+    all_follows: follows {
+      uid
+      pubkey
+    }
+  }
+}
+
+# 12. Clean up duplicates - merge follows from duplicate nodes
+# First, identify which UID has the most recent update
+# Then manually merge or delete duplicates

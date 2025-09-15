@@ -145,17 +145,27 @@ func updateFollowsFromEvent(ctx context.Context, dgClient *dgraph.Client, event 
 
 	log.Printf("Found %d follows in event", len(follows))
 
-	// Update each follow relationship
-	for i, followeePubkey := range follows {
-		err := dgClient.AddFollower(ctx, event.PubKey, int64(event.CreatedAt), followeePubkey)
-		if err != nil {
-			log.Printf("Failed to add follower %s -> %s: %v", event.PubKey, followeePubkey, err)
-			continue
+	// Use batch operation for efficiency
+	const batchSize = 100
+	for i := 0; i < len(follows); i += batchSize {
+		end := i + batchSize
+		if end > len(follows) {
+			end = len(follows)
 		}
 
-		if (i+1)%100 == 0 {
-			log.Printf("Processed %d/%d follows", i+1, len(follows))
+		batch := follows[i:end]
+		err := dgClient.AddFollowersBatch(ctx, event.PubKey, int64(event.CreatedAt), batch)
+		if err != nil {
+			log.Printf("Failed to add batch %d-%d: %v", i, end, err)
+			// Try individual adds as fallback
+			for _, followeePubkey := range batch {
+				if err := dgClient.AddFollower(ctx, event.PubKey, int64(event.CreatedAt), followeePubkey); err != nil {
+					log.Printf("Failed to add follower %s -> %s: %v", event.PubKey, followeePubkey, err)
+				}
+			}
 		}
+
+		log.Printf("Processed %d/%d follows", end, len(follows))
 	}
 
 	// Log metrics
