@@ -53,143 +53,43 @@ follows: [uid] @reverse .`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
 
-// AddFollower creates a follows edge from follower -> followee.
-// Both nodes are upserted so duplicates are impossible.
-// The follower's timestamps are updated, the followee node is created if it doesn't exist.
-// Returns error if follower timestamps are not specified (zero values).
-func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, followee string) error {
+// AddFollowers adds multiple follows edges from a single follower to multiple followees.
+// For kind 3 events, this completely replaces the user's follow list (replaceable event behavior).
+func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}) error {
 	if kind3createdAt == 0 {
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
 	}
-
-	lastUpdate := time.Now().Unix()
-
-	// First, check and get UIDs for both pubkeys
-	query := fmt.Sprintf(`
-	{
-		follower(func: eq(pubkey, %q)) {
-			uid
-		}
-		followee(func: eq(pubkey, %q)) {
-			uid
-		}
-	}`, signerPubkey, followee)
-
-	txn := c.dg.NewTxn()
-	resp, err := txn.Query(ctx, query)
-	if err != nil {
-		txn.Discard(ctx)
-		return fmt.Errorf("query failed: %w", err)
-	}
-
-	// Parse query results
-	var result struct {
-		Follower []struct {
-			UID string `json:"uid"`
-		} `json:"follower"`
-		Followee []struct {
-			UID string `json:"uid"`
-		} `json:"followee"`
-	}
-	if err := json.Unmarshal(resp.Json, &result); err != nil {
-		txn.Discard(ctx)
-		return fmt.Errorf("unmarshal failed: %w", err)
-	}
-
-	// Create/update follower
-	var followerUID string
-	if len(result.Follower) == 0 {
-		// Create new follower
-		followerNQuads := fmt.Sprintf(`
-			_:follower <pubkey> %q .
-			_:follower <kind3CreatedAt> "%d" .
-			_:follower <last_db_update> "%d" .
-		`, signerPubkey, kind3createdAt, lastUpdate)
-
-		mu := &api.Mutation{
-			SetNquads: []byte(followerNQuads),
-			CommitNow: false,
-		}
-		assigned, err := txn.Mutate(ctx, mu)
-		if err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("create follower failed: %w", err)
-		}
-		followerUID = assigned.Uids["follower"]
-	} else {
-		// Update existing follower
-		followerUID = result.Follower[0].UID
-		updateNQuads := fmt.Sprintf(`
-			<%s> <kind3CreatedAt> "%d" .
-			<%s> <last_db_update> "%d" .
-		`, followerUID, kind3createdAt, followerUID, lastUpdate)
-
-		mu := &api.Mutation{
-			SetNquads: []byte(updateNQuads),
-			CommitNow: false,
-		}
-		if _, err := txn.Mutate(ctx, mu); err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("update follower failed: %w", err)
-		}
-	}
-
-	// Create/get followee
-	var followeeUID string
-	if len(result.Followee) == 0 {
-		// Create new followee
-		followeeNQuads := fmt.Sprintf(`
-			_:followee <pubkey> %q .
-		`, followee)
-
-		mu := &api.Mutation{
-			SetNquads: []byte(followeeNQuads),
-			CommitNow: false,
-		}
-		assigned, err := txn.Mutate(ctx, mu)
-		if err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("create followee failed: %w", err)
-		}
-		followeeUID = assigned.Uids["followee"]
-	} else {
-		followeeUID = result.Followee[0].UID
-	}
-
-	// Create the follows edge
-	edgeNQuads := fmt.Sprintf(`
-		<%s> <follows> <%s> .
-	`, followerUID, followeeUID)
-
-	mu := &api.Mutation{
-		SetNquads: []byte(edgeNQuads),
-		CommitNow: true,
-	}
-	if _, err := txn.Mutate(ctx, mu); err != nil {
-		txn.Discard(ctx)
-		return fmt.Errorf("add edge failed: %w", err)
-	}
-
-	return nil
-}
-
-// AddFollowersBatch adds multiple follows edges from a single follower to multiple followees.
-// This is more efficient than calling AddFollower repeatedly.
-func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kind3createdAt int64, followees []string) error {
-	if kind3createdAt == 0 {
-		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
-	}
-	if len(followees) == 0 {
+	if len(follows) == 0 {
 		return nil // nothing to do
 	}
 
+	// Filter out self-follows and empty keys, convert to slice
+	var validFollows []string
+	for followee := range follows {
+		if followee == signerPubkey {
+			continue // skip self-follows silently
+		}
+		if followee == "" {
+			continue // skip empty follows silently
+		}
+		validFollows = append(validFollows, followee)
+	}
+
+	if len(validFollows) == 0 {
+		return nil // nothing to do after filtering
+	}
+
 	lastUpdate := time.Now().Unix()
 
-	// First, ensure follower exists and get its UID
+	// First, get follower and existing follows
 	query := fmt.Sprintf(`
 	{
 		follower(func: eq(pubkey, %q)) {
 			uid
+			follows { 
+				uid
+				pubkey 
+			}
 		}
 	}`, signerPubkey)
 
@@ -203,7 +103,11 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 	// Parse query results
 	var result struct {
 		Follower []struct {
-			UID string `json:"uid"`
+			UID     string `json:"uid"`
+			Follows []struct {
+				UID    string `json:"uid"`
+				Pubkey string `json:"pubkey"`
+			} `json:"follows"`
 		} `json:"follower"`
 	}
 	if err := json.Unmarshal(resp.Json, &result); err != nil {
@@ -213,6 +117,8 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 
 	// Create/update follower
 	var followerUID string
+	existingFollows := make(map[string]string) // pubkey -> uid
+
 	if len(result.Follower) == 0 {
 		// Create new follower
 		followerNQuads := fmt.Sprintf(`
@@ -234,6 +140,12 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 	} else {
 		// Update existing follower
 		followerUID = result.Follower[0].UID
+
+		// Track existing follows for deletion
+		for _, f := range result.Follower[0].Follows {
+			existingFollows[f.Pubkey] = f.UID
+		}
+
 		updateNQuads := fmt.Sprintf(`
 			<%s> <kind3CreatedAt> "%d" .
 			<%s> <last_db_update> "%d" .
@@ -249,9 +161,21 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 		}
 	}
 
-	// Process each followee
-	for i, followee := range followees {
-		// Find existing followee
+	// Step 1: Remove all existing follows (kind 3 is replaceable)
+	for _, uid := range existingFollows {
+		delNQuads := fmt.Sprintf(`<%s> <follows> <%s> .`, followerUID, uid)
+		mu := &api.Mutation{
+			DelNquads: []byte(delNQuads),
+			CommitNow: false,
+		}
+		if _, err := txn.Mutate(ctx, mu); err != nil {
+			continue
+		}
+	}
+
+	// Step 2: Add new follows
+	for i, followee := range validFollows {
+		// Find or create followee
 		followeeQuery := fmt.Sprintf(`
 		{
 			followee(func: eq(pubkey, %q)) {
@@ -307,8 +231,7 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 			CommitNow: false,
 		}
 		if _, err := txn.Mutate(ctx, mu); err != nil {
-			txn.Discard(ctx)
-			return fmt.Errorf("add edge %d failed: %w", i, err)
+			continue
 		}
 	}
 

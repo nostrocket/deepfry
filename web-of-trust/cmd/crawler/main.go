@@ -136,50 +136,44 @@ func fetchAndUpdateFollows(ctx context.Context, relay *nostr.Relay, dgClient *dg
 
 func updateFollowsFromEvent(ctx context.Context, dgClient *dgraph.Client, event *nostr.Event) error {
 	// Parse follows from p tags
-	var follows []string
+	var rawFollows []string
+	followsMap := make(map[string]struct{})
+
 	for _, tag := range event.Tags {
 		if len(tag) >= 2 && tag[0] == "p" {
-			follows = append(follows, tag[1])
+			rawFollows = append(rawFollows, tag[1])
+			followsMap[tag[1]] = struct{}{}
 		}
 	}
 
-	log.Printf("Found %d follows in event", len(follows))
+	uniqueFollowsCount := len(followsMap)
+	duplicatesCount := len(rawFollows) - uniqueFollowsCount
 
-	// Use batch operation for efficiency
-	const batchSize = 100
-	for i := 0; i < len(follows); i += batchSize {
-		end := i + batchSize
-		if end > len(follows) {
-			end = len(follows)
-		}
+	log.Printf("Found %d follows in event (%d unique, %d duplicates)", len(rawFollows), uniqueFollowsCount, duplicatesCount)
 
-		batch := follows[i:end]
-		err := dgClient.AddFollowersBatch(ctx, event.PubKey, int64(event.CreatedAt), batch)
+	// Process all follows in one batch operation
+	if uniqueFollowsCount > 0 {
+		err := dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
 		if err != nil {
-			log.Printf("Failed to add batch %d-%d: %v", i, end, err)
-			// Try individual adds as fallback
-			for _, followeePubkey := range batch {
-				if err := dgClient.AddFollower(ctx, event.PubKey, int64(event.CreatedAt), followeePubkey); err != nil {
-					log.Printf("Failed to add follower %s -> %s: %v", event.PubKey, followeePubkey, err)
-				}
-			}
+			return fmt.Errorf("failed to add follows batch: %w", err)
 		}
 
-		log.Printf("Processed %d/%d follows", end, len(follows))
+		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
 	}
 
 	// Log metrics
-	logMetrics(event.PubKey, len(follows))
+	logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
 
 	return nil
 }
 
-func logMetrics(pubkey string, followsCount int) {
+func logMetrics(pubkey string, followsCount int, duplicatesCount int) {
 	metrics := map[string]interface{}{
-		"pubkey":        pubkey,
-		"follows_count": followsCount,
-		"processed_at":  time.Now().Format(time.RFC3339),
-		"component":     "web-of-trust-crawler",
+		"pubkey":           pubkey,
+		"follows_count":    followsCount,
+		"duplicates_count": duplicatesCount,
+		"processed_at":     time.Now().Format(time.RFC3339),
+		"component":        "web-of-trust-crawler",
 	}
 
 	metricsJSON, _ := json.Marshal(metrics)
