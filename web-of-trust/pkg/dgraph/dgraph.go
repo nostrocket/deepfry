@@ -57,32 +57,29 @@ follows: uid @reverse .`
 // Both nodes are upserted so duplicates are impossible.
 // The follower's timestamps are updated, the followee node is created if it doesn't exist.
 // Returns error if follower timestamps are not specified (zero values).
-func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, follower string) error {
+func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, followee string) error {
 	if kind3createdAt == 0 {
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
 	}
 
 	lastUpdate := time.Now()
 
-	q := `query($follower: string, $followee: string) {
-  follower as var(func: eq(pubkey, $follower))
-  followee as var(func: eq(pubkey, $followee))
+	// Use upsert block to ensure uniqueness
+	q := `query {
+  follower as var(func: eq(pubkey, "` + signerPubkey + `"))
+  followee as var(func: eq(pubkey, "` + followee + `"))
 }`
 
 	nquads := `
-  uid(follower) <pubkey> val(follower) .
+  uid(follower) <pubkey> "` + signerPubkey + `" .
   uid(follower) <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
   uid(follower) <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .
-  uid(followee) <pubkey> val(followee) .
+  uid(followee) <pubkey> "` + followee + `" .
   uid(follower) <follows> uid(followee) .`
 
 	mu := &api.Mutation{SetNquads: []byte(nquads)}
 	req := &api.Request{
-		Query: q,
-		Vars: map[string]string{
-			"$follower": signerPubkey,
-			"$followee": follower,
-		},
+		Query:     q,
 		Mutations: []*api.Mutation{mu},
 		CommitNow: true,
 	}
@@ -93,12 +90,12 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 // RemoveFollower removes the follows edge from follower -> followee.
 // The follower's timestamps are updated to reflect the removal.
 // Returns error if parameters are empty or timestamps are invalid.
-func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, follower string) error {
+func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, followee string) error {
 	if signerPubkey == "" {
 		return fmt.Errorf("signerPubkey must be specified (non-empty)")
 	}
-	if follower == "" {
-		return fmt.Errorf("follower must be specified (non-empty)")
+	if followee == "" {
+		return fmt.Errorf("followee must be specified (non-empty)")
 	}
 	if kind3createdAt == 0 {
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
@@ -106,13 +103,13 @@ func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3c
 
 	lastUpdate := time.Now()
 
-	q := `query($follower: string, $followee: string) {
-  follower as var(func: eq(pubkey, $follower))
-  followee as var(func: eq(pubkey, $followee))
+	q := `query {
+  follower as var(func: eq(pubkey, "` + signerPubkey + `"))
+  followee as var(func: eq(pubkey, "` + followee + `"))
 }`
 
 	nquads := `
-  uid(follower) <pubkey> val(follower) .
+  uid(follower) <pubkey> "` + signerPubkey + `" .
   uid(follower) <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
   uid(follower) <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`
 
@@ -121,11 +118,7 @@ func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3c
 	setMu := &api.Mutation{SetNquads: []byte(nquads)}
 	delMu := &api.Mutation{DelNquads: []byte(delNquads)}
 	req := &api.Request{
-		Query: q,
-		Vars: map[string]string{
-			"$follower": signerPubkey,
-			"$followee": follower,
-		},
+		Query:     q,
 		Mutations: []*api.Mutation{setMu, delMu},
 		CommitNow: true,
 	}

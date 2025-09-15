@@ -5,24 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"web-of-trust/pkg/dgraph"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	RelayURL   string
-	DgraphAddr string
-	PubkeyHex  string
-	Timeout    time.Duration
+	RelayURL   string        `mapstructure:"relay_url"`
+	DgraphAddr string        `mapstructure:"dgraph_addr"`
+	PubkeyHex  string        `mapstructure:"pubkey"`
+	Timeout    time.Duration `mapstructure:"timeout"`
 }
 
 func main() {
-	cfg := loadConfig()
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
 
 	// Initialize Dgraph client
 	dgClient, err := dgraph.NewClient(cfg.DgraphAddr)
@@ -54,46 +57,48 @@ func main() {
 	log.Printf("Successfully updated follow list for pubkey: %s", cfg.PubkeyHex)
 }
 
-func loadConfig() Config {
-	relayURL := os.Getenv("RELAY_URL")
-	if relayURL == "" {
-		relayURL = "wss://relay.damus.io"
+func loadConfig() (*Config, error) {
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("./config")
+	viper.AddConfigPath("/etc/web-of-trust/")
+
+	// Set defaults
+	viper.SetDefault("relay_url", "wss://relay.damus.io")
+	viper.SetDefault("dgraph_addr", "localhost:9080")
+	viper.SetDefault("timeout", "30s")
+
+	// Read config file
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("error reading config file: %w", err)
+		}
+		log.Printf("No config file found, using defaults and flags")
+	} else {
+		log.Printf("Using config file: %s", viper.ConfigFileUsed())
 	}
 
-	dgraphAddr := os.Getenv("DGRAPH_ADDR")
-	if dgraphAddr == "" {
-		dgraphAddr = "localhost:9080"
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
 
-	pubkeyInput := os.Getenv("PUBKEY")
-	if pubkeyInput == "" {
-		log.Fatal("PUBKEY environment variable is required")
+	// Validate required fields
+	if cfg.PubkeyHex == "" {
+		return nil, fmt.Errorf("pubkey is required in configuration")
 	}
 
 	// Handle both hex and npub formats
-	var pubkeyHex string
-	if _, data, err := nip19.Decode(pubkeyInput); err == nil {
-		pubkeyHex = data.(string)
-	} else {
-		pubkeyHex = pubkeyInput // assume it's already hex
+	if _, data, err := nip19.Decode(cfg.PubkeyHex); err == nil {
+		cfg.PubkeyHex = data.(string)
 	}
+	// If decode fails, assume it's already hex
 
-	timeout := 30 * time.Second
-	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
-		if t, err := time.ParseDuration(timeoutStr); err == nil {
-			timeout = t
-		}
-	}
-
-	return Config{
-		RelayURL:   relayURL,
-		DgraphAddr: dgraphAddr,
-		PubkeyHex:  pubkeyHex,
-		Timeout:    timeout,
-	}
+	return &cfg, nil
 }
 
-func fetchAndUpdateFollows(ctx context.Context, relay *nostr.Relay, dgClient *dgraph.Client, cfg Config) error {
+func fetchAndUpdateFollows(ctx context.Context, relay *nostr.Relay, dgClient *dgraph.Client, cfg *Config) error {
 	// Create filter for kind 3 events from the specified pubkey
 	filter := nostr.Filter{
 		Authors: []string{cfg.PubkeyHex},
