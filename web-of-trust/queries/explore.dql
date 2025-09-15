@@ -216,3 +216,19 @@
   }
 }
 # Then use DQL mutations to merge or delete duplicates
+
+# 16. Total counts - comprehensive overview
+{
+  var(func: has(pubkey)) {
+    all_pubkeys as uid
+    follow_counts as count(follows)
+  }
+  
+  total_counts(func: uid(all_pubkeys)) {
+    total_pubkeys: count(uid)
+  }
+  
+  total_follows() {
+    total_follows: sum(val(follow_counts))
+  }
+}
