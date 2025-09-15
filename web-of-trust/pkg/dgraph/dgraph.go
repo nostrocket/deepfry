@@ -64,45 +64,30 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 
 	lastUpdate := time.Now()
 
-	// Use proper upsert block syntax with blank nodes
-	upsertQuery := `
-	query {
+	// First transaction: check if nodes exist
+	checkQuery := `{
 		q1(func: eq(pubkey, "` + signerPubkey + `")) {
-			v1 as uid
+			uid
 		}
 		q2(func: eq(pubkey, "` + followee + `")) {
-			v2 as uid
+			uid
 		}
 	}`
 
-	// Use conditional mutation to create nodes only if they don't exist
-	mutation := `
-	mutation {
-		set {
-			uid(v1) <pubkey> "` + signerPubkey + `" .
-			uid(v1) <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
-			uid(v1) <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .
-			uid(v2) <pubkey> "` + followee + `" .
-			uid(v1) <follows> uid(v2) .
-		}
-	}`
-
-	// Execute as an upsert operation
 	txn := c.dg.NewTxn()
 	defer txn.Discard(ctx)
 
-	resp, err := txn.Query(ctx, upsertQuery)
+	resp, err := txn.Query(ctx, checkQuery)
 	if err != nil {
 		return fmt.Errorf("query failed: %w", err)
 	}
 
-	// Parse response to check if nodes exist
 	type QueryResp struct {
 		Q1 []struct {
-			V1 string `json:"uid"`
+			UID string `json:"uid"`
 		} `json:"q1"`
 		Q2 []struct {
-			V2 string `json:"uid"`
+			UID string `json:"uid"`
 		} `json:"q2"`
 	}
 	var qr QueryResp
@@ -110,48 +95,67 @@ func (c *Client) AddFollower(ctx context.Context, signerPubkey string, kind3crea
 		return fmt.Errorf("unmarshal failed: %w", err)
 	}
 
-	// Build mutation based on whether nodes exist
-	var nquads string
-	if len(qr.Q1) == 0 {
-		// Follower doesn't exist, create new blank node
-		nquads = `_:follower <pubkey> "` + signerPubkey + `" .
-_:follower <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
-_:follower <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`
-	} else {
-		// Follower exists, update it
-		nquads = `<` + qr.Q1[0].V1 + `> <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
-<` + qr.Q1[0].V1 + `> <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`
-	}
-
-	if len(qr.Q2) == 0 {
-		// Followee doesn't exist, create new blank node
-		nquads += `
-_:followee <pubkey> "` + followee + `" .`
-		if len(qr.Q1) == 0 {
-			nquads += `
-_:follower <follows> _:followee .`
-		} else {
-			nquads += `
-<` + qr.Q1[0].V1 + `> <follows> _:followee .`
-		}
-	} else {
-		// Followee exists, just add edge
-		if len(qr.Q1) == 0 {
-			nquads += `
-_:follower <follows> <` + qr.Q2[0].V2 + `> .`
-		} else {
-			nquads += `
-<` + qr.Q1[0].V1 + `> <follows> <` + qr.Q2[0].V2 + `> .`
-		}
-	}
-
-	mu := &api.Mutation{SetNquads: []byte(nquads)}
-	if _, err := txn.Mutate(ctx, mu); err != nil {
-		return fmt.Errorf("mutation failed: %w", err)
-	}
-
+	// Commit the read transaction
 	if err := txn.Commit(ctx); err != nil {
-		return fmt.Errorf("commit failed: %w", err)
+		return fmt.Errorf("commit read failed: %w", err)
+	}
+
+	// Second transaction: create/update nodes
+	txn2 := c.dg.NewTxn()
+	defer txn2.Discard(ctx)
+
+	var followerUID, followeeUID string
+
+	// Handle follower node
+	if len(qr.Q1) == 0 {
+		// Create new follower node
+		mu := &api.Mutation{
+			SetNquads: []byte(`_:new <pubkey> "` + signerPubkey + `" .
+_:new <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
+_:new <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`),
+		}
+		assigned, err := txn2.Mutate(ctx, mu)
+		if err != nil {
+			return fmt.Errorf("create follower failed: %w", err)
+		}
+		followerUID = assigned.Uids["new"]
+	} else {
+		// Update existing follower
+		followerUID = qr.Q1[0].UID
+		mu := &api.Mutation{
+			SetNquads: []byte(`<` + followerUID + `> <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
+<` + followerUID + `> <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`),
+		}
+		if _, err := txn2.Mutate(ctx, mu); err != nil {
+			return fmt.Errorf("update follower failed: %w", err)
+		}
+	}
+
+	// Handle followee node
+	if len(qr.Q2) == 0 {
+		// Create new followee node
+		mu := &api.Mutation{
+			SetNquads: []byte(`_:new2 <pubkey> "` + followee + `" .`),
+		}
+		assigned, err := txn2.Mutate(ctx, mu)
+		if err != nil {
+			return fmt.Errorf("create followee failed: %w", err)
+		}
+		followeeUID = assigned.Uids["new2"]
+	} else {
+		followeeUID = qr.Q2[0].UID
+	}
+
+	// Add the follows edge
+	mu := &api.Mutation{
+		SetNquads: []byte(`<` + followerUID + `> <follows> <` + followeeUID + `> .`),
+	}
+	if _, err := txn2.Mutate(ctx, mu); err != nil {
+		return fmt.Errorf("add edge failed: %w", err)
+	}
+
+	if err := txn2.Commit(ctx); err != nil {
+		return fmt.Errorf("commit mutations failed: %w", err)
 	}
 
 	return nil
@@ -170,16 +174,16 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 	lastUpdate := time.Now()
 
 	// Build query to find existing nodes
-	query := `query {
+	query := `{
 		follower(func: eq(pubkey, "` + signerPubkey + `")) {
-			v as uid
+			uid
 		}`
 
 	for i, followee := range followees {
 		query += fmt.Sprintf(`
 		followee%d(func: eq(pubkey, "%s")) {
-			f%d as uid
-		}`, i, followee, i)
+			uid
+		}`, i, followee)
 	}
 	query += "\n}"
 
@@ -197,61 +201,74 @@ func (c *Client) AddFollowersBatch(ctx context.Context, signerPubkey string, kin
 		return fmt.Errorf("unmarshal failed: %w", err)
 	}
 
-	// Build mutations
-	var nquads string
+	// Commit the read
+	if err := txn.Commit(ctx); err != nil {
+		return fmt.Errorf("commit read failed: %w", err)
+	}
+
+	// New transaction for mutations
+	txn2 := c.dg.NewTxn()
+	defer txn2.Discard(ctx)
+
+	var followerUID string
 
 	// Handle follower node
 	if followerNodes, ok := result["follower"]; !ok || len(followerNodes) == 0 {
 		// Create new follower
-		nquads = `_:follower <pubkey> "` + signerPubkey + `" .
+		mu := &api.Mutation{
+			SetNquads: []byte(`_:follower <pubkey> "` + signerPubkey + `" .
 _:follower <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
-_:follower <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`
-
-		// Add follows edges
-		for i, followee := range followees {
-			followeeKey := fmt.Sprintf("followee%d", i)
-			if followeeNodes, ok := result[followeeKey]; ok && len(followeeNodes) > 0 {
-				// Followee exists
-				if uid, ok := followeeNodes[0]["uid"].(string); ok {
-					nquads += fmt.Sprintf("\n_:follower <follows> <%s> .", uid)
-				}
-			} else {
-				// Create followee
-				nquads += fmt.Sprintf(`
-_:followee%d <pubkey> "%s" .
-_:follower <follows> _:followee%d .`, i, followee, i)
-			}
+_:follower <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`),
 		}
+		assigned, err := txn2.Mutate(ctx, mu)
+		if err != nil {
+			return fmt.Errorf("create follower failed: %w", err)
+		}
+		followerUID = assigned.Uids["follower"]
 	} else {
 		// Update existing follower
-		followerUID := followerNodes[0]["uid"].(string)
-		nquads = fmt.Sprintf(`<%s> <kind3CreatedAt> "%d" .
-<%s> <last_db_update> "%s" .`, followerUID, kind3createdAt, followerUID, lastUpdate.Format(time.RFC3339))
-
-		// Add follows edges
-		for i, followee := range followees {
-			followeeKey := fmt.Sprintf("followee%d", i)
-			if followeeNodes, ok := result[followeeKey]; ok && len(followeeNodes) > 0 {
-				// Followee exists
-				if uid, ok := followeeNodes[0]["uid"].(string); ok {
-					nquads += fmt.Sprintf("\n<%s> <follows> <%s> .", followerUID, uid)
-				}
-			} else {
-				// Create followee
-				nquads += fmt.Sprintf(`
-_:followee%d <pubkey> "%s" .
-<%s> <follows> _:followee%d .`, i, followee, followerUID, i)
-			}
+		followerUID = followerNodes[0]["uid"].(string)
+		mu := &api.Mutation{
+			SetNquads: []byte(`<` + followerUID + `> <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
+<` + followerUID + `> <last_db_update> "` + lastUpdate.Format(time.RFC3339) + `" .`),
+		}
+		if _, err := txn2.Mutate(ctx, mu); err != nil {
+			return fmt.Errorf("update follower failed: %w", err)
 		}
 	}
 
-	mu := &api.Mutation{SetNquads: []byte(nquads)}
-	if _, err := txn.Mutate(ctx, mu); err != nil {
-		return fmt.Errorf("mutation failed: %w", err)
+	// Handle followee nodes and edges
+	for i, followee := range followees {
+		followeeKey := fmt.Sprintf("followee%d", i)
+		var followeeUID string
+
+		if followeeNodes, ok := result[followeeKey]; ok && len(followeeNodes) > 0 {
+			// Followee exists
+			followeeUID = followeeNodes[0]["uid"].(string)
+		} else {
+			// Create followee
+			blankNode := fmt.Sprintf("_:followee%d", i)
+			mu := &api.Mutation{
+				SetNquads: []byte(blankNode + ` <pubkey> "` + followee + `" .`),
+			}
+			assigned, err := txn2.Mutate(ctx, mu)
+			if err != nil {
+				return fmt.Errorf("create followee %d failed: %w", i, err)
+			}
+			followeeUID = assigned.Uids[fmt.Sprintf("followee%d", i)]
+		}
+
+		// Add edge
+		mu := &api.Mutation{
+			SetNquads: []byte(`<` + followerUID + `> <follows> <` + followeeUID + `> .`),
+		}
+		if _, err := txn2.Mutate(ctx, mu); err != nil {
+			return fmt.Errorf("add edge %d failed: %w", i, err)
+		}
 	}
 
-	if err := txn.Commit(ctx); err != nil {
-		return fmt.Errorf("commit failed: %w", err)
+	if err := txn2.Commit(ctx); err != nil {
+		return fmt.Errorf("commit mutations failed: %w", err)
 	}
 
 	return nil
