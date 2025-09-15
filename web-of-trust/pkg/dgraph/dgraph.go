@@ -121,19 +121,20 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		for _, f := range result.Follower[0].Follows {
 			existingFollows[f.Pubkey] = f.UID
 		}
+	}
 
-		updateNQuads := fmt.Sprintf(`
-			<%s> <kind3CreatedAt> "%d" .
-			<%s> <last_db_update> "%d" .
-		`, followerUID, kind3createdAt, followerUID, lastUpdate)
+	// Always update timestamps regardless of whether there are new follows
+	updateNQuads := fmt.Sprintf(`
+		<%s> <kind3CreatedAt> "%d" .
+		<%s> <last_db_update> "%d" .
+	`, followerUID, kind3createdAt, followerUID, lastUpdate)
 
-		mu := &api.Mutation{
-			SetNquads: []byte(updateNQuads),
-			CommitNow: false,
-		}
-		if _, err := txn.Mutate(ctx, mu); err != nil {
-			return fmt.Errorf("update follower failed: %w", err)
-		}
+	mu := &api.Mutation{
+		SetNquads: []byte(updateNQuads),
+		CommitNow: false,
+	}
+	if _, err := txn.Mutate(ctx, mu); err != nil {
+		return fmt.Errorf("update follower timestamps failed: %w", err)
 	}
 
 	// Step 2: Remove all existing follows (kind 3 is replaceable)

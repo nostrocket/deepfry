@@ -159,14 +159,13 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 	log.Printf("Found %d follows in event (%d unique, %d duplicates)", len(rawFollows), uniqueFollowsCount, duplicatesCount)
 
 	// Process all follows in one batch operation
-	if uniqueFollowsCount > 0 {
-		err := c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
-		if err != nil {
-			return fmt.Errorf("failed to add follows batch: %w", err)
-		}
 
-		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
+	err = c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
+	if err != nil {
+		return fmt.Errorf("failed to add follows batch: %w", err)
 	}
+
+	log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
 
 	// Log metrics
 	c.logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
