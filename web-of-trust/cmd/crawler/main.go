@@ -15,7 +15,7 @@ import (
 )
 
 type Config struct {
-	RelayURL   string        `mapstructure:"relay_url"`
+	RelayURLs  []string      `mapstructure:"relay_urls"` // Changed from RelayURL to RelayURLs
 	DgraphAddr string        `mapstructure:"dgraph_addr"`
 	PubkeyHex  string        `mapstructure:"pubkey"`
 	Timeout    time.Duration `mapstructure:"timeout"`
@@ -42,7 +42,7 @@ func main() {
 
 	// Create crawler
 	crawlerCfg := crawler.Config{
-		RelayURL:   cfg.RelayURL,
+		RelayURLs:  cfg.RelayURLs, // Changed from RelayURL to RelayURLs
 		DgraphAddr: cfg.DgraphAddr,
 		Timeout:    cfg.Timeout,
 	}
@@ -90,10 +90,22 @@ func loadConfig() (*Config, error) {
 	viper.AddConfigPath("./config")
 	viper.AddConfigPath("/etc/web-of-trust/")
 
-	// Set defaults
-	viper.SetDefault("relay_url", "wss://relay.damus.io")
+	// Set defaults with popular Nostr relays
+	viper.SetDefault("relay_urls", []string{
+		"wss://relay.damus.io",
+		"wss://nos.lol",
+		"wss://relay.nostr.band",
+		"wss://nostr.wine",
+		"wss://relay.current.fyi",
+		"wss://nostr-pub.wellorder.net",
+		"wss://relay.nostr.info",
+		"wss://offchain.pub",
+		"wss://brb.io",
+		"wss://relay.primal.net",
+	})
 	viper.SetDefault("dgraph_addr", "localhost:9080")
 	viper.SetDefault("timeout", "30s")
+	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -110,9 +122,14 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
 
-	// Validate required fields
-	if cfg.PubkeyHex == "" {
-		return nil, fmt.Errorf("pubkey is required in configuration")
+	// Validate required fields - now optional since we have a default
+	// if cfg.PubkeyHex == "" {
+	// 	return nil, fmt.Errorf("pubkey is required in configuration")
+	// }
+
+	// Ensure at least one relay URL is provided
+	if len(cfg.RelayURLs) == 0 {
+		return nil, fmt.Errorf("at least one relay URL is required")
 	}
 
 	// Handle both hex and npub formats
