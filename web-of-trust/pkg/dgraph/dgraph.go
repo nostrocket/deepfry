@@ -521,3 +521,62 @@ func (c *Client) GetPubkeysWithMinFollowers(ctx context.Context, minFollowers in
 
 	return pubkeys, nil
 }
+
+// GetPubkeysWithMinFollowersPaginated returns pubkeys with at least the specified number of followers
+// using pagination to avoid gRPC message size limits.
+// Calls the provided callback function for each batch of pubkeys.
+func (c *Client) GetPubkeysWithMinFollowersPaginated(ctx context.Context, minFollowers int, batchSize int, callback func([]string) error) error {
+	offset := 0
+
+	for {
+		query := fmt.Sprintf(`
+		{
+			popular(func: has(pubkey), first: %d, offset: %d) @filter(ge(count(~follows), %d)) {
+				pubkey
+			}
+		}`, batchSize, offset, minFollowers)
+
+		txn := c.dg.NewTxn()
+		resp, err := txn.Query(ctx, query)
+		txn.Discard(ctx)
+
+		if err != nil {
+			return fmt.Errorf("query popular pubkeys failed: %w", err)
+		}
+
+		var result struct {
+			Popular []struct {
+				Pubkey string `json:"pubkey"`
+			} `json:"popular"`
+		}
+
+		if err := json.Unmarshal(resp.Json, &result); err != nil {
+			return fmt.Errorf("unmarshal popular pubkeys failed: %w", err)
+		}
+
+		// If no results, we're done
+		if len(result.Popular) == 0 {
+			break
+		}
+
+		// Extract pubkeys from this batch
+		batch := make([]string, len(result.Popular))
+		for i, node := range result.Popular {
+			batch[i] = node.Pubkey
+		}
+
+		// Call the callback with this batch
+		if err := callback(batch); err != nil {
+			return fmt.Errorf("callback error: %w", err)
+		}
+
+		// If we got fewer results than batch size, we're done
+		if len(result.Popular) < batchSize {
+			break
+		}
+
+		offset += batchSize
+	}
+
+	return nil
+}
