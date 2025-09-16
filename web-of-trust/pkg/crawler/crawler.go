@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type Crawler struct {
 	relayURLs     []string
 	dgClient      *dgraph.Client
 	timeout       time.Duration
+	debug         bool
 	dbUpdateMutex sync.Mutex
 }
 
@@ -25,6 +27,7 @@ type Config struct {
 	RelayURLs  []string // Changed from RelayURL to RelayURLs
 	DgraphAddr string
 	Timeout    time.Duration
+	Debug      bool
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -53,7 +56,9 @@ func New(cfg Config) (*Crawler, error) {
 		}
 		relays = append(relays, relay)
 		connectedURLs = append(connectedURLs, url)
-		log.Printf("Connected to relay: %s", url)
+		if cfg.Debug {
+			log.Printf("Connected to relay: %s", url)
+		}
 	}
 
 	if len(relays) == 0 {
@@ -68,6 +73,7 @@ func New(cfg Config) (*Crawler, error) {
 		relayURLs:     connectedURLs,
 		dgClient:      dgClient,
 		timeout:       cfg.Timeout,
+		debug:         cfg.Debug,
 		dbUpdateMutex: sync.Mutex{},
 	}, nil
 }
@@ -160,7 +166,9 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 		processed++
 	}
 
-	log.Printf("Processed follows for %d/%d pubkeys across %d relays", processed, len(pubkeys), len(c.relays))
+	if c.debug {
+		log.Printf("Processed follows for %d/%d pubkeys across %d relays", processed, len(pubkeys), len(c.relays))
+	}
 	return nil
 }
 
@@ -172,18 +180,24 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 	}
 	defer sub.Unsub()
 
-	log.Printf("Querying relay %s for %d pubkeys", relayURL, len(filter.Authors))
+	if c.debug {
+		log.Printf("Querying relay %s for %d pubkeys", relayURL, len(filter.Authors))
+	}
 
 	for {
 		select {
 		case event := <-sub.Events:
 			if event != nil {
-				log.Printf("Found kind 3 event from relay %s: %s, created_at: %d, pubkey: %s",
-					relayURL, event.ID, event.CreatedAt, event.PubKey)
+				if c.debug {
+					log.Printf("Found kind 3 event from relay %s: %s, created_at: %d, pubkey: %s",
+						relayURL, event.ID, event.CreatedAt, event.PubKey)
+				}
 				eventsChan <- event
 			}
 		case <-sub.EndOfStoredEvents:
-			log.Printf("EOSE received from relay %s", relayURL)
+			if c.debug {
+				log.Printf("EOSE received from relay %s", relayURL)
+			}
 			return nil
 		case <-sub.Context.Done():
 			if err := sub.Context.Err(); err != nil && err != context.Canceled {
@@ -198,21 +212,6 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 }
 
 func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event) error {
-	// Check if this event is newer than what we already have
-	existingTimestamp, err := c.dgClient.GetKind3CreatedAt(ctx, event.PubKey)
-	if err != nil {
-		return fmt.Errorf("failed to get existing kind3CreatedAt: %w", err)
-	}
-
-	if existingTimestamp >= int64(event.CreatedAt) {
-		log.Printf("Skipping event %s (created_at: %d) - not newer than existing (created_at: %d)",
-			event.ID, event.CreatedAt, existingTimestamp)
-		return nil
-	}
-
-	log.Printf("Processing newer event %s (created_at: %d) - existing was (created_at: %d)",
-		event.ID, event.CreatedAt, existingTimestamp)
-
 	// Parse follows from p tags
 	var rawFollows []string
 	followsMap := make(map[string]struct{})
@@ -227,16 +226,30 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 	uniqueFollowsCount := len(followsMap)
 	duplicatesCount := len(rawFollows) - uniqueFollowsCount
 
-	log.Printf("Found %d follows in event (%d unique, %d duplicates)", len(rawFollows), uniqueFollowsCount, duplicatesCount)
+	if c.debug {
+		log.Printf("Found %d follows in event (%d unique, %d duplicates)", len(rawFollows), uniqueFollowsCount, duplicatesCount)
+	}
 
+	// Warn if this is an unusually large follow list
+	if uniqueFollowsCount > 1000 {
+		log.Printf("WARN: Large follow list detected (%d follows) for pubkey %s - this may cause timeouts", uniqueFollowsCount, event.PubKey)
+	}
+
+	// For very large follow lists, we might want to chunk the processing
+	// But for now, try the single batch approach with longer timeout
 	// Process all follows in one batch operation
-
-	err = c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
+	err := c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap, c.debug)
 	if err != nil {
+		// If we get a timeout error and have a large follow list, we could implement chunking here
+		if uniqueFollowsCount > 500 && strings.Contains(err.Error(), "DeadlineExceeded") {
+			log.Printf("WARN: Timeout detected for large follow list (%d follows). Consider implementing chunked processing.", uniqueFollowsCount)
+		}
 		return fmt.Errorf("failed to add follows batch: %w", err)
 	}
 
-	log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
+	if c.debug {
+		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
+	}
 
 	// Log metrics
 	c.logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
@@ -258,15 +271,21 @@ func (c *Crawler) logMetrics(pubkey string, followsCount int, duplicatesCount in
 }
 
 func (c *Crawler) logSignatureValidationMetrics(pubkey string, valid bool) {
+	// Only log signature validation metrics in debug mode
+	if !c.debug {
+		return
+	}
+
 	metrics := map[string]interface{}{
 		"pubkey":          pubkey,
 		"signature_valid": valid,
 		"validated_at":    time.Now().Format(time.RFC3339),
 		"component":       "web-of-trust-crawler",
+		"metric_type":     "signature_validation",
 	}
 
 	metricsJSON, _ := json.Marshal(metrics)
-	log.Printf("SIGNATURE_VALIDATION: %s", string(metricsJSON))
+	log.Printf("DEBUG_METRICS: %s", string(metricsJSON))
 }
 
 func (c *Crawler) logRelayError(errorType string, err error) {

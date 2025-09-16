@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -56,17 +57,27 @@ follows: [uid] @reverse .`
 
 // AddFollowers adds multiple follows edges from a single follower to multiple followees.
 // For kind 3 events, this completely replaces the user's follow list (replaceable event behavior).
-func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}) error {
+func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}, debug bool) error {
+	// Create a longer timeout context for this specific operation
+	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if debug {
+		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows", signerPubkey, len(follows))
+	}
+	start := time.Now()
+
 	lastUpdate := time.Now().Unix()
 
 	txn := c.dg.NewTxn()
-	defer txn.Discard(ctx)
+	defer txn.Discard(queryCtx)
 
-	// Step 1: Get follower and existing follows
+	// Step 1: Get follower and existing follows - include kind3CreatedAt to avoid separate query
 	followerQuery := fmt.Sprintf(`
 	{
-		follower(func: eq(pubkey, %q)) {
+		follower(func: eq(pubkey, %q), first: 1) {
 			uid
+			kind3CreatedAt
 			follows { 
 				uid
 				pubkey 
@@ -74,15 +85,19 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		}
 	}`, signerPubkey)
 
-	resp, err := txn.Query(ctx, followerQuery)
+	resp, err := txn.Query(queryCtx, followerQuery)
 	if err != nil {
 		return fmt.Errorf("query follower failed: %w", err)
+	}
+	if debug {
+		log.Printf("DEBUG: Initial follower query completed in %v", time.Since(start))
 	}
 
 	var result struct {
 		Follower []struct {
-			UID     string `json:"uid"`
-			Follows []struct {
+			UID            string `json:"uid"`
+			Kind3CreatedAt int64  `json:"kind3CreatedAt"`
+			Follows        []struct {
 				UID    string `json:"uid"`
 				Pubkey string `json:"pubkey"`
 			} `json:"follows"`
@@ -108,13 +123,19 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			SetNquads: []byte(followerNQuads),
 			CommitNow: false,
 		}
-		assigned, err := txn.Mutate(ctx, mu)
+		assigned, err := txn.Mutate(queryCtx, mu)
 		if err != nil {
 			return fmt.Errorf("create follower failed: %w", err)
 		}
 		followerUID = assigned.Uids["follower"]
 	} else {
-		// Update existing follower
+		// Update existing follower - check if this is newer than existing
+		existingKind3CreatedAt := result.Follower[0].Kind3CreatedAt
+		if kind3createdAt <= existingKind3CreatedAt {
+			// Skip update - existing event is newer or same age
+			return nil
+		}
+
 		followerUID = result.Follower[0].UID
 
 		// Track existing follows for deletion
@@ -133,7 +154,7 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		SetNquads: []byte(updateNQuads),
 		CommitNow: false,
 	}
-	if _, err := txn.Mutate(ctx, mu); err != nil {
+	if _, err := txn.Mutate(queryCtx, mu); err != nil {
 		return fmt.Errorf("update follower timestamps failed: %w", err)
 	}
 
@@ -147,7 +168,7 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			DelNquads: []byte(delNQuads),
 			CommitNow: false,
 		}
-		if _, err := txn.Mutate(ctx, mu); err != nil {
+		if _, err := txn.Mutate(queryCtx, mu); err != nil {
 			return fmt.Errorf("remove existing follows failed: %w", err)
 		}
 	}
@@ -167,7 +188,7 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 
 		bulkQuery := fmt.Sprintf("{ %s }", fmt.Sprintf(strings.Join(queryParts, "\n")))
 
-		bulkResp, err := txn.Query(ctx, bulkQuery)
+		bulkResp, err := txn.Query(queryCtx, bulkQuery)
 		if err != nil {
 			return fmt.Errorf("bulk query followees failed: %w", err)
 		}
@@ -203,7 +224,7 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 				SetNquads: []byte(createNQuads),
 				CommitNow: false,
 			}
-			assigned, err := txn.Mutate(ctx, mu)
+			assigned, err := txn.Mutate(queryCtx, mu)
 			if err != nil {
 				return fmt.Errorf("create missing followees failed: %w", err)
 			}
@@ -232,17 +253,20 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 				SetNquads: []byte(edgeNQuads),
 				CommitNow: false,
 			}
-			if _, err := txn.Mutate(ctx, mu); err != nil {
+			if _, err := txn.Mutate(queryCtx, mu); err != nil {
 				return fmt.Errorf("create follow edges failed: %w", err)
 			}
 		}
 	}
 
 	// Commit all changes
-	if err := txn.Commit(ctx); err != nil {
+	if err := txn.Commit(queryCtx); err != nil {
 		return fmt.Errorf("commit transaction failed: %w", err)
 	}
 
+	if debug {
+		log.Printf("DEBUG: AddFollowers completed successfully in %v for pubkey %s", time.Since(start), signerPubkey)
+	}
 	return nil
 }
 
@@ -422,17 +446,25 @@ func (c *Client) CountPubkeys(ctx context.Context) (int, error) {
 // GetKind3CreatedAt returns the kind3CreatedAt unix timestamp for the given pubkey.
 // Returns 0 if the pubkey doesn't exist or has no kind3CreatedAt value.
 func (c *Client) GetKind3CreatedAt(ctx context.Context, pubkey string) (int64, error) {
-	query := fmt.Sprintf(`
-	{
-		pubkey_node(func: eq(pubkey, %q)) {
+	// Create a shorter timeout context for this specific operation
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	query := `query GetKind3($pubkey: string) {
+		pubkey_node(func: eq(pubkey, $pubkey), first: 1) {
 			kind3CreatedAt
 		}
-	}`, pubkey)
+	}`
 
-	txn := c.dg.NewTxn()
-	defer txn.Discard(ctx)
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(queryCtx)
 
-	resp, err := txn.Query(ctx, query)
+	req := &api.Request{
+		Query: query,
+		Vars:  map[string]string{"$pubkey": pubkey},
+	}
+
+	resp, err := txn.Do(queryCtx, req)
 	if err != nil {
 		return 0, fmt.Errorf("query kind3CreatedAt failed: %w", err)
 	}

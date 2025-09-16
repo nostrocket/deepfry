@@ -1,6 +1,5 @@
 package main
 
-//todo: add multiple relay support
 import (
 	"context"
 	"fmt"
@@ -19,6 +18,7 @@ type Config struct {
 	DgraphAddr string        `mapstructure:"dgraph_addr"`
 	PubkeyHex  string        `mapstructure:"pubkey"`
 	Timeout    time.Duration `mapstructure:"timeout"`
+	Debug      bool          `mapstructure:"debug"`
 }
 
 func main() {
@@ -45,6 +45,7 @@ func main() {
 		RelayURLs:  cfg.RelayURLs, // Changed from RelayURL to RelayURLs
 		DgraphAddr: cfg.DgraphAddr,
 		Timeout:    cfg.Timeout,
+		Debug:      cfg.Debug,
 	}
 
 	c, err := crawler.New(crawlerCfg)
@@ -70,9 +71,9 @@ func main() {
 		if len(pubkeys) == 0 {
 			break
 		}
-		// if len(pubkeys) > 20 {
-		// 	pubkeys = pubkeys[0:20]
-		// }
+		if len(pubkeys) > 20 {
+			pubkeys = pubkeys[0:20]
+		}
 
 		if err := c.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
 			log.Printf("Failed to fetch and update follows: %v", err)
@@ -95,16 +96,13 @@ func loadConfig() (*Config, error) {
 		"wss://relay.damus.io",
 		"wss://nos.lol",
 		"wss://relay.nostr.band",
-		"wss://nostr.wine",
-		"wss://relay.current.fyi",
 		"wss://nostr-pub.wellorder.net",
-		"wss://relay.nostr.info",
 		"wss://offchain.pub",
-		"wss://brb.io",
 		"wss://relay.primal.net",
 	})
 	viper.SetDefault("dgraph_addr", "localhost:9080")
 	viper.SetDefault("timeout", "30s")
+	viper.SetDefault("debug", false)
 	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
 
 	// Read config file
