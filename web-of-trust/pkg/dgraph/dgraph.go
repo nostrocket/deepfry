@@ -29,9 +29,13 @@ type Client struct {
 	conn *grpc.ClientConn
 }
 
-// NewClient creates a new Client connected to the given dgraph gRPC address (eg "localhost:9080").
+// NewClient creates a new Client connected to the given dgraph gRPC address
+// (eg "localhost:9080").
 func NewClient(addr string) (*Client, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -55,15 +59,23 @@ follows: [uid] @reverse .`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
 
-// AddFollowers adds multiple follows edges from a single follower to multiple followees.
-// For kind 3 events, this completely replaces the user's follow list (replaceable event behavior).
-func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}, debug bool) error {
+// AddFollowers adds multiple follows edges from a single follower to multiple
+// followees. For kind 3 events, this completely replaces the user's follow list
+// (replaceable event behavior).
+func (c *Client) AddFollowers(
+	ctx context.Context,
+	signerPubkey string,
+	kind3createdAt int64,
+	follows map[string]struct{},
+	debug bool,
+) error {
 	// Create a longer timeout context for this specific operation
 	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	if debug {
-		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows", signerPubkey, len(follows))
+		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows",
+			signerPubkey, len(follows))
 	}
 	start := time.Now()
 
@@ -72,7 +84,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 	txn := c.dg.NewTxn()
 	defer txn.Discard(queryCtx)
 
-	// Step 1: Get follower and existing follows - include kind3CreatedAt to avoid separate query
+	// Step 1: Get follower and existing follows - include kind3CreatedAt to
+	// avoid separate query
 	followerQuery := fmt.Sprintf(`
 	{
 		follower(func: eq(pubkey, %q), first: 1) {
@@ -90,7 +103,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		return fmt.Errorf("query follower failed: %w", err)
 	}
 	if debug {
-		log.Printf("DEBUG: Initial follower query completed in %v", time.Since(start))
+		log.Printf("DEBUG: Initial follower query completed in %v",
+			time.Since(start))
 	}
 
 	var result struct {
@@ -162,7 +176,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 	if len(existingFollows) > 0 {
 		var delNQuads string
 		for _, uid := range existingFollows {
-			delNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n", followerUID, uid)
+			delNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
+				followerUID, uid)
 		}
 		mu := &api.Mutation{
 			DelNquads: []byte(delNQuads),
@@ -183,10 +198,16 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		// Build single query for all followees
 		var queryParts []string
 		for i, followee := range followeeList {
-			queryParts = append(queryParts, fmt.Sprintf(`followee_%d(func: eq(pubkey, %q)) { uid }`, i, followee))
+			part := fmt.Sprintf(
+				`followee_%d(func: eq(pubkey, %q)) { uid }`,
+				i,
+				followee,
+			)
+			queryParts = append(queryParts, part)
 		}
 
-		bulkQuery := fmt.Sprintf("{ %s }", fmt.Sprintf(strings.Join(queryParts, "\n")))
+		bulkQuery := fmt.Sprintf("{ %s }",
+			fmt.Sprintf(strings.Join(queryParts, "\n")))
 
 		bulkResp, err := txn.Query(queryCtx, bulkQuery)
 		if err != nil {
@@ -213,7 +234,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			} else {
 				// Need to create followee
 				blankNodeID := fmt.Sprintf("new_followee_%d", i)
-				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n", blankNodeID, followee)
+				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n",
+					blankNodeID, followee)
 				followeeUIDs[i] = "_:" + blankNodeID
 			}
 		}
@@ -232,7 +254,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 			// Replace blank node references with actual UIDs
 			for i, uid := range followeeUIDs {
 				if strings.HasPrefix(uid, "_:") {
-					blankNodeID := uid[2:] // Remove "_:" prefix
+					// Remove "_:" prefix
+					blankNodeID := uid[2:]
 					if actualUID, exists := assigned.Uids[blankNodeID]; exists {
 						followeeUIDs[i] = actualUID
 					}
@@ -244,7 +267,8 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 		var edgeNQuads string
 		for _, followeeUID := range followeeUIDs {
 			if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
-				edgeNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n", followerUID, followeeUID)
+				edgeNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
+					followerUID, followeeUID)
 			}
 		}
 
@@ -265,7 +289,11 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 	}
 
 	if debug {
-		log.Printf("DEBUG: AddFollowers completed successfully in %v for pubkey %s", time.Since(start), signerPubkey)
+		log.Printf(
+			"DEBUG: AddFollowers completed successfully in %v for pubkey %s",
+			time.Since(start),
+			signerPubkey,
+		)
 	}
 	return nil
 }
@@ -273,7 +301,12 @@ func (c *Client) AddFollowers(ctx context.Context, signerPubkey string, kind3cre
 // RemoveFollower removes the follows edge from follower -> followee.
 // The follower's timestamps are updated to reflect the removal.
 // Returns error if parameters are empty or timestamps are invalid.
-func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3createdAt int64, followee string) error {
+func (c *Client) RemoveFollower(
+	ctx context.Context,
+	signerPubkey string,
+	kind3createdAt int64,
+	followee string,
+) error {
 	if signerPubkey == "" {
 		return fmt.Errorf("signerPubkey must be specified (non-empty)")
 	}
@@ -316,7 +349,10 @@ func (c *Client) RemoveFollower(ctx context.Context, signerPubkey string, kind3c
 
 // RemovePubKeyIfNoFollowers checks if the pubkey has any followers (~follows).
 // If there are zero followers, it deletes the node. Returns (deleted bool, error).
-func (c *Client) RemovePubKeyIfNoFollowers(ctx context.Context, pubkey string) (bool, error) {
+func (c *Client) RemovePubKeyIfNoFollowers(
+	ctx context.Context,
+	pubkey string,
+) (bool, error) {
 	q := `query Check($pubkey: string) {
   node(func: eq(pubkey, $pubkey)) {
 	uid
@@ -371,14 +407,18 @@ func (c *Client) RemovePubKeyIfNoFollowers(ctx context.Context, pubkey string) (
 	return true, nil
 }
 
-// GetStalePubkeys returns pubkeys with last_db_update older than the given threshold,
-// or pubkeys that don't have last_db_update set at all.
+// GetStalePubkeys returns pubkeys with last_db_update older than the given
+// threshold, or pubkeys that don't have last_db_update set at all.
 // If olderThanUnix is not provided, defaults to 24 hours ago.
 // Results are sorted by age, with least recently updated first.
-func (c *Client) GetStalePubkeys(ctx context.Context, olderThanUnix int64) ([]string, error) {
+func (c *Client) GetStalePubkeys(
+	ctx context.Context,
+	olderThanUnix int64,
+) ([]string, error) {
 	query := fmt.Sprintf(`
 	{
-		stale(func: has(pubkey), orderasc: last_db_update) @filter(NOT has(last_db_update) OR lt(last_db_update, %d)) {
+		stale(func: has(pubkey), orderasc: last_db_update) 
+		@filter(NOT has(last_db_update) OR lt(last_db_update, %d)) {
 			pubkey
 		}
 	}`, olderThanUnix)
@@ -443,9 +483,12 @@ func (c *Client) CountPubkeys(ctx context.Context) (int, error) {
 	return result.Count[0].Count, nil
 }
 
-// GetKind3CreatedAt returns the kind3CreatedAt unix timestamp for the given pubkey.
-// Returns 0 if the pubkey doesn't exist or has no kind3CreatedAt value.
-func (c *Client) GetKind3CreatedAt(ctx context.Context, pubkey string) (int64, error) {
+// GetKind3CreatedAt returns the kind3CreatedAt unix timestamp for the given
+// pubkey. Returns 0 if the pubkey doesn't exist or has no kind3CreatedAt value.
+func (c *Client) GetKind3CreatedAt(
+	ctx context.Context,
+	pubkey string,
+) (int64, error) {
 	// Create a shorter timeout context for this specific operation
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -486,9 +529,13 @@ func (c *Client) GetKind3CreatedAt(ctx context.Context, pubkey string) (int64, e
 	return result.PubkeyNode[0].Kind3CreatedAt, nil
 }
 
-// GetPubkeysWithMinFollowers returns a map of pubkeys that have at least the specified number of followers.
-// The map uses pubkey as key with empty struct as value for memory-efficient set operations.
-func (c *Client) GetPubkeysWithMinFollowers(ctx context.Context, minFollowers int) (map[string]struct{}, error) {
+// GetPubkeysWithMinFollowers returns a map of pubkeys that have at least the
+// specified number of followers. The map uses pubkey as key with empty struct
+// as value for memory-efficient set operations.
+func (c *Client) GetPubkeysWithMinFollowers(
+	ctx context.Context,
+	minFollowers int,
+) (map[string]struct{}, error) {
 	query := fmt.Sprintf(`
 	{
 		popular(func: has(pubkey)) @filter(ge(count(~follows), %d)) {
@@ -522,16 +569,22 @@ func (c *Client) GetPubkeysWithMinFollowers(ctx context.Context, minFollowers in
 	return pubkeys, nil
 }
 
-// GetPubkeysWithMinFollowersPaginated returns pubkeys with at least the specified number of followers
-// using pagination to avoid gRPC message size limits.
-// Calls the provided callback function for each batch of pubkeys.
-func (c *Client) GetPubkeysWithMinFollowersPaginated(ctx context.Context, minFollowers int, batchSize int, callback func([]string) error) error {
+// GetPubkeysWithMinFollowersPaginated returns pubkeys with at least the
+// specified number of followers using pagination to avoid gRPC message size
+// limits. Calls the provided callback function for each batch of pubkeys.
+func (c *Client) GetPubkeysWithMinFollowersPaginated(
+	ctx context.Context,
+	minFollowers int,
+	batchSize int,
+	callback func([]string) error,
+) error {
 	offset := 0
 
 	for {
 		query := fmt.Sprintf(`
 		{
-			popular(func: has(pubkey), first: %d, offset: %d) @filter(ge(count(~follows), %d)) {
+			popular(func: has(pubkey), first: %d, offset: %d) 
+			@filter(ge(count(~follows), %d)) {
 				pubkey
 			}
 		}`, batchSize, offset, minFollowers)
