@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"web-of-trust/pkg/crawler"
@@ -14,7 +16,7 @@ import (
 )
 
 type Config struct {
-	RelayURLs  []string      `mapstructure:"relay_urls"` // Changed from RelayURL to RelayURLs
+	RelayURLs  []string      `mapstructure:"relay_urls"`
 	DgraphAddr string        `mapstructure:"dgraph_addr"`
 	PubkeyHex  string        `mapstructure:"pubkey"`
 	Timeout    time.Duration `mapstructure:"timeout"`
@@ -91,6 +93,22 @@ func loadConfig() (*Config, error) {
 	viper.AddConfigPath("./config")
 	viper.AddConfigPath("/etc/web-of-trust/")
 
+	// Add user home directory config path
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		deepfryConfigDir := filepath.Join(homeDir, "deepfry")
+		viper.AddConfigPath(deepfryConfigDir)
+
+		// Ensure the directory exists
+		if _, err := os.Stat(deepfryConfigDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(deepfryConfigDir, 0755); err != nil {
+				log.Printf("Warning: Failed to create config directory %s: %v", deepfryConfigDir, err)
+			}
+		}
+	} else {
+		log.Printf("Warning: Could not determine user home directory: %v", err)
+	}
+
 	// Set defaults with popular Nostr relays
 	viper.SetDefault("relay_urls", []string{
 		"wss://relay.damus.io",
@@ -111,6 +129,16 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
 		log.Printf("No config file found, using defaults and flags")
+
+		// Try to save a default config to the user's home directory
+		if homeDir != "" {
+			configPath := filepath.Join(homeDir, "deepfry", "config.yaml")
+			if err := viper.SafeWriteConfigAs(configPath); err != nil {
+				log.Printf("Warning: Failed to write default config to %s: %v", configPath, err)
+			} else {
+				log.Printf("Created default configuration file at %s", configPath)
+			}
+		}
 	} else {
 		log.Printf("Using config file: %s", viper.ConfigFileUsed())
 	}
@@ -119,11 +147,6 @@ func loadConfig() (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
-
-	// Validate required fields - now optional since we have a default
-	// if cfg.PubkeyHex == "" {
-	// 	return nil, fmt.Errorf("pubkey is required in configuration")
-	// }
 
 	// Ensure at least one relay URL is provided
 	if len(cfg.RelayURLs) == 0 {
