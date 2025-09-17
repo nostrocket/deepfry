@@ -136,6 +136,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// Process events from all relays using a switch loop
 	for {
 		select {
+		case <-relayContext.Done():
+			// The context was cancelled (either timeout or external cancellation)
+			if c.debug {
+				log.Printf("Context cancelled while processing events: %v", relayContext.Err())
+			}
+			return relayContext.Err()
+
 		case event, ok := <-eventsChan:
 			c.dbUpdateMutex.Lock()
 			if !ok {
@@ -191,21 +198,34 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				// Error channel closed
 				continue
 			}
+
+			// Don't report context cancellation as relay error
+			if strings.Contains(err.Error(), "context canceled") ||
+				strings.Contains(err.Error(), "context deadline exceeded") {
+				if c.debug {
+					log.Printf("Relay query interrupted: %v", err)
+				}
+				continue
+			}
+
 			log.Printf("WARN: Relay error: %v", err)
 			log.Printf("subscription filters: \n %s", filter)
-
-			// case <-relayContext.Done():
-			// 	return relayContext.Err()
 		}
 	}
 }
 
 func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL string, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
+	// Create a subscription with the context that can be cancelled from the main thread
 	sub, err := relay.Subscribe(ctx, []nostr.Filter{filter})
 	if err != nil {
+		// Skip logging for context cancellation, as it's expected during graceful shutdown
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %w", relayURL, err))
 		return err
 	}
+	// Ensure subscription is unsubscribed when this function returns
 	defer sub.Unsub()
 
 	if c.debug {
@@ -220,7 +240,13 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 					log.Printf("Found kind 3 event from relay %s: %s, created_at: %d, pubkey: %s",
 						relayURL, event.ID, event.CreatedAt, event.PubKey)
 				}
-				eventsChan <- event
+				// Check for context cancellation before sending to channel to avoid blocking
+				select {
+				case eventsChan <- event:
+					// Event sent successfully
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		case <-sub.EndOfStoredEvents:
 			if c.debug {
@@ -228,12 +254,16 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 			}
 			return nil
 		case <-sub.Context.Done():
-			if err := sub.Context.Err(); err != nil && err != context.Canceled {
+			err := sub.Context.Err()
+			if err != nil && err != context.Canceled {
 				c.logRelayError("subscription_context_error", fmt.Errorf("relay %s: %w", relayURL, err))
-				return err
 			}
-			return nil
+			return err
 		case <-ctx.Done():
+			// External cancellation (ctrl+c or timeout) - return without error logging
+			if c.debug {
+				log.Printf("Relay query for %s cancelled externally", relayURL)
+			}
 			return ctx.Err()
 		}
 	}
