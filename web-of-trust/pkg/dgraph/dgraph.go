@@ -60,7 +60,6 @@ follows: [uid] @reverse .
 type Profile {
   pubkey
   follows
-  followers: ~follows
   kind3CreatedAt
   last_db_update
 }`
