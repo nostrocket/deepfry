@@ -90,9 +90,17 @@ func (c *Crawler) Close() {
 }
 
 func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) error {
+
 	// Extract pubkey strings from the map
 	authors := make([]string, 0, len(pubkeys))
 	for pubkey := range pubkeys {
+		// Validate pubkey format before querying
+		if _, err := nostr.GetPublicKey(pubkey); err != nil {
+			if c.debug {
+				log.Printf("Skipping invalid pubkey: %s, error: %v", pubkey, err)
+			}
+			continue
+		}
 		authors = append(authors, pubkey)
 	}
 
@@ -276,8 +284,18 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 
 	for _, tag := range event.Tags {
 		if len(tag) >= 2 && tag[0] == "p" {
-			rawFollows = append(rawFollows, tag[1])
-			followsMap[tag[1]] = struct{}{}
+			pubkey := tag[1]
+
+			// Validate pubkey format using nbd-wtf/go-nostr
+			if _, err := nostr.GetPublicKey(pubkey); err != nil {
+				if c.debug {
+					log.Printf("Invalid pubkey in follow list: %s, error: %v", pubkey, err)
+				}
+				continue
+			}
+
+			rawFollows = append(rawFollows, pubkey)
+			followsMap[pubkey] = struct{}{}
 		}
 	}
 
