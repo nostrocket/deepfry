@@ -55,7 +55,15 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int @index(int) .
 last_db_update: int @index(int) .
-follows: [uid] @reverse .`
+follows: [uid] @reverse .
+
+type Profile {
+  pubkey
+  follows
+  followers: ~follows
+  kind3CreatedAt
+  last_db_update
+}`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
 
@@ -129,6 +137,7 @@ func (c *Client) AddFollowers(
 		// Create new follower
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
+			_:follower <dgraph.type> "Profile" .
 			_:follower <kind3CreatedAt> "%d" .
 			_:follower <last_db_update> "%d" .
 		`, signerPubkey, kind3createdAt, lastUpdate)
@@ -236,6 +245,8 @@ func (c *Client) AddFollowers(
 				blankNodeID := fmt.Sprintf("new_followee_%d", i)
 				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n",
 					blankNodeID, followee)
+				createNQuads += fmt.Sprintf(
+					"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
 				followeeUIDs[i] = "_:" + blankNodeID
 			}
 		}
@@ -328,6 +339,7 @@ func (c *Client) RemoveFollower(
 	// Update the follower's timestamp
 	setNquads := `
 		uid(f) <pubkey> "` + signerPubkey + `" .
+		uid(f) <dgraph.type> "Profile" .
 		uid(f) <kind3CreatedAt> "` + fmt.Sprintf("%d", kind3createdAt) + `" .
 		uid(f) <last_db_update> "` + fmt.Sprintf("%d", lastUpdate) + `" .`
 
