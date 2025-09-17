@@ -10,7 +10,6 @@ import (
 
 	"github.com/dgraph-io/dgo/v210"
 	"github.com/dgraph-io/dgo/v210/protos/api"
-	"github.com/nbd-wtf/go-nostr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -23,13 +22,6 @@ import (
 //   kind3CreatedAt: int .
 //   last_db_update: int .
 //   follows: uid @reverse .
-
-// IsValidPubkey checks if the provided string is a valid Nostr pubkey.
-// Uses the nbd-wtf/go-nostr library for validation.
-func IsValidPubkey(pubkey string) bool {
-	_, err := nostr.GetPublicKey(pubkey)
-	return err == nil
-}
 
 // Client wraps a dgo.Dgraph instance.
 type Client struct {
@@ -74,26 +66,6 @@ type Profile {
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
 
-// filterValidPubkeys filters a map of pubkeys to remove any invalid ones.
-// Returns the filtered map and the count of invalid pubkeys that were removed.
-func filterValidPubkeys(pubkeyMap map[string]int64, debug bool) (map[string]int64, int) {
-	filtered := make(map[string]int64)
-	invalidCount := 0
-
-	for pubkey, createdAt := range pubkeyMap {
-		if IsValidPubkey(pubkey) {
-			filtered[pubkey] = createdAt
-		} else {
-			invalidCount++
-			if debug {
-				log.Printf("WARNING: Found invalid pubkey in database: %s", pubkey)
-			}
-		}
-	}
-
-	return filtered, invalidCount
-}
-
 // AddFollowers adds multiple follows edges from a single follower to multiple
 // followees. For kind 3 events, this completely replaces the user's follow list
 // (replaceable event behavior).
@@ -104,28 +76,13 @@ func (c *Client) AddFollowers(
 	follows map[string]struct{},
 	debug bool,
 ) error {
-	// Validate signer pubkey
-	if !IsValidPubkey(signerPubkey) {
-		return fmt.Errorf("invalid signer pubkey format: %s", signerPubkey)
-	}
-
-	// Validate all followees pubkeys and create a clean map of valid ones
-	validFollows := make(map[string]struct{})
-	for followee := range follows {
-		if IsValidPubkey(followee) {
-			validFollows[followee] = struct{}{}
-		} else if debug {
-			log.Printf("WARNING: Skipping invalid followee pubkey: %s", followee)
-		}
-	}
-
 	// Create a longer timeout context for this specific operation
 	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	if debug {
-		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d valid follows (from %d total)",
-			signerPubkey, len(validFollows), len(follows))
+		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows",
+			signerPubkey, len(follows))
 	}
 	start := time.Now()
 
@@ -240,9 +197,9 @@ func (c *Client) AddFollowers(
 	}
 
 	// Step 3: Bulk query all followees at once
-	if len(validFollows) > 0 {
-		followeeList := make([]string, 0, len(validFollows))
-		for followee := range validFollows {
+	if len(follows) > 0 {
+		followeeList := make([]string, 0, len(follows))
+		for followee := range follows {
 			followeeList = append(followeeList, followee)
 		}
 
@@ -370,14 +327,6 @@ func (c *Client) RemoveFollower(
 		return fmt.Errorf("kind3createdAt must be specified (non-zero)")
 	}
 
-	// Validate pubkeys
-	if !IsValidPubkey(signerPubkey) {
-		return fmt.Errorf("invalid signer pubkey format: %s", signerPubkey)
-	}
-	if !IsValidPubkey(followee) {
-		return fmt.Errorf("invalid followee pubkey format: %s", followee)
-	}
-
 	lastUpdate := time.Now().Unix()
 
 	// Query to find the nodes
@@ -415,10 +364,6 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 	ctx context.Context,
 	pubkey string,
 ) (bool, error) {
-	if !IsValidPubkey(pubkey) {
-		return false, fmt.Errorf("invalid pubkey format: %s", pubkey)
-	}
-
 	q := `query Check($pubkey: string) {
   node(func: eq(pubkey, $pubkey)) {
 	uid
@@ -515,13 +460,7 @@ func (c *Client) GetStalePubkeys(
 		pubkeyMap[node.Pubkey] = node.Kind3CreatedAt
 	}
 
-	// Validate pubkeys returned from database
-	filtered, invalidCount := filterValidPubkeys(pubkeyMap, true)
-	if invalidCount > 0 {
-		log.Printf("WARNING: Filtered out %d invalid pubkeys from GetStalePubkeys result", invalidCount)
-	}
-
-	return filtered, nil
+	return pubkeyMap, nil
 }
 
 // CountPubkeys returns the total number of pubkeys in the graph.
@@ -564,10 +503,6 @@ func (c *Client) GetKind3CreatedAt(
 	ctx context.Context,
 	pubkey string,
 ) (int64, error) {
-	if !IsValidPubkey(pubkey) {
-		return 0, fmt.Errorf("invalid pubkey format: %s", pubkey)
-	}
-
 	// Create a shorter timeout context for this specific operation
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -641,24 +576,11 @@ func (c *Client) GetPubkeysWithMinFollowers(
 	}
 
 	pubkeys := make(map[string]struct{}, len(result.Popular))
-	validPubkeys := make(map[string]struct{})
-	invalidCount := 0
-
 	for _, node := range result.Popular {
 		pubkeys[node.Pubkey] = struct{}{}
-		if IsValidPubkey(node.Pubkey) {
-			validPubkeys[node.Pubkey] = struct{}{}
-		} else {
-			invalidCount++
-			log.Printf("WARNING: Found invalid pubkey in database: %s", node.Pubkey)
-		}
 	}
 
-	if invalidCount > 0 {
-		log.Printf("WARNING: Filtered out %d invalid pubkeys from GetPubkeysWithMinFollowers result", invalidCount)
-	}
-
-	return validPubkeys, nil
+	return pubkeys, nil
 }
 
 // GetPubkeysWithMinFollowersPaginated returns pubkeys with at least the
@@ -704,28 +626,15 @@ func (c *Client) GetPubkeysWithMinFollowersPaginated(
 			break
 		}
 
-		// Extract pubkeys from this batch and validate them
-		validBatch := make([]string, 0, len(result.Popular))
-		invalidCount := 0
-
-		for _, node := range result.Popular {
-			if IsValidPubkey(node.Pubkey) {
-				validBatch = append(validBatch, node.Pubkey)
-			} else {
-				invalidCount++
-				log.Printf("WARNING: Found invalid pubkey in database: %s", node.Pubkey)
-			}
+		// Extract pubkeys from this batch
+		batch := make([]string, len(result.Popular))
+		for i, node := range result.Popular {
+			batch[i] = node.Pubkey
 		}
 
-		if invalidCount > 0 {
-			log.Printf("WARNING: Filtered out %d invalid pubkeys from batch", invalidCount)
-		}
-
-		// Call the callback with only valid pubkeys
-		if len(validBatch) > 0 {
-			if err := callback(validBatch); err != nil {
-				return fmt.Errorf("callback error: %w", err)
-			}
+		// Call the callback with this batch
+		if err := callback(batch); err != nil {
+			return fmt.Errorf("callback error: %w", err)
 		}
 
 		// If we got fewer results than batch size, we're done
@@ -749,10 +658,6 @@ func (c *Client) TouchLastDBUpdate(
 ) (bool, error) {
 	if pubkey == "" {
 		return false, fmt.Errorf("pubkey must be specified (non-empty)")
-	}
-
-	if !IsValidPubkey(pubkey) {
-		return false, fmt.Errorf("invalid pubkey format: %s", pubkey)
 	}
 
 	// Create a timeout context for this operation
