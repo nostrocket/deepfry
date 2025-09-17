@@ -13,11 +13,12 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	RelayURLs  []string      `mapstructure:"relay_urls"`
-	DgraphAddr string        `mapstructure:"dgraph_addr"`
-	PubkeyHex  string        `mapstructure:"pubkey"`
-	Timeout    time.Duration `mapstructure:"timeout"`
-	Debug      bool          `mapstructure:"debug"`
+	RelayURLs            []string      `mapstructure:"relay_urls"`
+	DgraphAddr           string        `mapstructure:"dgraph_addr"`
+	SeedPubkey           string        `mapstructure:"pubkey"`
+	Timeout              time.Duration `mapstructure:"timeout"`
+	Debug                bool          `mapstructure:"debug"`
+	StalePubkeyThreshold int64         `mapstructure:"stale_pubkey_threshold"`
 }
 
 // LoadConfig loads the application configuration from various sources
@@ -57,6 +58,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("timeout", "30s")
 	viper.SetDefault("debug", false)
 	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
+	viper.SetDefault("stale_pubkey_threshold", 24*60*60) // 24 hours in seconds
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -89,8 +91,8 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Handle both hex and npub formats
-	if _, data, err := nip19.Decode(cfg.PubkeyHex); err == nil {
-		cfg.PubkeyHex = data.(string)
+	if _, data, err := nip19.Decode(cfg.SeedPubkey); err == nil {
+		cfg.SeedPubkey = data.(string)
 	}
 	// If decode fails, assume it's already hex
 

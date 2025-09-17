@@ -26,12 +26,9 @@ func main() {
 	// Print graph statistics on startup
 	ctx := context.Background()
 
-	// Default to 24 hours for stale threshold
-	threshold := time.Now().Unix() - (24 * 60 * 60)
-
 	// Create crawler
 	crawlerCfg := crawler.Config{
-		RelayURLs:  cfg.RelayURLs, // Changed from RelayURL to RelayURLs
+		RelayURLs:  cfg.RelayURLs,
 		DgraphAddr: cfg.DgraphAddr,
 		Timeout:    cfg.Timeout,
 		Debug:      cfg.Debug,
@@ -46,7 +43,7 @@ func main() {
 	// Fetch follow list
 	ctx = context.Background()
 	for {
-		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, threshold)
+		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold)
 		if err != nil {
 			panic(err)
 		}
@@ -55,7 +52,7 @@ func main() {
 			panic(err)
 		}
 		if totalPubkeys == 0 {
-			pubkeys = append(pubkeys, cfg.PubkeyHex)
+			pubkeys = append(pubkeys, cfg.SeedPubkey)
 		}
 		if len(pubkeys) == 0 {
 			break
@@ -70,5 +67,5 @@ func main() {
 		}
 	}
 
-	log.Printf("Successfully updated follow list for pubkey: %s", cfg.PubkeyHex)
+	log.Printf("Successfully updated follow list for pubkey: %s", cfg.SeedPubkey)
 }
