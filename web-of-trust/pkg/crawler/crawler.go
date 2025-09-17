@@ -192,6 +192,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				continue
 			}
 			log.Printf("WARN: Relay error: %v", err)
+			log.Printf("subscription filters: \n %s", filter)
 
 			// case <-relayContext.Done():
 			// 	return relayContext.Err()
