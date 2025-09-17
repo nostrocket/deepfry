@@ -63,7 +63,7 @@ func New(cfg Config) (*Crawler, error) {
 
 	if len(relays) == 0 {
 		dgClient.Close()
-		return nil, fmt.Errorf("failed to connect to any relay")
+		return nil, fmt.Errorf("failed to connect to any relays")
 	}
 
 	log.Printf("Connected to %d/%d relays", len(relays), len(cfg.RelayURLs))
@@ -89,10 +89,16 @@ func (c *Crawler) Close() {
 	}
 }
 
-func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) error {
+func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) error {
+	// Extract pubkey strings from the map
+	authors := make([]string, 0, len(pubkeys))
+	for pubkey := range pubkeys {
+		authors = append(authors, pubkey)
+	}
+
 	// Create filter for kind 3 events from all specified pubkeys
 	filter := nostr.Filter{
-		Authors: pubkeys,
+		Authors: authors,
 		Kinds:   []int{3},
 		Limit:   len(pubkeys), // Allow one event per pubkey
 	}
@@ -103,7 +109,7 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 	errorsChan := make(chan error, len(c.relays))
 
 	// Set timeout context
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	relayContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
 	// Launch goroutines for each relay
@@ -111,7 +117,7 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 		wg.Add(1)
 		go func(relay *nostr.Relay, relayURL string) {
 			defer wg.Done()
-			err := c.queryRelay(ctx, relay, relayURL, filter, eventsChan)
+			err := c.queryRelay(relayContext, relay, relayURL, filter, eventsChan)
 			if err != nil {
 				errorsChan <- fmt.Errorf("relay %s: %w", relayURL, err)
 			}
@@ -125,51 +131,72 @@ func (c *Crawler) FetchAndUpdateFollows(ctx context.Context, pubkeys []string) e
 		close(errorsChan)
 	}()
 
-	// Collect and deduplicate events by pubkey (keeping the newest)
-	eventsByPubkey := make(map[string]*nostr.Event)
-	processed := 0
+	// Map to keep track of processed event IDs
+	processedEventIDs := make(map[string]struct{})
+	// Process events from all relays using a switch loop
+	for {
+		select {
+		case event, ok := <-eventsChan:
+			c.dbUpdateMutex.Lock()
+			if !ok {
+				// Channel closed, exit the loop
+				if c.debug {
+					log.Printf("Processed follows for %d pubkeys across %d relays", len(processedEventIDs), len(c.relays))
+				}
+				c.dbUpdateMutex.Unlock()
+				return nil
+			}
 
-	// Process events from all relays
-	for event := range eventsChan {
-		if event == nil {
-			continue
-		}
+			if event == nil {
+				c.dbUpdateMutex.Unlock()
+				continue
+			}
 
-		// Validate event signature
-		if ok, err := event.CheckSignature(); !ok {
-			log.Printf("WARN: Invalid signature for event %s from pubkey %s: %v", event.ID, event.PubKey, err)
-			c.logSignatureValidationMetrics(event.PubKey, false)
-			continue
-		}
-		c.logSignatureValidationMetrics(event.PubKey, true)
+			// Skip if we've already processed this event ID
+			if _, exists := processedEventIDs[event.ID]; exists {
+				if c.debug {
+					log.Printf("Skipping already processed event: %s", event.ID)
+				}
+				c.dbUpdateMutex.Unlock()
+				continue
+			}
 
-		// Keep only the newest event per pubkey
-		existing, exists := eventsByPubkey[event.PubKey]
-		if !exists || event.CreatedAt > existing.CreatedAt {
-			eventsByPubkey[event.PubKey] = event
-		}
-	}
+			// Validate event signature
+			if ok, err := event.CheckSignature(); !ok {
+				log.Printf("WARN: Invalid signature for event %s from pubkey %s: %v", event.ID, event.PubKey, err)
+				c.logSignatureValidationMetrics(event.PubKey, false)
+				c.dbUpdateMutex.Unlock()
+				continue
+			}
+			c.logSignatureValidationMetrics(event.PubKey, true)
 
-	// Log any relay errors (non-blocking)
-	for err := range errorsChan {
-		log.Printf("WARN: Relay error: %v", err)
-	}
+			if event.CreatedAt <= nostr.Timestamp(pubkeys[event.PubKey]) {
+				fmt.Println("already have newer event for " + event.PubKey)
+				c.dgClient.TouchLastDBUpdate(relayContext, event.PubKey)
+				c.dbUpdateMutex.Unlock()
+				continue
+			}
 
-	// Process the deduplicated events
-	for pubkey, event := range eventsByPubkey {
-		c.dbUpdateMutex.Lock()
-		if err := c.updateFollowsFromEvent(ctx, event); err != nil {
+			// Process the event
+
+			if err := c.updateFollowsFromEvent(relayContext, event); err != nil {
+				c.dbUpdateMutex.Unlock()
+				return fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
+			}
+			processedEventIDs[event.ID] = struct{}{}
 			c.dbUpdateMutex.Unlock()
-			return fmt.Errorf("failed to update follows for pubkey %s: %w", pubkey, err)
-		}
-		c.dbUpdateMutex.Unlock()
-		processed++
-	}
 
-	if c.debug {
-		log.Printf("Processed follows for %d/%d pubkeys across %d relays", processed, len(pubkeys), len(c.relays))
+		case err, ok := <-errorsChan:
+			if !ok {
+				// Error channel closed
+				continue
+			}
+			log.Printf("WARN: Relay error: %v", err)
+
+			// case <-relayContext.Done():
+			// 	return relayContext.Err()
+		}
 	}
-	return nil
 }
 
 func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL string, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
@@ -231,7 +258,7 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 	}
 
 	// Warn if this is an unusually large follow list
-	if uniqueFollowsCount > 1000 {
+	if uniqueFollowsCount > 1000 && c.debug {
 		log.Printf("WARN: Large follow list detected (%d follows) for pubkey %s - this may cause timeouts", uniqueFollowsCount, event.PubKey)
 	}
 
@@ -249,10 +276,10 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 
 	if c.debug {
 		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
+		c.logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
 	}
 
 	// Log metrics
-	c.logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
 
 	return nil
 }

@@ -51,7 +51,6 @@ func LoadConfig() (*Config, error) {
 		"wss://nos.lol",
 		"wss://relay.nostr.band",
 		"wss://nostr-pub.wellorder.net",
-		"wss://offchain.pub",
 		"wss://relay.primal.net",
 	})
 	viper.SetDefault("dgraph_addr", "localhost:9080")

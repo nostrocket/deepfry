@@ -411,15 +411,17 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // threshold, or pubkeys that don't have last_db_update set at all.
 // If olderThanUnix is not provided, defaults to 24 hours ago.
 // Results are sorted by age, with least recently updated first.
+// Returns a map of pubkey to kind3CreatedAt timestamp.
 func (c *Client) GetStalePubkeys(
 	ctx context.Context,
 	olderThanUnix int64,
-) ([]string, error) {
+) (map[string]int64, error) {
 	query := fmt.Sprintf(`
 	{
 		stale(func: has(pubkey), orderasc: last_db_update) 
 		@filter(NOT has(last_db_update) OR lt(last_db_update, %d)) {
 			pubkey
+			kind3CreatedAt
 		}
 	}`, olderThanUnix)
 
@@ -433,7 +435,8 @@ func (c *Client) GetStalePubkeys(
 
 	var result struct {
 		Stale []struct {
-			Pubkey string `json:"pubkey"`
+			Pubkey         string `json:"pubkey"`
+			Kind3CreatedAt int64  `json:"kind3CreatedAt"`
 		} `json:"stale"`
 	}
 
@@ -441,12 +444,12 @@ func (c *Client) GetStalePubkeys(
 		return nil, fmt.Errorf("unmarshal stale pubkeys failed: %w", err)
 	}
 
-	pubkeys := make([]string, len(result.Stale))
-	for i, node := range result.Stale {
-		pubkeys[i] = node.Pubkey
+	pubkeyMap := make(map[string]int64, len(result.Stale))
+	for _, node := range result.Stale {
+		pubkeyMap[node.Pubkey] = node.Kind3CreatedAt
 	}
 
-	return pubkeys, nil
+	return pubkeyMap, nil
 }
 
 // CountPubkeys returns the total number of pubkeys in the graph.
@@ -632,4 +635,76 @@ func (c *Client) GetPubkeysWithMinFollowersPaginated(
 	}
 
 	return nil
+}
+
+// TouchLastDBUpdate updates only the last_db_update field for a given pubkey
+// to the current time. It only performs the update if the pubkey exists and
+// has a non-zero kind3CreatedAt value.
+// Returns true if the update was performed, false if skipped (no pubkey or zero kind3CreatedAt).
+func (c *Client) TouchLastDBUpdate(
+	ctx context.Context,
+	pubkey string,
+) (bool, error) {
+	if pubkey == "" {
+		return false, fmt.Errorf("pubkey must be specified (non-empty)")
+	}
+
+	// Create a timeout context for this operation
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// First query to check if the pubkey exists and has a valid kind3CreatedAt
+	query := `query GetNode($pubkey: string) {
+		node(func: eq(pubkey, $pubkey), first: 1) {
+			uid
+			kind3CreatedAt
+		}
+	}`
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(queryCtx)
+
+	req := &api.Request{
+		Query: query,
+		Vars:  map[string]string{"$pubkey": pubkey},
+	}
+
+	resp, err := txn.Do(queryCtx, req)
+	if err != nil {
+		return false, fmt.Errorf("query pubkey failed: %w", err)
+	}
+
+	var result struct {
+		Node []struct {
+			UID            string `json:"uid"`
+			Kind3CreatedAt int64  `json:"kind3CreatedAt"`
+		} `json:"node"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return false, fmt.Errorf("unmarshal pubkey query failed: %w", err)
+	}
+
+	// Check if pubkey exists and has a non-zero kind3CreatedAt
+	if len(result.Node) == 0 || result.Node[0].Kind3CreatedAt == 0 {
+		return false, nil // Skip update
+	}
+
+	// Update the last_db_update timestamp
+	lastUpdate := time.Now().Unix()
+	nquads := fmt.Sprintf(`
+		<%s> <last_db_update> "%d" .
+	`, result.Node[0].UID, lastUpdate)
+
+	mu := &api.Mutation{
+		SetNquads: []byte(nquads),
+		CommitNow: true,
+	}
+
+	_, err = txn.Mutate(queryCtx, mu)
+	if err != nil {
+		return false, fmt.Errorf("update last_db_update failed: %w", err)
+	}
+
+	return true, nil
 }

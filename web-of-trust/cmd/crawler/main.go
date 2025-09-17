@@ -34,11 +34,11 @@ func main() {
 		Debug:      cfg.Debug,
 	}
 
-	c, err := crawler.New(crawlerCfg)
+	crawler, err := crawler.New(crawlerCfg)
 	if err != nil {
 		log.Fatalf("Failed to create crawler: %v", err)
 	}
-	defer c.Close()
+	defer crawler.Close()
 
 	// Fetch follow list
 	ctx = context.Background()
@@ -52,16 +52,25 @@ func main() {
 			panic(err)
 		}
 		if totalPubkeys == 0 {
-			pubkeys = append(pubkeys, cfg.SeedPubkey)
+			pubkeys[cfg.SeedPubkey] = 0
 		}
 		if len(pubkeys) == 0 {
 			break
 		}
 		if len(pubkeys) > 20 {
-			pubkeys = pubkeys[0:20]
+			limitedPubkeys := make(map[string]int64)
+			count := 0
+			for pk, timestamp := range pubkeys {
+				if count >= 20 {
+					break
+				}
+				limitedPubkeys[pk] = timestamp
+				count++
+			}
+			pubkeys = limitedPubkeys
 		}
 
-		if err := c.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
+		if err := crawler.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
 			log.Printf("Failed to fetch and update follows: %v", err)
 			break
 		}
