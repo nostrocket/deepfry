@@ -138,9 +138,9 @@ func (c *Client) AddFollowers(
 	follows map[string]struct{},
 	debug bool,
 ) error {
-	// Create a longer timeout context for this specific operation
-	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	// Use the provided context directly - no additional timeout needed
+	// The caller should manage appropriate timeouts
+	queryCtx := ctx
 
 	if debug {
 		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows",

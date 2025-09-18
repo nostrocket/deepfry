@@ -116,8 +116,8 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	eventsChan := make(chan *nostr.Event, len(pubkeys)*len(c.relays))
 	errorsChan := make(chan error, len(c.relays))
 
-	// Set timeout context
-	relayContext, cancel := context.WithTimeout(relayContext, c.timeout)
+	// Set timeout context for relay operations only
+	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
 	// Launch goroutines for each relay
@@ -125,7 +125,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		wg.Add(1)
 		go func(relay *nostr.Relay, relayURL string) {
 			defer wg.Done()
-			err := c.queryRelay(relayContext, relay, relayURL, filter, eventsChan)
+			err := c.queryRelay(relayQueryContext, relay, relayURL, filter, eventsChan)
 			if err != nil {
 				errorsChan <- fmt.Errorf("relay %s: %w", relayURL, err)
 			}
@@ -144,10 +144,25 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// Process events from all relays using a switch loop
 	for {
 		select {
-		case <-relayContext.Done():
-			// The context was cancelled (either timeout or external cancellation)
+		case <-relayQueryContext.Done():
+			// The relay query context was cancelled (timeout or external cancellation)
 			if c.debug {
-				log.Printf("Context cancelled while processing events: %v", relayContext.Err())
+				log.Printf("Relay query context cancelled while processing events: %v", relayQueryContext.Err())
+			}
+			// Don't return error if it's just relay timeout - we can still process events we already got
+			if relayQueryContext.Err() == context.DeadlineExceeded {
+				if c.debug {
+					log.Printf("Relay query timeout reached, but continuing to process received events")
+				}
+				// Continue processing events that were already received
+			} else {
+				return relayQueryContext.Err()
+			}
+
+		case <-relayContext.Done():
+			// The main context was cancelled (external cancellation)
+			if c.debug {
+				log.Printf("Main context cancelled while processing events: %v", relayContext.Err())
 			}
 			return relayContext.Err()
 
@@ -192,8 +207,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				continue
 			}
 
-			// Process the event
-
+			// Process the event using original context (no relay timeout)
 			if err := c.updateFollowsFromEvent(relayContext, event); err != nil {
 				c.dbUpdateMutex.Unlock()
 				return fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
@@ -311,20 +325,22 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 		log.Printf("WARN: Large follow list detected (%d follows) for pubkey %s - this may cause timeouts", uniqueFollowsCount, event.PubKey)
 	}
 
-	// For very large follow lists, we might want to chunk the processing
-	// But for now, try the single batch approach with longer timeout
-	// Process all follows in one batch operation
-	err := c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap, c.debug)
+	// For very large follow lists, we'll use chunked processing to avoid timeouts
+	var err error
+	if uniqueFollowsCount > 500 {
+		// Process large follow lists in chunks
+		err = c.processFollowsInChunks(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
+	} else {
+		// For smaller follow lists, process all follows in one batch operation
+		err = c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap, c.debug)
+	}
+
 	if err != nil {
-		// If we get a timeout error and have a large follow list, we could implement chunking here
-		if uniqueFollowsCount > 500 && strings.Contains(err.Error(), "DeadlineExceeded") {
-			log.Printf("WARN: Timeout detected for large follow list (%d follows). Consider implementing chunked processing.", uniqueFollowsCount)
-		}
-		return fmt.Errorf("failed to add follows batch: %w", err)
+		return fmt.Errorf("failed to add follows: %w", err)
 	}
 
 	if c.debug {
-		log.Printf("Processed %d/%d follows", uniqueFollowsCount, uniqueFollowsCount)
+		log.Printf("Processed %d follows for pubkey %s", uniqueFollowsCount, event.PubKey)
 		c.logMetrics(event.PubKey, uniqueFollowsCount, duplicatesCount)
 	}
 
@@ -334,10 +350,18 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 }
 
 func (c *Crawler) logMetrics(pubkey string, followsCount int, duplicatesCount int) {
+	chunked := followsCount > 500
+	processingType := "batch"
+	if chunked {
+		processingType = "chunked"
+	}
+
 	metrics := map[string]interface{}{
 		"pubkey":           pubkey,
 		"follows_count":    followsCount,
 		"duplicates_count": duplicatesCount,
+		"chunked":          chunked,
+		"processing_type":  processingType,
 		"processed_at":     time.Now().Format(time.RFC3339),
 		"component":        "web-of-trust-crawler",
 	}
