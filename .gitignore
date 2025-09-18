@@ -8,6 +8,17 @@
 *.so
 *.dylib
 
+# Binary directories
+/bin/
+/web-of-trust/bin/
+/event-forwarder/bin/
+/search-plugin/bin/
+/semantic-search/bin/
+/embeddings-generator/bin/
+/whitelist-plugin/bin/
+/profile-builder/bin/
+/thread-inference/bin/
+
 # Test binary, built with `go test -c`
 *.test
 
