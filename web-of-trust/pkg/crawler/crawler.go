@@ -327,7 +327,7 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 
 	// For very large follow lists, we'll use chunked processing to avoid timeouts
 	var err error
-	if uniqueFollowsCount > 500 {
+	if uniqueFollowsCount > 10000 {
 		// Process large follow lists in chunks
 		err = c.processFollowsInChunks(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
 	} else {
