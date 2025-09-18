@@ -12,10 +12,11 @@ import (
 	"github.com/dgraph-io/dgo/v210/protos/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // Abstraction layer over Dgraph to store a Nostr Web-of-Trust (kind 3) graph.
-// Guarantees uniqueness of pubkeys using @upsert schema and upsert blocks.
+// Guarantees uniqueness of pubkeys using upsert schema and upsert blocks.
 //
 // Schema used:
 //   pubkey: string @index(exact) @upsert .
@@ -32,17 +33,78 @@ type Client struct {
 // NewClient creates a new Client connected to the given dgraph gRPC address
 // (eg "localhost:9080").
 func NewClient(addr string) (*Client, error) {
-	conn, err := grpc.NewClient(
-		addr,
+	// Set up gRPC connection options with better timeouts
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return nil, err
+		grpc.WithBlock(),                   // Make connection establishment blocking
+		grpc.WithTimeout(10 * time.Second), // Connection timeout
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(100*1024*1024), // 100MB max message size
+			grpc.MaxCallSendMsgSize(100*1024*1024),
+		),
 	}
-	return &Client{
+
+	// Establish connection with improved options
+	conn, err := grpc.NewClient(addr, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Dgraph: %w", err)
+	}
+
+	client := &Client{
 		dg:   dgo.NewDgraphClient(api.NewDgraphClient(conn)),
 		conn: conn,
-	}, nil
+	}
+
+	// Perform initial health check
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	healthy, diagnostics := client.CheckConnectionHealth(ctx)
+	if !healthy {
+		conn.Close()
+		diagJSON, _ := json.Marshal(diagnostics)
+		return nil, fmt.Errorf("Dgraph connection health check failed: %s", string(diagJSON))
+	}
+
+	return client, nil
+}
+
+// CheckConnectionHealth verifies if the connection to Dgraph is healthy
+// and returns detailed diagnostics about the connection state.
+func (c *Client) CheckConnectionHealth(ctx context.Context) (bool, map[string]interface{}) {
+	diagnostics := make(map[string]interface{})
+
+	// Check gRPC connection state
+	connState := c.conn.GetState()
+	diagnostics["grpc_conn_state"] = connState.String()
+
+	// Try a simple ping query with a short timeout
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	startTime := time.Now()
+	pingQuery := "{ ping(func: uid(0x1)) { uid } }"
+
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(pingCtx)
+
+	_, err := txn.Query(pingCtx, pingQuery)
+	pingDuration := time.Since(startTime)
+
+	diagnostics["ping_duration_ms"] = pingDuration.Milliseconds()
+	diagnostics["ping_success"] = (err == nil)
+
+	if err != nil {
+		errStatus, ok := status.FromError(err)
+		if ok {
+			diagnostics["ping_error_code"] = errStatus.Code().String()
+			diagnostics["ping_error_message"] = errStatus.Message()
+		} else {
+			diagnostics["ping_error"] = err.Error()
+		}
+	}
+
+	return err == nil, diagnostics
 }
 
 // Close closes the gRPC connection, call this with defer.
@@ -93,6 +155,7 @@ func (c *Client) AddFollowers(
 
 	// Step 1: Get follower and existing follows - include kind3CreatedAt to
 	// avoid separate query
+	followerQueryStartTime := time.Now()
 	followerQuery := fmt.Sprintf(`
 	{
 		follower(func: eq(pubkey, %q), first: 1) {
@@ -105,15 +168,38 @@ func (c *Client) AddFollowers(
 		}
 	}`, signerPubkey)
 
-	resp, err := txn.Query(queryCtx, followerQuery)
+	log.Printf("DEBUG: Starting follower query for pubkey %s at %v",
+		signerPubkey, followerQueryStartTime.Format(time.RFC3339))
+
+	// Try with retry mechanism
+	resp, err := c.queryWithRetries(queryCtx, txn, followerQuery, 3, debug)
 	if err != nil {
+		duration := time.Since(followerQueryStartTime)
+
+		// Get more details about the gRPC error
+		errStatus, ok := status.FromError(err)
+		var errDetails string
+		if ok {
+			errDetails = fmt.Sprintf("gRPC status code: %v, message: %v",
+				errStatus.Code(), errStatus.Message())
+		} else {
+			errDetails = fmt.Sprintf("raw error: %v", err)
+		}
+
+		// Check connection state
+		connState := c.conn.GetState().String()
+		log.Printf("ERROR: Initial follower query failed after %v: %v (%s). Connection state: %s",
+			duration, err, errDetails, connState)
+
 		return fmt.Errorf("query follower failed: %w", err)
 	}
+	followerQueryDuration := time.Since(followerQueryStartTime)
 	if debug {
-		log.Printf("DEBUG: Initial follower query completed in %v",
-			time.Since(start))
+		log.Printf("DEBUG: Initial follower query completed in %v (%v since start)",
+			followerQueryDuration, time.Since(start))
 	}
 
+	followerUnmarshalStartTime := time.Now()
 	var result struct {
 		Follower []struct {
 			UID            string `json:"uid"`
@@ -127,13 +213,19 @@ func (c *Client) AddFollowers(
 	if err := json.Unmarshal(resp.Json, &result); err != nil {
 		return fmt.Errorf("unmarshal follower failed: %w", err)
 	}
+	if debug {
+		log.Printf("DEBUG: Unmarshalled follower data in %v",
+			time.Since(followerUnmarshalStartTime))
+	}
 
 	// Create/update follower
+	followerProcessStartTime := time.Now()
 	var followerUID string
 	existingFollows := make(map[string]string) // pubkey -> uid
 
 	if len(result.Follower) == 0 {
 		// Create new follower
+		createStartTime := time.Now()
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
 			_:follower <dgraph.type> "Profile" .
@@ -145,16 +237,25 @@ func (c *Client) AddFollowers(
 			SetNquads: []byte(followerNQuads),
 			CommitNow: false,
 		}
-		assigned, err := txn.Mutate(queryCtx, mu)
+		assigned, err := c.mutateWithRetries(queryCtx, txn, mu, 3, debug)
 		if err != nil {
+			log.Printf("ERROR: Create follower mutation failed: %v", err)
 			return fmt.Errorf("create follower failed: %w", err)
 		}
 		followerUID = assigned.Uids["follower"]
+		if debug {
+			log.Printf("DEBUG: Created new follower in %v",
+				time.Since(createStartTime))
+		}
 	} else {
 		// Update existing follower - check if this is newer than existing
 		existingKind3CreatedAt := result.Follower[0].Kind3CreatedAt
 		if kind3createdAt <= existingKind3CreatedAt {
 			// Skip update - existing event is newer or same age
+			if debug {
+				log.Printf("DEBUG: Skipped update - existing event is newer or same age (%d <= %d)",
+					kind3createdAt, existingKind3CreatedAt)
+			}
 			return nil
 		}
 
@@ -164,9 +265,14 @@ func (c *Client) AddFollowers(
 		for _, f := range result.Follower[0].Follows {
 			existingFollows[f.Pubkey] = f.UID
 		}
+		if debug {
+			log.Printf("DEBUG: Found existing follower with %d follows in %v",
+				len(existingFollows), time.Since(followerProcessStartTime))
+		}
 	}
 
 	// Always update timestamps regardless of whether there are new follows
+	updateStartTime := time.Now()
 	updateNQuads := fmt.Sprintf(`
 		<%s> <kind3CreatedAt> "%d" .
 		<%s> <last_db_update> "%d" .
@@ -176,12 +282,18 @@ func (c *Client) AddFollowers(
 		SetNquads: []byte(updateNQuads),
 		CommitNow: false,
 	}
-	if _, err := txn.Mutate(queryCtx, mu); err != nil {
+	if _, err := c.mutateWithRetries(queryCtx, txn, mu, 3, debug); err != nil {
+		log.Printf("ERROR: Update follower timestamps failed: %v", err)
 		return fmt.Errorf("update follower timestamps failed: %w", err)
+	}
+	if debug {
+		log.Printf("DEBUG: Update follower timestamps completed in %v",
+			time.Since(updateStartTime))
 	}
 
 	// Step 2: Remove all existing follows (kind 3 is replaceable)
 	if len(existingFollows) > 0 {
+		removeStartTime := time.Now()
 		var delNQuads string
 		for _, uid := range existingFollows {
 			delNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
@@ -191,8 +303,13 @@ func (c *Client) AddFollowers(
 			DelNquads: []byte(delNQuads),
 			CommitNow: false,
 		}
-		if _, err := txn.Mutate(queryCtx, mu); err != nil {
+		if _, err := c.mutateWithRetries(queryCtx, txn, mu, 3, debug); err != nil {
+			log.Printf("ERROR: Remove existing follows failed: %v", err)
 			return fmt.Errorf("remove existing follows failed: %w", err)
+		}
+		if debug {
+			log.Printf("DEBUG: Removed %d existing follows in %v",
+				len(existingFollows), time.Since(removeStartTime))
 		}
 	}
 
@@ -204,6 +321,7 @@ func (c *Client) AddFollowers(
 		}
 
 		// Build single query for all followees
+		bulkQueryStartTime := time.Now()
 		var queryParts []string
 		for i, followee := range followeeList {
 			part := fmt.Sprintf(
@@ -214,25 +332,60 @@ func (c *Client) AddFollowers(
 			queryParts = append(queryParts, part)
 		}
 
-		bulkQuery := fmt.Sprintf("{ %s }",
-			fmt.Sprintf(strings.Join(queryParts, "\n")))
+		joinedParts := strings.Join(queryParts, "\n")
+		bulkQuery := fmt.Sprintf("{ %s }", joinedParts)
 
-		bulkResp, err := txn.Query(queryCtx, bulkQuery)
+		if debug {
+			log.Printf("DEBUG: Built bulk query with %d parts in %v",
+				len(queryParts), time.Since(bulkQueryStartTime))
+		}
+
+		// Execute the bulk query with retries
+		bulkQueryExecStartTime := time.Now()
+
+		if debug {
+			log.Printf("DEBUG: Executing bulk query for %d followees", len(follows))
+		}
+
+		bulkResp, err := c.queryWithRetries(queryCtx, txn, bulkQuery, 3, debug)
 		if err != nil {
+			errStatus, ok := status.FromError(err)
+			var errDetails string
+			if ok {
+				errDetails = fmt.Sprintf("gRPC status code: %v, message: %v",
+					errStatus.Code(), errStatus.Message())
+			} else {
+				errDetails = fmt.Sprintf("raw error: %v", err)
+			}
+
+			log.Printf("ERROR: Bulk query failed after %v: %v (%s)",
+				time.Since(bulkQueryExecStartTime), err, errDetails)
+
 			return fmt.Errorf("bulk query followees failed: %w", err)
+		}
+		if debug {
+			log.Printf("DEBUG: Executed bulk query for %d followees in %v",
+				len(follows), time.Since(bulkQueryExecStartTime))
 		}
 
 		// Parse bulk results
+		unmarshalStartTime := time.Now()
 		var bulkResult map[string][]struct {
 			UID string `json:"uid"`
 		}
 		if err := json.Unmarshal(bulkResp.Json, &bulkResult); err != nil {
 			return fmt.Errorf("unmarshal bulk followees failed: %w", err)
 		}
+		if debug {
+			log.Printf("DEBUG: Unmarshalled bulk query results in %v",
+				time.Since(unmarshalStartTime))
+		}
 
 		// Step 4: Create missing followees in bulk
+		prepFolloweeStartTime := time.Now()
 		var createNQuads string
 		followeeUIDs := make([]string, len(followeeList))
+		var missingCount int
 
 		for i, followee := range followeeList {
 			key := fmt.Sprintf("followee_%d", i)
@@ -241,6 +394,7 @@ func (c *Client) AddFollowers(
 				followeeUIDs[i] = nodes[0].UID
 			} else {
 				// Need to create followee
+				missingCount++
 				blankNodeID := fmt.Sprintf("new_followee_%d", i)
 				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n",
 					blankNodeID, followee)
@@ -249,16 +403,26 @@ func (c *Client) AddFollowers(
 				followeeUIDs[i] = "_:" + blankNodeID
 			}
 		}
+		if debug {
+			log.Printf("DEBUG: Prepared %d missing followees (out of %d total) in %v",
+				missingCount, len(followeeList), time.Since(prepFolloweeStartTime))
+		}
 
 		// Create missing followees if any
 		if createNQuads != "" {
+			createFolloweesStartTime := time.Now()
 			mu := &api.Mutation{
 				SetNquads: []byte(createNQuads),
 				CommitNow: false,
 			}
-			assigned, err := txn.Mutate(queryCtx, mu)
+			assigned, err := c.mutateWithRetries(queryCtx, txn, mu, 3, debug)
 			if err != nil {
+				log.Printf("ERROR: Create missing followees failed: %v", err)
 				return fmt.Errorf("create missing followees failed: %w", err)
+			}
+			if debug {
+				log.Printf("DEBUG: Created %d missing followees in %v",
+					missingCount, time.Since(createFolloweesStartTime))
 			}
 
 			// Replace blank node references with actual UIDs
@@ -274,35 +438,93 @@ func (c *Client) AddFollowers(
 		}
 
 		// Step 5: Create all follow edges in bulk
+		edgeStartTime := time.Now()
 		var edgeNQuads string
+		var edgeCount int
 		for _, followeeUID := range followeeUIDs {
 			if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
+				edgeCount++
 				edgeNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
 					followerUID, followeeUID)
 			}
 		}
 
 		if edgeNQuads != "" {
+			edgeMutateStartTime := time.Now()
 			mu := &api.Mutation{
 				SetNquads: []byte(edgeNQuads),
 				CommitNow: false,
 			}
-			if _, err := txn.Mutate(queryCtx, mu); err != nil {
+			if _, err := c.mutateWithRetries(queryCtx, txn, mu, 3, debug); err != nil {
+				log.Printf("ERROR: Create follow edges failed: %v", err)
 				return fmt.Errorf("create follow edges failed: %w", err)
+			}
+			if debug {
+				log.Printf("DEBUG: Created %d follow edges in %v (prep: %v, mutation: %v)",
+					edgeCount,
+					time.Since(edgeStartTime),
+					edgeMutateStartTime.Sub(edgeStartTime),
+					time.Since(edgeMutateStartTime))
 			}
 		}
 	}
 
-	// Commit all changes
-	if err := txn.Commit(queryCtx); err != nil {
+	// Commit all changes with retries
+	commitStartTime := time.Now()
+	log.Printf("DEBUG: Starting transaction commit for pubkey %s with %d follows",
+		signerPubkey, len(follows))
+
+	// Log connection state before commit attempt
+	if debug {
+		connState := c.conn.GetState().String()
+		log.Printf("DEBUG: gRPC connection state before commit: %s", connState)
+	}
+
+	if err := c.commitWithRetries(queryCtx, txn, 3, debug); err != nil {
+		// Get more details about the gRPC error
+		errStatus, ok := status.FromError(err)
+		var errDetails string
+		if ok {
+			errDetails = fmt.Sprintf("gRPC status code: %v, message: %v",
+				errStatus.Code(), errStatus.Message())
+		} else {
+			errDetails = fmt.Sprintf("raw error: %v", err)
+		}
+
+		// Check connection state
+		connState := c.conn.GetState().String()
+		log.Printf("ERROR: Transaction commit failed after %v: %v (%s). Connection state: %s",
+			time.Since(commitStartTime), err, errDetails, connState)
+
 		return fmt.Errorf("commit transaction failed: %w", err)
 	}
 
 	if debug {
+		log.Printf("DEBUG: Transaction commit completed in %v",
+			time.Since(commitStartTime))
+	}
+
+	totalDuration := time.Since(start)
+
+	// Always log timing for slow operations, regardless of debug flag
+	if totalDuration > 5*time.Second || debug {
+		logTimings := map[string]interface{}{
+			"pubkey":         signerPubkey,
+			"follows_count":  len(follows),
+			"total_duration": totalDuration.String(),
+			"component":      "dgraph-client",
+			"operation":      "AddFollowers",
+		}
+		timingsJSON, _ := json.Marshal(logTimings)
+		log.Printf("TIMING_METRICS: %s", string(timingsJSON))
+	}
+
+	if debug {
 		log.Printf(
-			"DEBUG: AddFollowers completed successfully in %v for pubkey %s",
-			time.Since(start),
+			"DEBUG: AddFollowers completed successfully in %v for pubkey %s with %d follows",
+			totalDuration,
 			signerPubkey,
+			len(follows),
 		)
 	}
 	return nil
