@@ -33,16 +33,3 @@ func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
 
 	return Reject(eventId, RejectReasonNotInWoT), nil
 }
-
-// func (h *WhitelistHandler) parseEvent(eventJSON string) (id, pubkey string, err error) {
-// 	var event struct {
-// 		ID     string `json:"id"`
-// 		Pubkey string `json:"pubkey"`
-// 	}
-
-// 	if err := json.Unmarshal([]byte(eventJSON), &event); err != nil {
-// 		return "", "", err
-// 	}
-
-// 	return event.ID, event.Pubkey, nil
-// }

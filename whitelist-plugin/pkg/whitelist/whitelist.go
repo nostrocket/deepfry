@@ -42,15 +42,3 @@ func (wl *Whitelist) UpdateKeys(keys [][32]byte) {
 	}
 	wl.list.Store(&nm)
 }
-
-// func (wl *Whitelist) Keys() []string {
-// 	mp := wl.list.Load()
-// 	if mp == nil {
-// 		return nil
-// 	}
-// 	out := make([]string, 0, len(*mp))
-// 	for k := range *mp {
-// 		out = append(out, hex.EncodeToString(k[:]))
-// 	}
-// 	return out
-// }
