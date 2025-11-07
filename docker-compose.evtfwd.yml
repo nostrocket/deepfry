@@ -1,0 +1,241 @@
+# Event Forwarder Docker Compose Configuration
+#
+# This compose file runs multiple event-forwarder instances to sync events
+# from various Nostr relays to the DeepFry relay (strfry).
+#
+# Prerequisites:
+#   1. Main infrastructure must be running: docker-compose up -d
+#   2. Create .env file with required secrets (see .env.example)
+#
+# Usage:
+#   docker-compose -f docker-compose.evtfwd.yml up -d
+#
+# Note: This connects to the 'deepfry-net' network created by docker-compose.yml
+
+services:
+  # ============================================================================
+  # LIVE FORWARDERS - Stream events from "now" onwards
+  # ============================================================================
+  
+  fwd-damus-live:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-damus-live
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.damus.io"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_LIVE}
+      QUIET_MODE: "true"
+      SYNC_WINDOW_SECONDS: "5"
+      SYNC_MAX_BATCH: "1000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  fwd-primal-live:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-primal-live
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.primal.net"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_LIVE}
+      QUIET_MODE: "true"
+      SYNC_WINDOW_SECONDS: "5"
+      SYNC_MAX_BATCH: "1000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  fwd-nostr-lol-live:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-nostr-lol-live
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.nostr.lol"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_LIVE}
+      QUIET_MODE: "true"
+      SYNC_WINDOW_SECONDS: "5"
+      SYNC_MAX_BATCH: "1000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # HISTORICAL FORWARDERS - Sync from 2020-01-01 onwards
+  # ============================================================================
+  
+  fwd-damus-history:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-damus-history
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.damus.io"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_HISTORY}
+      QUIET_MODE: "true"
+      SYNC_START_TIME: "2020-01-01T00:00:00Z"
+      SYNC_WINDOW_SECONDS: "3600"
+      SYNC_MAX_BATCH: "5000"
+      SYNC_MAX_CATCHUP_LAG_SECONDS: "86400"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  fwd-primal-history:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-primal-history
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.primal.net"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_HISTORY}
+      QUIET_MODE: "true"
+      SYNC_START_TIME: "2020-01-01T00:00:00Z"
+      SYNC_WINDOW_SECONDS: "3600"
+      SYNC_MAX_BATCH: "5000"
+      SYNC_MAX_CATCHUP_LAG_SECONDS: "86400"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  fwd-nostr-lol-history:
+    build:
+      context: ./event-forwarder
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FWD_VERSION:-dev}
+        GIT_COMMIT: ${FWD_GIT_COMMIT:-unknown}
+        BUILD_TIME: ${FWD_BUILD_TIME:-unknown}
+    image: deepfry/event-forwarder:${FWD_VERSION:-latest}
+    container_name: fwd-nostr-lol-history
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.nostr.lol"
+      DEEPFRY_RELAY_URL: "ws://strfry:7777"
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY_HISTORY}
+      QUIET_MODE: "true"
+      SYNC_START_TIME: "2020-01-01T00:00:00Z"
+      SYNC_WINDOW_SECONDS: "3600"
+      SYNC_MAX_BATCH: "5000"
+      SYNC_MAX_CATCHUP_LAG_SECONDS: "86400"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - deepfry-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  deepfry-net:
+    # Use external network created by main docker-compose.yml
+    external: true
+    name: deepfry-net

@@ -34,12 +34,10 @@ build: build-crawler build-pubkeys
 
 ## Build crawler application
 build-crawler:
-	@mkdir -p bin
 	go build $(BUILD_FLAGS) -o bin/$(APP_CRAWLER)$(BINARY_EXT) ./cmd/$(APP_CRAWLER)
 
 ## Build pubkeys application
 build-pubkeys:
-	@mkdir -p bin
 	go build $(BUILD_FLAGS) -o bin/$(APP_PUBKEYS)$(BINARY_EXT) ./cmd/$(APP_PUBKEYS)
 
 ## Run crawler application
