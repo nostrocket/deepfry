@@ -52,18 +52,18 @@ go run cmd/fwd/main.go --help
 # Run with command line flags (TUI mode)
 ./bin/fwd --source wss://relay.damus.io \
           --deepfry wss://your-deepfry-relay.com \
-          --secret-key nsec1abc123...
+          --secret-key 131265b4f69aa9b8c6cf3fd64cb466a2e8f2684d95874c2f8249cd1c4f00d098
 
 # Run in quiet mode (CLI mode)
 ./bin/fwd --source wss://relay.damus.io \
           --deepfry wss://your-deepfry-relay.com \
-          --secret-key nsec1abc123... \
+          --secret-key 131265b4f69aa9b8c6cf3fd64cb466a2e8f2684d95874c2f8249cd1c4f00d098 \
           --quiet
 
 # Or use environment variables
 export SOURCE_RELAY_URL="wss://relay.damus.io"
 export DEEPFRY_RELAY_URL="wss://your-deepfry-relay.com"
-export NOSTR_SYNC_SECKEY="nsec1abc123..."
+export NOSTR_SYNC_SECKEY="131265b4f69aa9b8c6cf3fd64cb466a2e8f2684d95874c2f8249cd1c4f00d098" //private key in hex
 export QUIET_MODE="true"
 ./bin/fwd
 ```
