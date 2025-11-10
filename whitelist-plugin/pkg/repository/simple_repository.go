@@ -1,6 +1,6 @@
 package repository
 
-import "encoding/hex"
+import "fmt"
 
 type SimpleRepository struct {
 	keys [][32]byte
@@ -16,7 +16,11 @@ func NewSimpleRepository() *SimpleRepository {
 
 	keys := make([][32]byte, 0, len(pubKeys))
 	for _, s := range pubKeys {
-		keys = append(keys, hexTo32ByteArray(s))
+		k, err := hexTo32ByteArray(s)
+		if err != nil {
+			panic(fmt.Errorf("failed to convert pubkey to 32-byte array: %w", err))
+		}
+		keys = append(keys, k)
 	}
 
 	return &SimpleRepository{keys: keys}
@@ -24,15 +28,4 @@ func NewSimpleRepository() *SimpleRepository {
 
 func (r *SimpleRepository) GetAll() ([][32]byte, error) {
 	return r.keys, nil
-}
-
-// hexTo32ByteArray decodes a 64-character hex string to a [32]byte array.
-func hexTo32ByteArray(hexStr string) [32]byte {
-	var arr [32]byte
-	data, err := hex.DecodeString(hexStr)
-	if err != nil || len(data) != 32 {
-		panic("invalid hex string for 32-byte array") // Or handle error as needed
-	}
-	copy(arr[:], data)
-	return arr
 }

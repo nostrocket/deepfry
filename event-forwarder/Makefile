@@ -91,3 +91,54 @@ lint-fix:
         echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
         exit 1; \
     fi
+
+## Docker targets
+DOCKER_IMAGE ?= deepfry/event-forwarder
+DOCKER_TAG ?= $(VERSION)
+
+## Build Docker image
+docker-build:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+## Build multi-platform Docker image (requires buildx)
+docker-buildx:
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		--push \
+		.
+
+## Run Docker container locally for testing
+docker-run:
+	docker run --rm -it \
+		-e SOURCE_RELAY_URL="wss://relay.damus.io" \
+		-e DEEPFRY_RELAY_URL="ws://localhost:7777" \
+		-e NOSTR_SYNC_SECKEY="$(NOSTR_SYNC_SECKEY)" \
+		-e QUIET_MODE="true" \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+## Show Docker image size
+docker-size:
+	@docker images $(DOCKER_IMAGE):$(DOCKER_TAG) --format "Size: {{.Size}}"
+
+## Run docker-compose with example configuration
+docker-compose-up:
+	docker-compose -f docker-compose.example.yml up -d
+
+## Stop docker-compose services
+docker-compose-down:
+	docker-compose -f docker-compose.example.yml down
+
+## View docker-compose logs
+docker-compose-logs:
+	docker-compose -f docker-compose.example.yml logs -f

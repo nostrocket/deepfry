@@ -38,7 +38,7 @@ sleep 5s
 # Load the seed data into Dgraph
 echo "🔄 Loading seed data into Dgraph..."
 # Load seed data using GraphQL mutation  
-curl -X POST -H "Content-Type: application/json" -d @/dgraph-seed/seed_data.graphql http://localhost:8080/graphql
+# curl -X POST -H "Content-Type: application/json" -d @/dgraph-seed/seed_data.graphql http://localhost:8080/graphql
 
 echo "✅ DevContainer setup complete!"
 
