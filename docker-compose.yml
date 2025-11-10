@@ -7,6 +7,7 @@ services:
       # Relay private key (hex). Provide via .env (gitignored) file: STRFRY_PRIVATE_KEY=...
       # If empty, strfry will likely generate or refuse depending on image behavior; keep secret out of git.
       STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
+      DGRAPH_GRAPHQL_URL: "http://dgraph:8080/graphql"
     volumes:
       # LMDB database directory (bind mount for transparency)
       - ./data/strfry-db:/app/strfry-db
@@ -14,7 +15,7 @@ services:
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
       # Plugin directory (future search plugin etc.)
       - ./data/strfry-plugins:/app/plugins
-      - ./whitelist-plugin/bin/whitelist:/app/plugins/whitelist:ro
+     # - ./whitelist-plugin/bin/whitelist:/app/plugins/whitelist:ro
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
@@ -31,7 +32,7 @@ services:
       - ./data/dgraph:/dgraph
       - ./config/dgraph/schema.graphql:/dgraph-seed/schema.graphql
       - ./config/dgraph/seed_data.graphql:/dgraph-seed/seed_data.graphql
-      - ./config/dgraph/entrypoint.sh:/entrypoint.sh
+      - ./config/dgraph/entrypoint.sh:/entrypoint.sh:ro
     entrypoint: ["/entrypoint.sh"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

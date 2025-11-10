@@ -22,7 +22,11 @@ func main() {
 	logger := log.New(os.Stderr, "[whitelist-plugin] ", log.LstdFlags)
 
 	// Initialize components
-	keyRepo := repository.NewSimpleRepository()
+	endpoint := os.Getenv("DGRAPH_GRAPHQL_URL")
+	if endpoint == "" {
+		endpoint = "http://localhost:8080/graphql"
+	}
+	keyRepo := repository.NewGraphQLRepository(endpoint, 1000, logger)
 	refresher := whitelist.NewWhitelistRefresher(keyRepo, 5*time.Minute, 3, logger)
 
 	// Start background refresh

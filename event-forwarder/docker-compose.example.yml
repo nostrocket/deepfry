@@ -1,0 +1,127 @@
+# Example docker-compose configuration for running multiple event-forwarders
+# Each service forwards from a different source relay to your DeepFry instance
+#
+# Usage:
+#   1. Copy this to docker-compose.forwarders.yml
+#   2. Create a .env file with your NOSTR_SYNC_SECKEY and DEEPFRY_RELAY_URL
+#   3. Add/remove forwarder services as needed
+#   4. Run: docker-compose -f docker-compose.forwarders.yml up -d
+
+version: '3.8'
+
+services:
+  # Example: Forward from relay.damus.io
+  forwarder-damus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: fwd-damus
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://relay.damus.io"
+      DEEPFRY_RELAY_URL: ${DEEPFRY_RELAY_URL}
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY}
+      QUIET_MODE: "true"
+      LOG_LEVEL: "info"
+    # Resource limits for running thousands of containers
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - forwarder-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Example: Forward from nos.lol
+  forwarder-nos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: fwd-nos
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://nos.lol"
+      DEEPFRY_RELAY_URL: ${DEEPFRY_RELAY_URL}
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY}
+      QUIET_MODE: "true"
+      LOG_LEVEL: "info"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - forwarder-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Example: Forward from nostr.wine
+  forwarder-wine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: fwd-wine
+    restart: unless-stopped
+    environment:
+      SOURCE_RELAY_URL: "wss://nostr.wine"
+      DEEPFRY_RELAY_URL: ${DEEPFRY_RELAY_URL}
+      NOSTR_SYNC_SECKEY: ${NOSTR_SYNC_SECKEY}
+      QUIET_MODE: "true"
+      LOG_LEVEL: "info"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    networks:
+      - forwarder-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Add more forwarders as needed...
+  # Copy the pattern above and change:
+  #   - service name (forwarder-XXX)
+  #   - container_name (fwd-XXX)
+  #   - SOURCE_RELAY_URL
+
+networks:
+  forwarder-net:
+    driver: bridge
+
+# Note: For thousands of containers, consider:
+# 1. Using Docker Swarm or Kubernetes for orchestration
+# 2. Storing relay URLs in a config file and generating compose dynamically
+# 3. Using a single image with different env vars per container
+# 4. Monitoring resource usage and adjusting limits accordingly

@@ -23,13 +23,31 @@ LDFLAGS=-X 'event-forwarder/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build run test fmt vet tidy clean help bench
+.PHONY: all build run test fmt vet tidy clean help bench build-alpine build-linux
 
 all: build
 
 ## Build the application
 build:
 	go build $(BUILD_FLAGS) -o bin/$(APP)$(BINARY_EXT) ./cmd/$(APP)
+
+## Build static binary for Alpine Linux (musl libc)
+build-alpine:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP)-alpine ./cmd/$(APP)
+	@echo "Built static binary for Alpine Linux: bin/$(APP)-alpine"
+
+## Build static binary for generic Linux (works on Alpine, Debian, Ubuntu, etc.)
+build-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP)-linux ./cmd/$(APP)
+	@echo "Built static binary for Linux: bin/$(APP)-linux"
 
 ## Run the application
 run:
@@ -66,13 +84,18 @@ endif
 ## Show help
 help:
 	@echo Available targets:
-	@echo   build  - Build the application
-	@echo   run    - Run the application
-	@echo   test   - Run tests
-	@echo   fmt    - Format code
-	@echo   vet    - Vet code
-	@echo   tidy   - Update dependencies
-	@echo   clean  - Clean build artifacts
+	@echo   build         - Build the application for current platform
+	@echo   build-alpine  - Build static binary for Alpine Linux
+	@echo   build-linux   - Build static binary for generic Linux
+	@echo   run           - Run the application
+	@echo   test          - Run tests
+	@echo   bench         - Run benchmarks
+	@echo   fmt           - Format code
+	@echo   vet           - Vet code
+	@echo   lint          - Run linters
+	@echo   lint-fix      - Run linters with auto-fix
+	@echo   tidy          - Update dependencies
+	@echo   clean         - Clean build artifacts
 
 ## Run linters
 lint:
