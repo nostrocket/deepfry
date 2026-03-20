@@ -80,6 +80,15 @@ docker-compose logs [service-name]
 
 # Check status
 docker-compose ps
+
+# Stream from top 20 relays (uses tmux)
+./stream-relays.sh
+
+# Attach to monitor streams
+./stream-relays.sh attach
+
+# Stop all streams
+./stream-relays.sh stop
 ```
 
 ## Next Steps
