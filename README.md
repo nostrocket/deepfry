@@ -51,6 +51,7 @@ We welcome external contributors.
 - WebSocket: ws://localhost:7777
 - Config: `./config/strfry/strfry.conf`
 - Database: `./data/strfry-db/`
+- Whitelist plugin is compiled automatically via multi-stage Docker build (`Dockerfile.strfry`)
 
  **Dgraph** (Standalone - Zero + Alpha combined)
 
@@ -69,8 +70,8 @@ We welcome external contributors.
 ## Quick Commands
 
 ```bash
-# Start stack
-docker-compose up -d
+# Build and start stack (compiles whitelist plugin automatically)
+docker-compose up -d --build
 
 # Stop stack
 docker-compose down

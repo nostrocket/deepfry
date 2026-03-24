@@ -1,0 +1,11 @@
+FROM golang:1.24-alpine AS plugin-builder
+WORKDIR /build
+COPY whitelist-plugin/ .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -a -installsuffix cgo \
+    -ldflags "-w -s -extldflags '-static'" \
+    -tags netgo \
+    -o /whitelist ./cmd/whitelist
+
+FROM dockurr/strfry:latest
+COPY --from=plugin-builder /whitelist /app/plugins/whitelist

@@ -1,6 +1,8 @@
 services:
   strfry:
-    image: dockurr/strfry:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.strfry
     container_name: strfry
     restart: unless-stopped
     environment:
@@ -13,9 +15,7 @@ services:
       - ./data/strfry-db:/app/strfry-db
       # Config file (read-only)
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
-      # Plugin directory (future search plugin etc.)
-      - ./data/strfry-plugins:/app/plugins
-     # - ./whitelist-plugin/bin/whitelist:/app/plugins/whitelist:ro
+      # Whitelist plugin is baked into the image via Dockerfile.strfry
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
