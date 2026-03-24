@@ -25,6 +25,12 @@ services:
     image: dgraph/standalone:latest
     container_name: dgraph
     restart: unless-stopped
+    environment:
+      DGRAPH_ALPHA_LRU_MB: "512"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     ports:
       - "8080:8080" # HTTP (GraphQL+/Admin)
       - "9080:9080" # gRPC
