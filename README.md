@@ -90,6 +90,19 @@ docker-compose ps
 
 # Stop all streams
 ./stream-relays.sh stop
+
+# Switch Dgraph to a remote instance (updates whitelist plugin + wot crawler)
+./switch-dgraph.sh remote
+
+# Switch back to local Dgraph container
+./switch-dgraph.sh local
+
+# Check which mode Dgraph is in
+./switch-dgraph.sh status
+
+# Files modified by switch-dgraph.sh:
+#   docker-compose.yml        → DGRAPH_GRAPHQL_URL (whitelist plugin)
+#   ~/deepfry/config.yaml     → dgraph_addr (web-of-trust crawler)
 ```
 
 ## Next Steps

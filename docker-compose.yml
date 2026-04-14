@@ -22,15 +22,13 @@ services:
       - deepfry-net
 
   dgraph:
-    image: dgraph/standalone:latest
+    image: dgraph/standalone:v25.3.0
     container_name: dgraph
     restart: unless-stopped
-    environment:
-      DGRAPH_ALPHA_LRU_MB: "512"
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 8g
     ports:
       - "8080:8080" # HTTP (GraphQL+/Admin)
       - "9080:9080" # gRPC
