@@ -150,6 +150,7 @@ func (c *Client) AddFollowers(
 			return fmt.Errorf("create follower failed: %w", err)
 		}
 		followerUID = assigned.Uids["follower"]
+		log.Printf("New pubkey added to graph (signer): %s", signerPubkey)
 	} else {
 		// Update existing follower - check if this is newer than existing
 		existingKind3CreatedAt := result.Follower[0].Kind3CreatedAt
@@ -247,6 +248,7 @@ func (c *Client) AddFollowers(
 				createNQuads += fmt.Sprintf(
 					"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
 				followeeUIDs[i] = "_:" + blankNodeID
+				log.Printf("New pubkey added to graph (stub): %s", followee)
 			}
 		}
 

@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,9 +15,35 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 )
 
+type subscriptionError struct {
+	err error
+}
+
+func (e *subscriptionError) Error() string { return e.err.Error() }
+func (e *subscriptionError) Unwrap() error { return e.err }
+
+type transportError struct {
+	err error
+}
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+const (
+	initialBackoff = 1 * time.Second
+	maxBackoff     = 5 * time.Minute
+)
+
+type relayState struct {
+	url       string
+	conn      *nostr.Relay
+	alive     bool
+	backoff   time.Duration
+	retryAt   time.Time
+}
+
 type Crawler struct {
-	relays        []*nostr.Relay
-	relayURLs     []string
+	relays        []*relayState
 	dgClient      *dgraph.Client
 	timeout       time.Duration
 	debug         bool
@@ -45,47 +72,96 @@ func New(cfg Config) (*Crawler, error) {
 	}
 
 	// Connect to all relays
-	var relays []*nostr.Relay
-	var connectedURLs []string
+	var relays []*relayState
+	connected := 0
 
 	for _, url := range cfg.RelayURLs {
+		rs := &relayState{url: url, backoff: initialBackoff}
 		relay, err := nostr.RelayConnect(context.Background(), url)
 		if err != nil {
 			log.Printf("WARN: Failed to connect to relay %s: %v", url, err)
+			relays = append(relays, rs)
 			continue
 		}
-		relays = append(relays, relay)
-		connectedURLs = append(connectedURLs, url)
+		rs.conn = relay
+		rs.alive = true
+		relays = append(relays, rs)
+		connected++
 		if cfg.Debug {
 			log.Printf("Connected to relay: %s", url)
 		}
 	}
 
-	if len(relays) == 0 {
+	if connected == 0 {
 		dgClient.Close()
 		return nil, fmt.Errorf("failed to connect to any relays")
 	}
 
-	log.Printf("Connected to %d/%d relays", len(relays), len(cfg.RelayURLs))
+	log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
 
 	return &Crawler{
-		relays:        relays,
-		relayURLs:     connectedURLs,
-		dgClient:      dgClient,
-		timeout:       cfg.Timeout,
-		debug:         cfg.Debug,
-		dbUpdateMutex: sync.Mutex{},
+		relays:   relays,
+		dgClient: dgClient,
+		timeout:  cfg.Timeout,
+		debug:    cfg.Debug,
 	}, nil
 }
 
 func (c *Crawler) Close() {
-	for _, relay := range c.relays {
-		if relay != nil {
-			relay.Close()
+	for _, rs := range c.relays {
+		if rs.conn != nil {
+			rs.conn.Close()
 		}
 	}
 	if c.dgClient != nil {
 		c.dgClient.Close()
+	}
+}
+
+func (c *Crawler) markRelayDead(url string) {
+	for _, rs := range c.relays {
+		if rs.url == url {
+			if rs.conn != nil {
+				rs.conn.Close()
+			}
+			rs.conn = nil
+			rs.alive = false
+			rs.retryAt = time.Now().Add(rs.backoff)
+			log.Printf("Relay %s marked dead, next retry in %v", url, rs.backoff)
+			rs.backoff *= 2
+			if rs.backoff > maxBackoff {
+				rs.backoff = maxBackoff
+			}
+			return
+		}
+	}
+}
+
+func (c *Crawler) ReconnectRelays(ctx context.Context) {
+	for _, rs := range c.relays {
+		if rs.alive {
+			continue
+		}
+		if time.Now().Before(rs.retryAt) {
+			if c.debug {
+				log.Printf("Skipping reconnect for %s, next retry at %v", rs.url, rs.retryAt.Format(time.RFC3339))
+			}
+			continue
+		}
+		relay, err := nostr.RelayConnect(ctx, rs.url)
+		if err != nil {
+			rs.retryAt = time.Now().Add(rs.backoff)
+			log.Printf("WARN: Reconnect to %s failed, next retry in %v: %v", rs.url, rs.backoff, err)
+			rs.backoff *= 2
+			if rs.backoff > maxBackoff {
+				rs.backoff = maxBackoff
+			}
+			continue
+		}
+		rs.conn = relay
+		rs.alive = true
+		rs.backoff = initialBackoff
+		log.Printf("Reconnected to relay: %s", rs.url)
 	}
 }
 
@@ -111,25 +187,33 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		Limit:   len(pubkeys), // Allow one event per pubkey
 	}
 
-	// Query all relays concurrently
+	type relayError struct {
+		url string
+		err error
+	}
+
+	// Query all alive relays concurrently
 	var wg sync.WaitGroup
 	eventsChan := make(chan *nostr.Event, len(pubkeys)*len(c.relays))
-	errorsChan := make(chan error, len(c.relays))
+	errorsChan := make(chan relayError, len(c.relays))
 
 	// Set timeout context for relay operations only
 	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
-	// Launch goroutines for each relay
-	for i, relay := range c.relays {
+	// Launch goroutines for each alive relay
+	for _, rs := range c.relays {
+		if !rs.alive {
+			continue
+		}
 		wg.Add(1)
 		go func(relay *nostr.Relay, relayURL string) {
 			defer wg.Done()
 			err := c.queryRelay(relayQueryContext, relay, relayURL, filter, eventsChan)
 			if err != nil {
-				errorsChan <- fmt.Errorf("relay %s: %w", relayURL, err)
+				errorsChan <- relayError{url: relayURL, err: err}
 			}
-		}(relay, c.relayURLs[i])
+		}(rs.conn, rs.url)
 	}
 
 	// Close channels when all goroutines complete
@@ -215,23 +299,33 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			processedEventIDs[event.ID] = struct{}{}
 			c.dbUpdateMutex.Unlock()
 
-		case err, ok := <-errorsChan:
+		case re, ok := <-errorsChan:
 			if !ok {
 				// Error channel closed
 				continue
 			}
 
 			// Don't report context cancellation as relay error
-			if strings.Contains(err.Error(), "context canceled") ||
-				strings.Contains(err.Error(), "context deadline exceeded") {
+			if strings.Contains(re.err.Error(), "context canceled") ||
+				strings.Contains(re.err.Error(), "context deadline exceeded") {
 				if c.debug {
-					log.Printf("Relay query interrupted: %v", err)
+					log.Printf("Relay query interrupted: %v", re.err)
 				}
 				continue
 			}
 
-			log.Printf("WARN: Relay error: %v", err)
-			log.Printf("subscription filters: \n %s", filter)
+			var subErr *subscriptionError
+			var transErr *transportError
+			switch {
+			case errors.As(re.err, &subErr):
+				log.Printf("WARN: Subscription failed: %v", re.err)
+				log.Printf("subscription filters: \n %s", filter)
+			case errors.As(re.err, &transErr):
+				log.Printf("WARN: Connection timed out: %v", re.err)
+				c.markRelayDead(re.url)
+			default:
+				log.Printf("WARN: Relay error: %v", re.err)
+			}
 		}
 	}
 }
@@ -245,7 +339,7 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 			return ctx.Err()
 		}
 		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %w", relayURL, err))
-		return err
+		return &subscriptionError{err: fmt.Errorf("relay %s: %w", relayURL, err)}
 	}
 	// Ensure subscription is unsubscribed when this function returns
 	defer sub.Unsub()
@@ -280,7 +374,7 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 			if err != nil && err != context.Canceled {
 				c.logRelayError("subscription_context_error", fmt.Errorf("relay %s: %w", relayURL, err))
 			}
-			return err
+			return &transportError{err: fmt.Errorf("relay %s: %w", relayURL, err)}
 		case <-ctx.Done():
 			// External cancellation (ctrl+c or timeout) - return without error logging
 			if c.debug {

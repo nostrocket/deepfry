@@ -118,6 +118,9 @@ mainLoop:
 			log.Printf("Limited batch to 500 pubkeys (from %d total stale pubkeys)", len(pubkeys))
 		}
 
+		// Reconnect any dead relays before processing
+		crawler.ReconnectRelays(ctx)
+
 		// Process the batch
 		if err := crawler.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
 			if ctx.Err() != nil {
