@@ -35,11 +35,11 @@ const (
 )
 
 type relayState struct {
-	url       string
-	conn      *nostr.Relay
-	alive     bool
-	backoff   time.Duration
-	retryAt   time.Time
+	url     string
+	conn    *nostr.Relay
+	alive   bool
+	backoff time.Duration
+	retryAt time.Time
 }
 
 type Crawler struct {

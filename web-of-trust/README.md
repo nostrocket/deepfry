@@ -6,8 +6,6 @@ A Go service that crawls Nostr follow relationships (NIP-02) and builds a web of
 
 This module fetches follow lists from Nostr relays and stores them as a directed graph in Dgraph, enabling web-of-trust calculations and social graph analysis.
 
-[] Handle multiple relays
-
 ## Quick Start
 
 ### Prerequisites
@@ -19,25 +17,37 @@ This module fetches follow lists from Nostr relays and stores them as a directed
 ### Build
 
 ```bash
-go build -o bin/crawler ./cmd/crawler
-go build -o bin/pubkeys ./cmd/pubkeys
+make build
+```
+
+Or individually:
+
+```bash
+make build-crawler
+make build-pubkeys
+make build-discover-relays
 ```
 
 ### Run
 
-1. **Configure**: Edit `config/config.yaml` with your settings
-2. **Crawl follows**: `./bin/crawler`
-3. **Export popular pubkeys**: `./bin/pubkeys`
+1. **Configure**: Edit `~/deepfry/config.yaml` with your settings (auto-created on first crawler run)
+2. **Discover relays**: `./bin/discover-relays` (finds and tests the 50 fastest relays, adds them to config)
+3. **Crawl follows**: `./bin/crawler`
+4. **Export popular pubkeys**: `./bin/pubkeys`
 
 ## Configuration
 
-Edit `config/config.yaml`:
+Config file is searched in order: `.`, `./config`, `/etc/web-of-trust/`, `~/deepfry/`. A default config is auto-created at `~/deepfry/config.yaml` on first crawler run.
 
 ```yaml
-relay_url: "wss://relay.damus.io"    # Nostr relay to connect to
+relay_urls:                          # Nostr relays to connect to
+    - wss://relay.damus.io
+    - wss://nos.lol
 dgraph_addr: "localhost:9080"        # Dgraph server address
 pubkey: "npub1..."                   # Starting pubkey to crawl (hex or npub)
 timeout: "30s"                       # Relay operation timeout
+stale_pubkey_threshold: 86400        # Seconds before a pubkey is re-crawled (default 24h)
+debug: false                         # Enable debug logging
 ```
 
 ## File Structure
@@ -45,19 +55,20 @@ timeout: "30s"                       # Relay operation timeout
 ```text
 web-of-trust/
 ├── cmd/
-│   ├── crawler/         # Main crawler application
-│   │   └── main.go      # Fetches follows from Nostr and stores in Dgraph
-│   └── pubkeys/         # Pubkey export utility
-│       └── main.go      # Exports popular pubkeys to CSV
-├── config/
-│   └── config.yaml      # Configuration file
+│   ├── crawler/           # Main crawler application
+│   │   └── main.go        # Fetches follows from Nostr and stores in Dgraph
+│   ├── discover-relays/   # Relay discovery and benchmarking tool
+│   │   └── main.go        # Discovers, tests, and ranks relays for config
+│   └── pubkeys/           # Pubkey export utility
+│       └── main.go        # Exports popular pubkeys to CSV
 ├── pkg/
-│   ├── crawler/         # Core crawling logic
-│   └── dgraph/          # Dgraph client and operations
+│   ├── config/            # Shared configuration loading
+│   ├── crawler/           # Core crawling logic
+│   └── dgraph/            # Dgraph client and operations
 ├── queries/
-│   └── explore.dql      # Sample Dgraph queries for data exploration
-├── go.mod               # Go module dependencies
-└── README.md            # This file
+│   └── explore.dql        # Sample Dgraph queries for data exploration
+├── go.mod                 # Go module dependencies
+└── README.md              # This file
 ```
 
 ## Components
@@ -66,12 +77,32 @@ web-of-trust/
 
 The main application that:
 
-- Connects to a Nostr relay
+- Connects to configured Nostr relays concurrently
 - Fetches NIP-02 follow lists for specified pubkeys
 - Stores follow relationships in Dgraph as directed edges
+- Automatic reconnection with exponential backoff for dead relays
 - Provides crawling statistics and progress updates
 
 **Usage**: `./bin/crawler`
+
+### Discover Relays (`cmd/discover-relays/`)
+
+A relay discovery and benchmarking tool that:
+
+- Discovers relays via the nostr.watch API (NIP-66), with automatic fallback to NIP-65 relay list discovery from seed relays
+- Pings each relay with a NIP-11 info document fetch to remove dead relays
+- Tests a kind 3 subscription on each relay to verify responsiveness
+- Ranks relays by total latency and adds the fastest to the config file
+
+**Usage**: `./bin/discover-relays [flags]`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--count` | 50 | Number of fastest relays to add |
+| `--max-test` | 500 | Max relays to test from discovered pool (0 = all) |
+| `--concurrency` | 50 | Parallel relay test workers |
+| `--replace` | false | Replace existing relay_urls instead of merging |
+| `--dry-run` | false | Print results without modifying config |
 
 ### Pubkeys Exporter (`cmd/pubkeys/`)
 
@@ -85,7 +116,8 @@ A utility that:
 
 ### Core Packages
 
-- **`pkg/crawler/`**: Contains the core crawling logic and Nostr client handling
+- **`pkg/config/`**: Shared configuration loading via Viper (YAML, multi-path search)
+- **`pkg/crawler/`**: Core crawling logic, multi-relay management, and Nostr client handling
 - **`pkg/dgraph/`**: Dgraph client wrapper with graph operations for pubkey relationships
 
 ### Queries (`queries/`)
@@ -140,7 +172,5 @@ Use Dgraph Ratel UI or the queries in `queries/explore.dql` to explore the crawl
 
 ## Future Enhancements
 
-- Batch processing of multiple seed pubkeys
-- Automatic detection of stale data for re-crawling
 - Trust score calculations
 - Integration with other DeepFry subsystems

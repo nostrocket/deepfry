@@ -1,5 +1,6 @@
 APP_CRAWLER=crawler
 APP_PUBKEYS=pubkeys
+APP_DISCOVER=discover-relays
 PKG=web-of-trust
 
 # Version can be set via environment variable or defaults to dev
@@ -24,13 +25,13 @@ LDFLAGS=-X 'web-of-trust/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-crawler build-pubkeys run-crawler run-pubkeys test fmt vet tidy clean help lint lint-fix
+.PHONY: all build build-crawler build-pubkeys build-discover-relays run-crawler run-pubkeys run-discover-relays test fmt vet tidy clean help lint lint-fix
 
 ## Default target: runs tidy, format, vet, tests, and builds all applications
 all: tidy fmt vet test build
 
 ## Build all applications
-build: build-crawler build-pubkeys
+build: build-crawler build-pubkeys build-discover-relays
 
 ## Build crawler application
 build-crawler:
@@ -39,6 +40,14 @@ build-crawler:
 ## Build pubkeys application
 build-pubkeys:
 	go build $(BUILD_FLAGS) -o bin/$(APP_PUBKEYS)$(BINARY_EXT) ./cmd/$(APP_PUBKEYS)
+
+## Build discover-relays application
+build-discover-relays:
+	go build $(BUILD_FLAGS) -o bin/$(APP_DISCOVER)$(BINARY_EXT) ./cmd/$(APP_DISCOVER)
+
+## Run discover-relays application
+run-discover-relays:
+	go run $(BUILD_FLAGS) ./cmd/$(APP_DISCOVER)
 
 ## Run crawler application
 run-crawler:
@@ -83,8 +92,10 @@ help:
 	@echo   build           - Build all applications
 	@echo   build-crawler   - Build crawler application
 	@echo   build-pubkeys   - Build pubkeys application
+	@echo   build-discover-relays - Build discover-relays application
 	@echo   run-crawler     - Run crawler application
 	@echo   run-pubkeys     - Run pubkeys application
+	@echo   run-discover-relays - Run discover-relays application
 	@echo   test            - Run tests
 	@echo   fmt             - Format code
 	@echo   vet             - Vet code
