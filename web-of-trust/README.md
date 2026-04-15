@@ -26,6 +26,7 @@ Or individually:
 make build-crawler
 make build-pubkeys
 make build-discover-relays
+make build-healthcheck
 ```
 
 ### Run
@@ -34,6 +35,7 @@ make build-discover-relays
 2. **Discover relays**: `./bin/discover-relays` (finds and tests the 50 fastest relays, adds them to config)
 3. **Crawl follows**: `./bin/crawler`
 4. **Export popular pubkeys**: `./bin/pubkeys`
+5. **Check database health**: `./bin/healthcheck`
 
 ## Configuration
 
@@ -60,6 +62,8 @@ web-of-trust/
 │   │   └── main.go        # Fetches follows from Nostr and stores in Dgraph
 │   ├── discover-relays/   # Relay discovery and benchmarking tool
 │   │   └── main.go        # Discovers, tests, and ranks relays for config
+│   ├── healthcheck/       # Database health check tool
+│   │   └── main.go        # Detects invalid/duplicate pubkeys, optional purge
 │   └── pubkeys/           # Pubkey export utility
 │       └── main.go        # Exports popular pubkeys to CSV
 ├── pkg/
@@ -105,6 +109,23 @@ A relay discovery and benchmarking tool that:
 | `--concurrency` | 50 | Parallel relay test workers |
 | `--replace` | false | Replace existing relay_urls instead of merging |
 | `--dry-run` | false | Print results without modifying config |
+
+### Health Check (`cmd/healthcheck/`)
+
+A database integrity tool that:
+
+- Scans all pubkey nodes in Dgraph for invalid entries (not 64-char lowercase hex)
+- Detects duplicate pubkey nodes that may exist from before the `@unique` constraint
+- Reports findings with optional verbose detail (`-v`)
+- Optionally purges bad entries (`-purge`), keeping the node with the newest event data
+
+**Usage**: `./bin/healthcheck [flags]`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-dgraph-addr` | `localhost:9080` | Dgraph gRPC address |
+| `-v` | false | Print details of each bad entry |
+| `-purge` | false | Delete invalid and duplicate nodes (prompts for confirmation) |
 
 ### Pubkeys Exporter (`cmd/pubkeys/`)
 

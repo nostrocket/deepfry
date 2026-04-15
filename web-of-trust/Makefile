@@ -1,6 +1,7 @@
 APP_CRAWLER=crawler
 APP_PUBKEYS=pubkeys
 APP_DISCOVER=discover-relays
+APP_HEALTHCHECK=healthcheck
 PKG=web-of-trust
 
 # Version can be set via environment variable or defaults to dev
@@ -25,13 +26,13 @@ LDFLAGS=-X 'web-of-trust/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-crawler build-pubkeys build-discover-relays run-crawler run-pubkeys run-discover-relays test fmt vet tidy clean help lint lint-fix
+.PHONY: all build build-crawler build-pubkeys build-discover-relays build-healthcheck run-crawler run-pubkeys run-discover-relays run-healthcheck test fmt vet tidy clean help lint lint-fix
 
 ## Default target: runs tidy, format, vet, tests, and builds all applications
 all: tidy fmt vet test build
 
 ## Build all applications
-build: build-crawler build-pubkeys build-discover-relays
+build: build-crawler build-pubkeys build-discover-relays build-healthcheck
 
 ## Build crawler application
 build-crawler:
@@ -45,6 +46,10 @@ build-pubkeys:
 build-discover-relays:
 	go build $(BUILD_FLAGS) -o bin/$(APP_DISCOVER)$(BINARY_EXT) ./cmd/$(APP_DISCOVER)
 
+## Build healthcheck application
+build-healthcheck:
+	go build $(BUILD_FLAGS) -o bin/$(APP_HEALTHCHECK)$(BINARY_EXT) ./cmd/$(APP_HEALTHCHECK)
+
 ## Run discover-relays application
 run-discover-relays:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_DISCOVER)
@@ -56,6 +61,10 @@ run-crawler:
 ## Run pubkeys application
 run-pubkeys:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_PUBKEYS)
+
+## Run healthcheck application
+run-healthcheck:
+	go run $(BUILD_FLAGS) ./cmd/$(APP_HEALTHCHECK)
 
 ## Run tests
 test:
@@ -93,9 +102,11 @@ help:
 	@echo   build-crawler   - Build crawler application
 	@echo   build-pubkeys   - Build pubkeys application
 	@echo   build-discover-relays - Build discover-relays application
+	@echo   build-healthcheck - Build healthcheck application
 	@echo   run-crawler     - Run crawler application
 	@echo   run-pubkeys     - Run pubkeys application
 	@echo   run-discover-relays - Run discover-relays application
+	@echo   run-healthcheck - Run healthcheck application
 	@echo   test            - Run tests
 	@echo   fmt             - Format code
 	@echo   vet             - Vet code

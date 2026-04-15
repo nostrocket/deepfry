@@ -719,3 +719,89 @@ func (c *Client) TouchLastDBUpdate(
 
 	return true, nil
 }
+
+// PubkeyNode represents a Dgraph node with its pubkey metadata.
+type PubkeyNode struct {
+	UID            string `json:"uid"`
+	Pubkey         string `json:"pubkey"`
+	Kind3CreatedAt int64  `json:"kind3CreatedAt"`
+	LastDBUpdate   int64  `json:"last_db_update"`
+}
+
+// GetAllPubkeysPaginated iterates over all pubkey nodes in batches,
+// calling the callback with each batch of PubkeyNode results.
+func (c *Client) GetAllPubkeysPaginated(
+	ctx context.Context,
+	batchSize int,
+	callback func([]PubkeyNode) error,
+) error {
+	offset := 0
+
+	for {
+		query := fmt.Sprintf(`
+		{
+			nodes(func: has(pubkey), first: %d, offset: %d, orderasc: pubkey) {
+				uid
+				pubkey
+				kind3CreatedAt
+				last_db_update
+			}
+		}`, batchSize, offset)
+
+		txn := c.dg.NewReadOnlyTxn()
+		resp, err := txn.Query(ctx, query)
+		txn.Discard(ctx)
+
+		if err != nil {
+			return fmt.Errorf("query all pubkeys failed: %w", err)
+		}
+
+		var result struct {
+			Nodes []PubkeyNode `json:"nodes"`
+		}
+
+		if err := json.Unmarshal(resp.Json, &result); err != nil {
+			return fmt.Errorf("unmarshal all pubkeys failed: %w", err)
+		}
+
+		if len(result.Nodes) == 0 {
+			break
+		}
+
+		if err := callback(result.Nodes); err != nil {
+			return fmt.Errorf("callback error: %w", err)
+		}
+
+		if len(result.Nodes) < batchSize {
+			break
+		}
+
+		offset += batchSize
+	}
+
+	return nil
+}
+
+// DeleteNodes deletes multiple nodes by UID, removing all predicates and edges.
+func (c *Client) DeleteNodes(ctx context.Context, uids []string) error {
+	if len(uids) == 0 {
+		return nil
+	}
+
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+
+	var nquads string
+	for _, uid := range uids {
+		nquads += fmt.Sprintf("<%s> * * .\n", uid)
+	}
+
+	mu := &api.Mutation{
+		DelNquads: []byte(nquads),
+	}
+	if _, err := txn.Mutate(ctx, mu); err != nil {
+		return fmt.Errorf("delete nodes failed: %w", err)
+	}
+
+	return txn.Commit(ctx)
+}
