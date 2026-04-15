@@ -30,7 +30,7 @@ func (e *transportError) Error() string { return e.err.Error() }
 func (e *transportError) Unwrap() error { return e.err }
 
 const (
-	initialBackoff = 1 * time.Second
+	initialBackoff = 30 * time.Second
 	maxBackoff     = 5 * time.Minute
 )
 
@@ -44,6 +44,7 @@ type relayState struct {
 
 type Crawler struct {
 	relays        []*relayState
+	forwardRelay  *relayState
 	dgClient      *dgraph.Client
 	timeout       time.Duration
 	debug         bool
@@ -51,10 +52,11 @@ type Crawler struct {
 }
 
 type Config struct {
-	RelayURLs  []string // Changed from RelayURL to RelayURLs
-	DgraphAddr string
-	Timeout    time.Duration
-	Debug      bool
+	RelayURLs       []string
+	DgraphAddr      string
+	Timeout         time.Duration
+	Debug           bool
+	ForwardRelayURL string
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -99,12 +101,28 @@ func New(cfg Config) (*Crawler, error) {
 
 	log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
 
-	return &Crawler{
+	c := &Crawler{
 		relays:   relays,
 		dgClient: dgClient,
 		timeout:  cfg.Timeout,
 		debug:    cfg.Debug,
-	}, nil
+	}
+
+	// Connect to forward relay if configured
+	if cfg.ForwardRelayURL != "" {
+		rs := &relayState{url: cfg.ForwardRelayURL, backoff: initialBackoff}
+		relay, err := nostr.RelayConnect(context.Background(), cfg.ForwardRelayURL)
+		if err != nil {
+			log.Printf("WARN: Failed to connect to forward relay %s: %v (will retry later)", cfg.ForwardRelayURL, err)
+		} else {
+			rs.conn = relay
+			rs.alive = true
+			log.Printf("Connected to forward relay: %s", cfg.ForwardRelayURL)
+		}
+		c.forwardRelay = rs
+	}
+
+	return c, nil
 }
 
 func (c *Crawler) Close() {
@@ -113,8 +131,33 @@ func (c *Crawler) Close() {
 			rs.conn.Close()
 		}
 	}
+	if c.forwardRelay != nil && c.forwardRelay.conn != nil {
+		c.forwardRelay.conn.Close()
+	}
 	if c.dgClient != nil {
 		c.dgClient.Close()
+	}
+}
+
+func (c *Crawler) forwardEvent(ctx context.Context, event *nostr.Event) {
+	if c.forwardRelay == nil || !c.forwardRelay.alive {
+		return
+	}
+	err := c.forwardRelay.conn.Publish(ctx, *event)
+	if err != nil {
+		log.Printf("WARN: Failed to forward event %s to %s: %v", event.ID, c.forwardRelay.url, err)
+		if c.forwardRelay.conn != nil {
+			c.forwardRelay.conn.Close()
+		}
+		c.forwardRelay.conn = nil
+		c.forwardRelay.alive = false
+		c.forwardRelay.retryAt = time.Now().Add(c.forwardRelay.backoff)
+		c.forwardRelay.backoff *= 2
+		if c.forwardRelay.backoff > maxBackoff {
+			c.forwardRelay.backoff = maxBackoff
+		}
+	} else if c.debug {
+		log.Printf("Forwarded event %s to %s", event.ID, c.forwardRelay.url)
 	}
 }
 
@@ -163,9 +206,36 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 		rs.backoff = initialBackoff
 		log.Printf("Reconnected to relay: %s", rs.url)
 	}
+
+	// Reconnect forward relay if needed
+	if c.forwardRelay != nil && !c.forwardRelay.alive {
+		rs := c.forwardRelay
+		if time.Now().Before(rs.retryAt) {
+			if c.debug {
+				log.Printf("Skipping reconnect for forward relay %s, next retry at %v", rs.url, rs.retryAt.Format(time.RFC3339))
+			}
+			return
+		}
+		relay, err := nostr.RelayConnect(ctx, rs.url)
+		if err != nil {
+			rs.retryAt = time.Now().Add(rs.backoff)
+			log.Printf("WARN: Reconnect to forward relay %s failed, next retry in %v: %v", rs.url, rs.backoff, err)
+			rs.backoff *= 2
+			if rs.backoff > maxBackoff {
+				rs.backoff = maxBackoff
+			}
+			return
+		}
+		rs.conn = relay
+		rs.alive = true
+		rs.backoff = initialBackoff
+		log.Printf("Reconnected to forward relay: %s", rs.url)
+	}
 }
 
-func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) error {
+// FetchAndUpdateFollows queries relays for kind 3 events for the given pubkeys
+// and updates the database. Returns the number of pubkeys that had events.
+func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) (int, error) {
 
 	// Extract pubkey strings from the map
 	authors := make([]string, 0, len(pubkeys))
@@ -225,6 +295,8 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 
 	// Map to keep track of processed event IDs
 	processedEventIDs := make(map[string]struct{})
+	// Track unique pubkeys that had events returned
+	pubkeysWithEvents := make(map[string]struct{})
 	// Process events from all relays using a switch loop
 	for {
 		select {
@@ -240,7 +312,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				}
 				// Continue processing events that were already received
 			} else {
-				return relayQueryContext.Err()
+				return len(pubkeysWithEvents), relayQueryContext.Err()
 			}
 
 		case <-relayContext.Done():
@@ -248,7 +320,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			if c.debug {
 				log.Printf("Main context cancelled while processing events: %v", relayContext.Err())
 			}
-			return relayContext.Err()
+			return len(pubkeysWithEvents), relayContext.Err()
 
 		case event, ok := <-eventsChan:
 			c.dbUpdateMutex.Lock()
@@ -258,7 +330,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 					log.Printf("Processed follows for %d pubkeys across %d relays", len(processedEventIDs), len(c.relays))
 				}
 				c.dbUpdateMutex.Unlock()
-				return nil
+				return len(pubkeysWithEvents), nil
 			}
 
 			if event == nil {
@@ -284,8 +356,14 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			}
 			c.logSignatureValidationMetrics(event.PubKey, true)
 
+			c.forwardEvent(relayContext, event)
+
+			pubkeysWithEvents[event.PubKey] = struct{}{}
+
 			if event.CreatedAt <= nostr.Timestamp(pubkeys[event.PubKey]) {
-				fmt.Println("already have newer event for " + event.PubKey)
+				if c.debug {
+					fmt.Println("already have newer event for " + event.PubKey)
+				}
 				c.dgClient.TouchLastDBUpdate(relayContext, event.PubKey)
 				c.dbUpdateMutex.Unlock()
 				continue
@@ -294,7 +372,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// Process the event using original context (no relay timeout)
 			if err := c.updateFollowsFromEvent(relayContext, event); err != nil {
 				c.dbUpdateMutex.Unlock()
-				return fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
+				return len(pubkeysWithEvents), fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
 			}
 			processedEventIDs[event.ID] = struct{}{}
 			c.dbUpdateMutex.Unlock()
@@ -319,7 +397,6 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			switch {
 			case errors.As(re.err, &subErr):
 				log.Printf("WARN: Subscription failed: %v", re.err)
-				log.Printf("subscription filters: \n %s", filter)
 			case errors.As(re.err, &transErr):
 				log.Printf("WARN: Connection timed out: %v", re.err)
 				c.markRelayDead(re.url)
@@ -337,6 +414,12 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 		// Skip logging for context cancellation, as it's expected during graceful shutdown
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		// "not connected" means the underlying websocket died — treat as transport failure
+		// so the relay gets marked dead and queued for reconnection
+		if strings.Contains(err.Error(), "not connected") {
+			c.logRelayError("connection_lost", fmt.Errorf("relay %s: %w", relayURL, err))
+			return &transportError{err: fmt.Errorf("relay %s: %w", relayURL, err)}
 		}
 		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %w", relayURL, err))
 		return &subscriptionError{err: fmt.Errorf("relay %s: %w", relayURL, err)}

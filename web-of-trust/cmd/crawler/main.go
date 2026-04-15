@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,12 +51,29 @@ func main() {
 	}
 	defer dgraphClient.Close()
 
+	// Prompt for forward relay if not configured
+	if cfg.ForwardRelayURL == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("No forward relay configured. Enter a relay URL to forward events to (or press Enter to skip): ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input != "" {
+			cfg.ForwardRelayURL = input
+			if err := config.SaveForwardRelayURL(input); err != nil {
+				log.Printf("Warning: could not save forward_relay_url to config: %v", err)
+			} else {
+				log.Printf("Saved forward_relay_url to config file")
+			}
+		}
+	}
+
 	// Create crawler
 	crawlerCfg := crawler.Config{
-		RelayURLs:  cfg.RelayURLs,
-		DgraphAddr: cfg.DgraphAddr,
-		Timeout:    cfg.Timeout,
-		Debug:      cfg.Debug,
+		RelayURLs:       cfg.RelayURLs,
+		DgraphAddr:      cfg.DgraphAddr,
+		Timeout:         cfg.Timeout,
+		Debug:           cfg.Debug,
+		ForwardRelayURL: cfg.ForwardRelayURL,
 	}
 
 	crawler, err := crawler.New(crawlerCfg)
@@ -63,8 +83,8 @@ func main() {
 	defer crawler.Close()
 
 	// Statistics for final report
-	processedPubkeys := 0
-	var startTime = time.Now()
+	startTime := time.Now()
+	startingPubkeys, _ := dgraphClient.CountPubkeys(ctx)
 
 	// Main processing loop
 mainLoop:
@@ -104,7 +124,8 @@ mainLoop:
 		}
 
 		// Limit batch size to avoid overload
-		if len(pubkeys) > 500 {
+		totalStale := len(pubkeys)
+		if totalStale > 500 {
 			limitedPubkeys := make(map[string]int64)
 			count := 0
 			for pk, timestamp := range pubkeys {
@@ -115,14 +136,14 @@ mainLoop:
 				count++
 			}
 			pubkeys = limitedPubkeys
-			log.Printf("Limited batch to 500 pubkeys (from %d total stale pubkeys)", len(pubkeys))
 		}
 
 		// Reconnect any dead relays before processing
 		crawler.ReconnectRelays(ctx)
 
 		// Process the batch
-		if err := crawler.FetchAndUpdateFollows(ctx, pubkeys); err != nil {
+		hadEvents, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
+		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("Interrupted while fetching follows: %v", err)
 				break
@@ -131,12 +152,14 @@ mainLoop:
 			break
 		}
 
-		processedPubkeys += len(pubkeys)
-		log.Printf("Processed %d pubkeys in this batch, %d total so far", len(pubkeys), processedPubkeys)
+		staleRemaining := totalStale - len(pubkeys)
+		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
+			len(pubkeys), hadEvents, staleRemaining, totalPubkeys)
 	}
 
 	// Generate final report
-	generateFinalReport(processedPubkeys, startTime, cfg.SeedPubkey)
+	endingPubkeys, _ := dgraphClient.CountPubkeys(ctx)
+	generateFinalReport(startingPubkeys, endingPubkeys, startTime, cfg.SeedPubkey)
 
 	// Wait for any background tasks to complete
 	log.Println("Waiting for background tasks to complete...")
@@ -146,12 +169,11 @@ mainLoop:
 }
 
 // generateFinalReport outputs statistics about the crawler run
-func generateFinalReport(processedPubkeys int, startTime time.Time, seedPubkey string) {
+func generateFinalReport(startingPubkeys, endingPubkeys int, startTime time.Time, seedPubkey string) {
 	duration := time.Since(startTime)
 	log.Printf("--- Final Report ---")
 	log.Printf("Seed pubkey: %s", seedPubkey)
-	log.Printf("Total pubkeys processed: %d", processedPubkeys)
+	log.Printf("Pubkeys in DB: %d at start, %d at end (%d new)", startingPubkeys, endingPubkeys, endingPubkeys-startingPubkeys)
 	log.Printf("Total runtime: %s", duration)
-	log.Printf("Average processing rate: %.2f pubkeys/second", float64(processedPubkeys)/duration.Seconds())
 	log.Printf("Crawler shutdown gracefully")
 }

@@ -19,6 +19,7 @@ type Config struct {
 	Timeout              time.Duration `mapstructure:"timeout"`
 	Debug                bool          `mapstructure:"debug"`
 	StalePubkeyThreshold int64         `mapstructure:"stale_pubkey_threshold"`
+	ForwardRelayURL      string        `mapstructure:"forward_relay_url"`
 }
 
 // LoadConfig loads the application configuration from various sources
@@ -96,4 +97,10 @@ func LoadConfig() (*Config, error) {
 	// If decode fails, assume it's already hex
 
 	return &cfg, nil
+}
+
+// SaveForwardRelayURL persists the forward_relay_url to the config file
+func SaveForwardRelayURL(url string) error {
+	viper.Set("forward_relay_url", url)
+	return viper.WriteConfig()
 }

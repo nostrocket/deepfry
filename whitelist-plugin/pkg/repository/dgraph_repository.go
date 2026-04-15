@@ -120,7 +120,7 @@ func (r *GraphQLRepository) fetchPubkeysPage(ctx context.Context, offset, limit 
 	// GraphQL query (constant, could be moved to package level for micro-optimization)
 	query := `
 		query QueryProfiles($offset: Int!, $first: Int!) {
-			queryProfile(offset: $offset, first: $first) {
+			queryProfile(offset: $offset, first: $first, order: { asc: pubkey }) {
 				pubkey
 			}
 		}

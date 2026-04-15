@@ -248,7 +248,9 @@ func (c *Client) AddFollowers(
 				createNQuads += fmt.Sprintf(
 					"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
 				followeeUIDs[i] = "_:" + blankNodeID
-				log.Printf("New pubkey added to graph (stub): %s", followee)
+				if debug {
+					log.Printf("New pubkey added to graph (stub): %s", followee)
+				}
 			}
 		}
 

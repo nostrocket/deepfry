@@ -48,6 +48,7 @@ pubkey: "npub1..."                   # Starting pubkey to crawl (hex or npub)
 timeout: "30s"                       # Relay operation timeout
 stale_pubkey_threshold: 86400        # Seconds before a pubkey is re-crawled (default 24h)
 debug: false                         # Enable debug logging
+forward_relay_url: "ws://localhost:7777"  # Relay to forward all received events to (optional)
 ```
 
 ## File Structure
@@ -80,6 +81,7 @@ The main application that:
 - Connects to configured Nostr relays concurrently
 - Fetches NIP-02 follow lists for specified pubkeys
 - Stores follow relationships in Dgraph as directed edges
+- Forwards all valid received events to a configurable relay (e.g., local StrFry instance)
 - Automatic reconnection with exponential backoff for dead relays
 - Provides crawling statistics and progress updates
 
