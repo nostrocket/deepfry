@@ -1,5 +1,5 @@
 type Profile @dgraph(type: "Profile") {
-  pubkey: String! @id @dgraph(pred: "pubkey")
+  pubkey: String! @id @search(by: [exact]) @dgraph(pred: "pubkey")
   follows: [Profile] @hasInverse(field: followers) @dgraph(pred: "follows")
   followers: [Profile] @dgraph(pred: "followers")
   kind3CreatedAt: Int @search(by: [int]) @dgraph(pred: "kind3CreatedAt")
