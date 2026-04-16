@@ -1,0 +1,6 @@
+dgraph_graphql_url: "http://dgraph:8080/graphql"
+refresh_interval: 6h
+refresh_retry_count: 3
+idle_conn_timeout: 90s
+http_timeout: 30s
+query_timeout: 20m

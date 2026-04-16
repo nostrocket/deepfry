@@ -15,7 +15,8 @@ services:
       - ./data/strfry-db:/app/strfry-db
       # Config file (read-only)
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
-      # Whitelist plugin is baked into the image via Dockerfile.strfry
+      # Whitelist plugin config (editable on host)
+      - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
