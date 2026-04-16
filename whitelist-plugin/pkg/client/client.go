@@ -28,6 +28,20 @@ type checkResponse struct {
 	Whitelisted bool `json:"whitelisted"`
 }
 
+// CheckHealth calls the server's /health endpoint and returns any error.
+func (c *WhitelistClient) CheckHealth() error {
+	resp, err := c.httpClient.Get(c.serverURL + "/health")
+	if err != nil {
+		return fmt.Errorf("cannot reach whitelist server at %s: %w", c.serverURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("whitelist server at %s returned %d", c.serverURL, resp.StatusCode)
+	}
+	return nil
+}
+
 // IsWhitelisted calls the whitelist server to check a pubkey.
 // Returns false on any error (fail closed).
 func (c *WhitelistClient) IsWhitelisted(pubkey string) bool {

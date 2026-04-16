@@ -33,7 +33,7 @@ func main() {
 	refresher.Start()
 	defer refresher.Stop()
 
-	srv := server.NewWhitelistServer(refresher.Whitelist(), cfg.ServerListenAddr, logger)
+	srv := server.NewWhitelistServer(refresher.Whitelist(), cfg.ServerListenAddr, cfg.Debug, logger)
 	srv.SetReady(refresher.Whitelist().Len())
 
 	logger.Printf("Whitelist loaded with %d entries", refresher.Whitelist().Len())

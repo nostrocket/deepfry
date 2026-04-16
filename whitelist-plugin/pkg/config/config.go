@@ -19,6 +19,7 @@ type ServerConfig struct {
 	HTTPTimeout       time.Duration `mapstructure:"http_timeout"`
 	QueryTimeout      time.Duration `mapstructure:"query_timeout"`
 	ServerListenAddr  string        `mapstructure:"server_listen_addr"`
+	Debug             bool          `mapstructure:"debug"`
 }
 
 // ClientConfig is used by the thin whitelist plugin (cmd/whitelist).
@@ -46,6 +47,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 	v.SetDefault("http_timeout", "30s")
 	v.SetDefault("query_timeout", "20m")
 	v.SetDefault("server_listen_addr", ":8081")
+	v.SetDefault("debug", true)
 
 	if err := readConfig(v, configDir, "whitelist.yaml"); err != nil {
 		return nil, err

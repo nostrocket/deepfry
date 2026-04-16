@@ -22,7 +22,7 @@ func makeKey(seed byte) [32]byte {
 func setupServer(keys [][32]byte, ready bool) (*WhitelistServer, *httptest.Server) {
 	logger := log.New(os.Stderr, "[test] ", 0)
 	wl := whitelist.NewWhiteList(keys)
-	s := NewWhitelistServer(wl, ":0", logger)
+	s := NewWhitelistServer(wl, ":0", false, logger)
 	if ready {
 		s.SetReady(len(keys))
 	}

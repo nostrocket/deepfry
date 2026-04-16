@@ -13,18 +13,20 @@ import (
 )
 
 type WhitelistServer struct {
-	whitelist *whitelist.Whitelist
-	addr      string
-	logger    *log.Logger
-	ready     atomic.Bool
-	entries   atomic.Int64
+	whitelist   *whitelist.Whitelist
+	addr        string
+	logger      *log.Logger
+	debug       bool
+	ready       atomic.Bool
+	entries     atomic.Int64
 	lastRefresh atomic.Pointer[time.Time]
 }
 
-func NewWhitelistServer(wl *whitelist.Whitelist, addr string, logger *log.Logger) *WhitelistServer {
+func NewWhitelistServer(wl *whitelist.Whitelist, addr string, debug bool, logger *log.Logger) *WhitelistServer {
 	return &WhitelistServer{
 		whitelist: wl,
 		addr:      addr,
+		debug:     debug,
 		logger:    logger,
 	}
 }
@@ -88,6 +90,10 @@ func (s *WhitelistServer) handleCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := s.whitelist.IsWhitelisted(pubkey)
+
+	if s.debug {
+		s.logger.Printf("CHECK %s → %v", pubkey, result)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(checkResponse{Whitelisted: result})

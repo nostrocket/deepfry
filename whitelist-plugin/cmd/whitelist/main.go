@@ -24,6 +24,14 @@ func main() {
 	}
 
 	checker := client.NewWhitelistClient(cfg.ServerURL, cfg.CheckTimeout, logger)
+
+	if err := checker.CheckHealth(); err != nil {
+		logger.Printf("WARNING: %v", err)
+		logger.Printf("Events will be rejected until the server is reachable")
+	} else {
+		logger.Printf("Connected to whitelist server at %s", cfg.ServerURL)
+	}
+
 	h := handler.NewWhitelistHandler(checker, logger)
 	ioAdapter := handler.NewJSONLIOAdapter(os.Stdout)
 
