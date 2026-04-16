@@ -44,6 +44,8 @@ services:
       dockerfile: Dockerfile.whitelist-server
     container_name: whitelist-server
     restart: unless-stopped
+    ports:
+      - "8081:8081" # Whitelist HTTP API
     volumes:
       - ./config/whitelist/whitelist-server.yaml:/root/deepfry/whitelist.yaml
     depends_on:
