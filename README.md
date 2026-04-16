@@ -90,13 +90,14 @@ docker-compose -f docker-compose.dgraph.yml down
 # Stop all streams
 ./stream-relays.sh stop
 
-# Switch Dgraph to a remote instance (updates whitelist server + wot crawler)
+# Split-machine deployment: run dgraph on one machine, strfry on another
+# Updates whitelist configs, compose networks, and wot crawler
 ./switch-dgraph.sh remote
 
-# Switch back to local Dgraph container
+# Switch back to single-machine mode
 ./switch-dgraph.sh local
 
-# Check which mode Dgraph is in
+# Check current mode
 ./switch-dgraph.sh status
 
 # Check whitelist server health

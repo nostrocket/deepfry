@@ -2,106 +2,172 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.dgraph.yml"
-COMPOSE_BACKUP="$SCRIPT_DIR/docker-compose.dgraph.yml.local-backup"
+
+# Files this script modifies
+STRFRY_COMPOSE="$SCRIPT_DIR/docker-compose.strfry.yml"
+EVTFWD_COMPOSE="$SCRIPT_DIR/docker-compose.evtfwd.yml"
+WL_CLIENT_CONFIG="$SCRIPT_DIR/config/whitelist/whitelist.yaml"
+WL_SERVER_CONFIG="$SCRIPT_DIR/config/whitelist/whitelist-server.yaml"
 WOT_CONFIG="$HOME/deepfry/config.yaml"
-WOT_BACKUP="$HOME/deepfry/config.yaml.local-backup"
+
+# Backup directory
+BACKUP_DIR="$SCRIPT_DIR/.switch-dgraph-backups"
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") <command>
 
 Commands:
-  remote    Use a remote Dgraph instance (prompts for IP/hostname)
-  local     Switch back to the local Dgraph container
+  remote    Point this machine's strfry at a remote Dgraph + whitelist-server
+  local     Switch back to single-machine mode (everything on deepfry-net)
   status    Show current mode
 
-Updates:
-  - docker-compose.dgraph.yml  (whitelist server's DGRAPH_GRAPHQL_URL, removes dgraph services)
-  - ~/deepfry/config.yaml  (web-of-trust crawler's dgraph_addr)
+When switching to remote, this script updates:
+  - config/whitelist/whitelist.yaml       (plugin points at remote whitelist-server)
+  - config/whitelist/whitelist-server.yaml (server points at remote Dgraph)
+  - docker-compose.strfry.yml             (own network instead of external deepfry-net)
+  - docker-compose.evtfwd.yml             (own network instead of external deepfry-net)
+  - ~/deepfry/config.yaml                 (web-of-trust crawler's dgraph_addr)
 EOF
     exit 1
 }
 
-switch_remote() {
-    read -rp "Dgraph host IP or hostname: " DGRAPH_HOST
+backup_file() {
+    local src="$1"
+    local name
+    name=$(basename "$src")
+    if [[ -f "$src" ]] && [[ ! -f "$BACKUP_DIR/$name" ]]; then
+        cp "$src" "$BACKUP_DIR/$name"
+    fi
+}
 
-    if [[ -z "$DGRAPH_HOST" ]]; then
+restore_file() {
+    local dest="$1"
+    local name
+    name=$(basename "$dest")
+    if [[ -f "$BACKUP_DIR/$name" ]]; then
+        mv "$BACKUP_DIR/$name" "$dest"
+        echo "  Restored $name"
+        return 0
+    fi
+    return 1
+}
+
+switch_remote() {
+    read -rp "Remote Dgraph/whitelist-server IP or hostname: " REMOTE_HOST
+
+    if [[ -z "$REMOTE_HOST" ]]; then
         echo "Error: address cannot be empty."
         exit 1
     fi
 
-    # --- docker-compose.dgraph.yml (whitelist server) ---
+    mkdir -p "$BACKUP_DIR"
 
-    # Use the backup as source if it exists (allows re-running with a new IP),
-    # otherwise back up the current file first.
-    local COMPOSE_SOURCE="$COMPOSE_FILE"
-    if [[ -f "$COMPOSE_BACKUP" ]]; then
-        COMPOSE_SOURCE="$COMPOSE_BACKUP"
-    else
-        cp "$COMPOSE_FILE" "$COMPOSE_BACKUP"
-    fi
+    # --- Whitelist client config (strfry plugin → remote whitelist-server) ---
 
-    # 1. Point DGRAPH_GRAPHQL_URL at the remote host
-    # 2. Strip the dgraph and dgraph-ratel service blocks
-    sed "s|http://dgraph:8080/graphql|http://${DGRAPH_HOST}:8080/graphql|" "$COMPOSE_SOURCE" |
-    awk '
-    BEGIN { skip = 0 }
-    /^  dgraph:$/ { skip = 1; next }
-    /^  dgraph-ratel:$/ { skip = 1; next }
-    {
-        if (skip) {
-            if (/^  [a-zA-Z]/ || /^[a-zA-Z]/) {
-                skip = 0
-                print
-            }
-        } else {
-            print
-        }
-    }
-    ' > "${COMPOSE_FILE}.tmp" && mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
+    backup_file "$WL_CLIENT_CONFIG"
+    cat > "$WL_CLIENT_CONFIG" <<YAML
+server_url: "http://${REMOTE_HOST}:8081"
+check_timeout: 2s
+YAML
+    echo "  Updated config/whitelist/whitelist.yaml → http://${REMOTE_HOST}:8081"
 
-    echo "  Updated docker-compose.dgraph.yml"
+    # --- Whitelist server config (whitelist-server → remote Dgraph) ---
+    # Only needed if running whitelist-server locally against a remote Dgraph.
+    # When the server is on the remote machine this file isn't used locally,
+    # but we update it for consistency.
+
+    backup_file "$WL_SERVER_CONFIG"
+    cat > "$WL_SERVER_CONFIG" <<YAML
+dgraph_graphql_url: "http://${REMOTE_HOST}:8080/graphql"
+refresh_interval: 6h
+refresh_retry_count: 3
+idle_conn_timeout: 90s
+http_timeout: 30s
+query_timeout: 20m
+server_listen_addr: ":8081"
+YAML
+    echo "  Updated config/whitelist/whitelist-server.yaml → http://${REMOTE_HOST}:8080/graphql"
+
+    # --- docker-compose.strfry.yml (own network, no external deepfry-net) ---
+
+    backup_file "$STRFRY_COMPOSE"
+    cat > "$STRFRY_COMPOSE" <<YAML
+services:
+  strfry:
+    build:
+      context: .
+      dockerfile: Dockerfile.strfry
+    container_name: strfry
+    restart: unless-stopped
+    environment:
+      STRFRY_PRIVATE_KEY: \${STRFRY_PRIVATE_KEY:-}
+    volumes:
+      - ./data/strfry-db:/app/strfry-db
+      - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
+      - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
+    ports:
+      - "7777:7777" # Nostr WebSocket
+    networks:
+      - strfry-net
+
+networks:
+  strfry-net:
+    name: strfry-net
+    driver: bridge
+YAML
+    echo "  Updated docker-compose.strfry.yml → strfry-net (local network)"
+
+    # --- docker-compose.evtfwd.yml (join strfry-net, point at local strfry) ---
+
+    backup_file "$EVTFWD_COMPOSE"
+    sed 's/deepfry-net/strfry-net/g' "$BACKUP_DIR/$(basename "$EVTFWD_COMPOSE")" \
+        > "$EVTFWD_COMPOSE"
+    echo "  Updated docker-compose.evtfwd.yml → strfry-net"
 
     # --- ~/deepfry/config.yaml (web-of-trust crawler) ---
 
     if [[ -f "$WOT_CONFIG" ]]; then
-        if [[ ! -f "$WOT_BACKUP" ]]; then
-            cp "$WOT_CONFIG" "$WOT_BACKUP"
-        fi
-
-        sed "s|^dgraph_addr:.*|dgraph_addr: ${DGRAPH_HOST}:9080|" "$WOT_BACKUP" \
-            > "${WOT_CONFIG}.tmp" && mv "${WOT_CONFIG}.tmp" "$WOT_CONFIG"
-
-        echo "  Updated ~/deepfry/config.yaml"
+        backup_file "$WOT_CONFIG"
+        sed "s|^dgraph_addr:.*|dgraph_addr: ${REMOTE_HOST}:9080|" \
+            "$BACKUP_DIR/$(basename "$WOT_CONFIG")" > "$WOT_CONFIG"
+        echo "  Updated ~/deepfry/config.yaml → ${REMOTE_HOST}:9080"
     else
-        echo "  Warning: ~/deepfry/config.yaml not found, skipping web-of-trust config."
-        echo "  Set dgraph_addr to ${DGRAPH_HOST}:9080 manually when you create it."
+        echo "  Warning: ~/deepfry/config.yaml not found, skipping."
+        echo "  Set dgraph_addr to ${REMOTE_HOST}:9080 manually when you create it."
     fi
 
     echo ""
-    echo "Switched to remote Dgraph at ${DGRAPH_HOST}."
+    echo "Switched to remote Dgraph at ${REMOTE_HOST}."
     echo ""
-    echo "  GraphQL endpoint: http://${DGRAPH_HOST}:8080/graphql"
-    echo "  gRPC endpoint:    ${DGRAPH_HOST}:9080"
+    echo "  Whitelist server: http://${REMOTE_HOST}:8081"
+    echo "  GraphQL endpoint: http://${REMOTE_HOST}:8080/graphql"
+    echo "  gRPC endpoint:    ${REMOTE_HOST}:9080"
     echo ""
-    echo "Run 'docker-compose -f docker-compose.dgraph.yml up -d' to apply."
+    echo "On this machine (strfry):"
+    echo "  docker-compose -f docker-compose.strfry.yml up -d"
+    echo "  docker-compose -f docker-compose.evtfwd.yml up -d"
+    echo ""
+    echo "On the remote machine (dgraph):"
+    echo "  docker-compose -f docker-compose.dgraph.yml up -d"
 }
 
 switch_local() {
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        echo "Already in local mode (no backups found)."
+        exit 0
+    fi
+
     local switched=0
 
-    if [[ -f "$COMPOSE_BACKUP" ]]; then
-        mv "$COMPOSE_BACKUP" "$COMPOSE_FILE"
-        echo "  Restored docker-compose.dgraph.yml"
-        switched=1
-    fi
+    restore_file "$WL_CLIENT_CONFIG" && switched=1
+    restore_file "$WL_SERVER_CONFIG" && switched=1
+    restore_file "$STRFRY_COMPOSE" && switched=1
+    restore_file "$EVTFWD_COMPOSE" && switched=1
+    restore_file "$WOT_CONFIG" && switched=1
 
-    if [[ -f "$WOT_BACKUP" ]]; then
-        mv "$WOT_BACKUP" "$WOT_CONFIG"
-        echo "  Restored ~/deepfry/config.yaml"
-        switched=1
-    fi
+    # Clean up backup dir if empty
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
 
     if [[ $switched -eq 0 ]]; then
         echo "Already in local mode (no backups found)."
@@ -109,21 +175,26 @@ switch_local() {
     fi
 
     echo ""
-    echo "Switched back to local Dgraph."
-    echo "Run 'docker-compose -f docker-compose.dgraph.yml up -d' to apply."
+    echo "Switched back to local mode (single machine)."
+    echo ""
+    echo "  docker-compose -f docker-compose.dgraph.yml up -d"
+    echo "  docker-compose -f docker-compose.strfry.yml up -d"
+    echo "  docker-compose -f docker-compose.evtfwd.yml up -d"
 }
 
 show_status() {
-    if [[ -f "$COMPOSE_BACKUP" ]]; then
-        local url
-        url=$(grep -o 'DGRAPH_GRAPHQL_URL:.*' "$COMPOSE_FILE" | head -1)
-        local addr
-        addr=$(grep -o 'dgraph_addr:.*' "$WOT_CONFIG" 2>/dev/null || echo "n/a")
+    if [[ -d "$BACKUP_DIR" ]] && [[ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]]; then
         echo "Mode: remote"
-        echo "  whitelist plugin: ${url}"
-        echo "  wot crawler:      ${addr}"
+        echo ""
+        echo "  whitelist client:  $(grep 'server_url' "$WL_CLIENT_CONFIG" 2>/dev/null || echo 'n/a')"
+        echo "  whitelist server:  $(grep 'dgraph_graphql_url' "$WL_SERVER_CONFIG" 2>/dev/null || echo 'n/a')"
+        echo "  wot crawler:       $(grep 'dgraph_addr' "$WOT_CONFIG" 2>/dev/null || echo 'n/a')"
+        echo ""
+        local network
+        network=$(grep -o 'strfry-net\|deepfry-net' "$STRFRY_COMPOSE" | head -1)
+        echo "  strfry network:    ${network:-unknown}"
     else
-        echo "Mode: local (Dgraph running in Docker)"
+        echo "Mode: local (single machine, all services on deepfry-net)"
     fi
 }
 

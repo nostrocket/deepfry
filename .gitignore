@@ -38,6 +38,9 @@ go.work.sum
 # env file
 .env
 
+# switch-dgraph.sh backups
+.switch-dgraph-backups/
+
 # Persistent runtime data (databases, volumes)
 /data/
 /data/strfry-db/
