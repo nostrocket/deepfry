@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -101,11 +100,16 @@ func (s *WhitelistServer) handleCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *WhitelistServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if !s.ready.Load() {
-		http.Error(w, "not ready", http.StatusServiceUnavailable)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "loading",
+			"detail": "populating whitelist from dgraph",
+		})
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, "ok")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *WhitelistServer) handleStats(w http.ResponseWriter, r *http.Request) {

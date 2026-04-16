@@ -29,16 +29,23 @@ func main() {
 	)
 	refresher := whitelist.NewWhitelistRefresher(ctx, keyRepo, cfg.RefreshInterval, cfg.RefreshRetryCount, logger)
 
+	// Start HTTP server immediately so /health can respond during loading
+	srv := server.NewWhitelistServer(refresher.Whitelist(), cfg.ServerListenAddr, cfg.Debug, logger)
+
+	go func() {
+		if err := srv.ListenAndServe(ctx); err != nil {
+			logger.Fatalf("Server error: %v", err)
+		}
+	}()
+
 	// Block until initial whitelist is loaded
+	logger.Printf("Loading whitelist from %s ...", cfg.DgraphGraphQLURL)
 	refresher.Start()
 	defer refresher.Stop()
 
-	srv := server.NewWhitelistServer(refresher.Whitelist(), cfg.ServerListenAddr, cfg.Debug, logger)
 	srv.SetReady(refresher.Whitelist().Len())
-
 	logger.Printf("Whitelist loaded with %d entries", refresher.Whitelist().Len())
 
-	if err := srv.ListenAndServe(ctx); err != nil {
-		logger.Fatalf("Server error: %v", err)
-	}
+	// Block until shutdown
+	<-ctx.Done()
 }
