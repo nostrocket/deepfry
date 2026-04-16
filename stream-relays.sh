@@ -38,7 +38,7 @@ ensure_tmux() {
 check_container() {
   if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
     echo "Error: container '${CONTAINER}' is not running."
-    echo "Start it with: docker-compose up -d"
+    echo "Start it with: docker-compose -f docker-compose.dgraph.yml up -d && docker-compose -f docker-compose.strfry.yml up -d"
     exit 1
   fi
 }

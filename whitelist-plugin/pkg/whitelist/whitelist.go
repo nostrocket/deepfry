@@ -35,6 +35,14 @@ func (wl *Whitelist) IsWhitelisted(key string) bool {
 	return ok
 }
 
+func (wl *Whitelist) Len() int {
+	mp := wl.list.Load()
+	if mp == nil {
+		return 0
+	}
+	return len(*mp)
+}
+
 func (wl *Whitelist) UpdateKeys(keys [][32]byte) {
 	nm := make(map[[32]byte]struct{}, len(keys))
 	for _, k := range keys {

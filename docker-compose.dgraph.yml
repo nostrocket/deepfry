@@ -1,0 +1,64 @@
+services:
+  dgraph:
+    image: dgraph/standalone:v25.3.0
+    container_name: dgraph
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+    ports:
+      - "8080:8080" # HTTP (GraphQL+/Admin)
+      - "9080:9080" # gRPC
+    volumes:
+      - ./data/dgraph:/dgraph
+      - ./config/dgraph/schema.graphql:/dgraph-seed/schema.graphql
+      - ./config/dgraph/seed_data.graphql:/dgraph-seed/seed_data.graphql
+      - ./config/dgraph/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - deepfry-net
+
+  dgraph-ratel:
+    image: dgraph/ratel:latest
+    container_name: dgraph-ratel
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "8000:8000" # Ratel UI
+    depends_on:
+      dgraph:
+        condition: service_healthy
+    networks:
+      - deepfry-net
+
+  whitelist-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.whitelist-server
+    container_name: whitelist-server
+    restart: unless-stopped
+    volumes:
+      - ./config/whitelist/whitelist-server.yaml:/root/deepfry/whitelist.yaml
+    depends_on:
+      dgraph:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - deepfry-net
+
+networks:
+  deepfry-net:
+    name: deepfry-net
+    driver: bridge

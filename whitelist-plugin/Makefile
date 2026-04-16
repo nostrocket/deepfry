@@ -1,4 +1,5 @@
 APP=whitelist
+APP_SERVER=whitelist-server
 PKG=whitelist-plugin
 
 # Version can be set via environment variable or defaults to dev
@@ -23,15 +24,19 @@ LDFLAGS=-X 'event-forwarder/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build run test fmt vet tidy clean help bench build-alpine build-linux
+.PHONY: all build build-server run test fmt vet tidy clean help bench build-alpine build-linux build-server-alpine build-server-linux
 
-all: build
+all: build build-server
 
-## Build the application
+## Build the plugin (thin client)
 build:
 	go build $(BUILD_FLAGS) -o bin/$(APP)$(BINARY_EXT) ./cmd/$(APP)
 
-## Build static binary for Alpine Linux (musl libc)
+## Build the whitelist server
+build-server:
+	go build $(BUILD_FLAGS) -o bin/$(APP_SERVER)$(BINARY_EXT) ./cmd/server
+
+## Build static plugin binary for Alpine Linux (musl libc)
 build-alpine:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 		-a -installsuffix cgo \
@@ -40,7 +45,16 @@ build-alpine:
 		-o bin/$(APP)-alpine ./cmd/$(APP)
 	@echo "Built static binary for Alpine Linux: bin/$(APP)-alpine"
 
-## Build static binary for generic Linux (works on Alpine, Debian, Ubuntu, etc.)
+## Build static server binary for Alpine Linux
+build-server-alpine:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_SERVER)-alpine ./cmd/server
+	@echo "Built static server binary for Alpine Linux: bin/$(APP_SERVER)-alpine"
+
+## Build static plugin binary for generic Linux
 build-linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 		-a -installsuffix cgo \
@@ -48,6 +62,15 @@ build-linux:
 		-tags netgo \
 		-o bin/$(APP)-linux ./cmd/$(APP)
 	@echo "Built static binary for Linux: bin/$(APP)-linux"
+
+## Build static server binary for generic Linux
+build-server-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_SERVER)-linux ./cmd/server
+	@echo "Built static server binary for Linux: bin/$(APP_SERVER)-linux"
 
 ## Run the application
 run:
@@ -84,18 +107,21 @@ endif
 ## Show help
 help:
 	@echo Available targets:
-	@echo   build         - Build the application for current platform
-	@echo   build-alpine  - Build static binary for Alpine Linux
-	@echo   build-linux   - Build static binary for generic Linux
-	@echo   run           - Run the application
-	@echo   test          - Run tests
-	@echo   bench         - Run benchmarks
-	@echo   fmt           - Format code
-	@echo   vet           - Vet code
-	@echo   lint          - Run linters
-	@echo   lint-fix      - Run linters with auto-fix
-	@echo   tidy          - Update dependencies
-	@echo   clean         - Clean build artifacts
+	@echo   build                - Build the plugin (thin client)
+	@echo   build-server         - Build the whitelist server
+	@echo   build-alpine         - Build static plugin binary for Alpine Linux
+	@echo   build-server-alpine  - Build static server binary for Alpine Linux
+	@echo   build-linux          - Build static plugin binary for generic Linux
+	@echo   build-server-linux   - Build static server binary for generic Linux
+	@echo   run                  - Run the plugin
+	@echo   test                 - Run tests
+	@echo   bench                - Run benchmarks
+	@echo   fmt                  - Format code
+	@echo   vet                  - Vet code
+	@echo   lint                 - Run linters
+	@echo   lint-fix             - Run linters with auto-fix
+	@echo   tidy                 - Update dependencies
+	@echo   clean                - Clean build artifacts
 
 ## Run linters
 lint:

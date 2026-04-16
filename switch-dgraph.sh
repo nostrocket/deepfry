@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
-COMPOSE_BACKUP="$SCRIPT_DIR/docker-compose.yml.local-backup"
+COMPOSE_FILE="$SCRIPT_DIR/docker-compose.dgraph.yml"
+COMPOSE_BACKUP="$SCRIPT_DIR/docker-compose.dgraph.yml.local-backup"
 WOT_CONFIG="$HOME/deepfry/config.yaml"
 WOT_BACKUP="$HOME/deepfry/config.yaml.local-backup"
 
@@ -17,7 +17,7 @@ Commands:
   status    Show current mode
 
 Updates:
-  - docker-compose.yml  (whitelist plugin's DGRAPH_GRAPHQL_URL, removes dgraph services)
+  - docker-compose.dgraph.yml  (whitelist server's DGRAPH_GRAPHQL_URL, removes dgraph services)
   - ~/deepfry/config.yaml  (web-of-trust crawler's dgraph_addr)
 EOF
     exit 1
@@ -31,7 +31,7 @@ switch_remote() {
         exit 1
     fi
 
-    # --- docker-compose.yml (whitelist plugin) ---
+    # --- docker-compose.dgraph.yml (whitelist server) ---
 
     # Use the backup as source if it exists (allows re-running with a new IP),
     # otherwise back up the current file first.
@@ -61,7 +61,7 @@ switch_remote() {
     }
     ' > "${COMPOSE_FILE}.tmp" && mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
 
-    echo "  Updated docker-compose.yml"
+    echo "  Updated docker-compose.dgraph.yml"
 
     # --- ~/deepfry/config.yaml (web-of-trust crawler) ---
 
@@ -85,7 +85,7 @@ switch_remote() {
     echo "  GraphQL endpoint: http://${DGRAPH_HOST}:8080/graphql"
     echo "  gRPC endpoint:    ${DGRAPH_HOST}:9080"
     echo ""
-    echo "Run 'docker-compose up -d' to apply."
+    echo "Run 'docker-compose -f docker-compose.dgraph.yml up -d' to apply."
 }
 
 switch_local() {
@@ -93,7 +93,7 @@ switch_local() {
 
     if [[ -f "$COMPOSE_BACKUP" ]]; then
         mv "$COMPOSE_BACKUP" "$COMPOSE_FILE"
-        echo "  Restored docker-compose.yml"
+        echo "  Restored docker-compose.dgraph.yml"
         switched=1
     fi
 
@@ -110,7 +110,7 @@ switch_local() {
 
     echo ""
     echo "Switched back to local Dgraph."
-    echo "Run 'docker-compose up -d' to apply."
+    echo "Run 'docker-compose -f docker-compose.dgraph.yml up -d' to apply."
 }
 
 show_status() {

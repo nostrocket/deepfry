@@ -59,8 +59,11 @@ make build-alpine       # Static Alpine binary
 ## Infrastructure
 
 ```bash
-# Start StrFry + Dgraph + Ratel UI
-docker-compose up -d
+# Start Dgraph + Ratel UI + Whitelist Server
+docker-compose -f docker-compose.dgraph.yml up -d
+
+# Start StrFry
+docker-compose -f docker-compose.strfry.yml up -d
 
 # Start event forwarders (requires .env with keys)
 docker-compose -f docker-compose.evtfwd.yml up -d

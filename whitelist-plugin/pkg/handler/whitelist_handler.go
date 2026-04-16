@@ -2,16 +2,15 @@ package handler
 
 import (
 	"log"
-	"whitelist-plugin/pkg/whitelist"
 )
 
 type WhitelistHandler struct {
-	whitelist *whitelist.Whitelist
-	logger    *log.Logger
+	checker Checker
+	logger  *log.Logger
 }
 
-func NewWhitelistHandler(wl *whitelist.Whitelist, logger *log.Logger) *WhitelistHandler {
-	return &WhitelistHandler{whitelist: wl, logger: logger}
+func NewWhitelistHandler(checker Checker, logger *log.Logger) *WhitelistHandler {
+	return &WhitelistHandler{checker: checker, logger: logger}
 }
 
 func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
@@ -27,7 +26,7 @@ func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
 	}
 
 	// Check whitelist
-	if h.whitelist.IsWhitelisted(pubkey) {
+	if h.checker.IsWhitelisted(pubkey) {
 		return Accept(eventId), nil
 	}
 

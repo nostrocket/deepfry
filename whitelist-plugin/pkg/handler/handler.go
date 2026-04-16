@@ -1,5 +1,9 @@
 package handler
 
+type Checker interface {
+	IsWhitelisted(pubkey string) bool
+}
+
 type IOAdapter interface {
 	Input(input []byte) (InputMsg, error)
 	Output(OutputMsg) ([]byte, error)

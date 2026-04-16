@@ -23,7 +23,8 @@ openssl rand -hex 32
 # ============================================================================
 
 # Start main infrastructure first
-docker-compose up -d
+docker-compose -f docker-compose.dgraph.yml up -d
+docker-compose -f docker-compose.strfry.yml up -d
 
 # Start all forwarders
 docker-compose -f docker-compose.evtfwd.yml up -d

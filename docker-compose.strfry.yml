@@ -1,0 +1,22 @@
+services:
+  strfry:
+    build:
+      context: .
+      dockerfile: Dockerfile.strfry
+    container_name: strfry
+    restart: unless-stopped
+    environment:
+      STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
+    volumes:
+      - ./data/strfry-db:/app/strfry-db
+      - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
+      - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
+    ports:
+      - "7777:7777" # Nostr WebSocket
+    networks:
+      - deepfry-net
+
+networks:
+  deepfry-net:
+    external: true
+    name: deepfry-net

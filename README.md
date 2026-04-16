@@ -45,43 +45,42 @@ We welcome external contributors.
 
 ## Running it
 
- **StrFry Relay**
+The stack is split into separate compose files so each layer can be managed independently.
 
-- Container: `strfry`
-- WebSocket: ws://localhost:7777
-- Config: `./config/strfry/strfry.conf`
-- Database: `./data/strfry-db/`
-- Whitelist plugin is compiled automatically via multi-stage Docker build (`Dockerfile.strfry`)
+### Services
 
- **Dgraph** (Standalone - Zero + Alpha combined)
+| Service | Container | Compose File | Port | Description |
+|---------|-----------|-------------|------|-------------|
+| Dgraph | `dgraph` | `docker-compose.dgraph.yml` | 8080 (HTTP/GraphQL), 9080 (gRPC) | Graph database for pubkey relationships |
+| Dgraph Ratel | `dgraph-ratel` | `docker-compose.dgraph.yml` | 8000 | Dgraph web UI |
+| Whitelist Server | `whitelist-server` | `docker-compose.dgraph.yml` | 8081 | Centralized pubkey whitelist cache (refreshes from Dgraph) |
+| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay with whitelist client plugin |
+| Event Forwarders | `fwd-*` | `docker-compose.evtfwd.yml` | -- | Sync events from upstream relays |
 
-- Container: `dgraph`
-- HTTP/GraphQL: http://localhost:8080
-- gRPC: localhost:9080
-- Data: `./data/dgraph/`
-- Health: http://localhost:8080/health
+### Startup
 
- **Dgraph Ratel** (UI)
+```bash
+# 1. Start Dgraph + Whitelist Server
+docker-compose -f docker-compose.dgraph.yml up -d
 
-- Container: `dgraph-ratel`
-- Web UI: http://localhost:8000
-- Connect to Dgraph at: `localhost:8080`
+# 2. Start StrFry (waits for whitelist-server on deepfry-net)
+docker-compose -f docker-compose.strfry.yml up -d
+
+# 3. Start event forwarders (requires .env with keys)
+docker-compose -f docker-compose.evtfwd.yml up -d
+```
+
+### Shutdown
+
+```bash
+docker-compose -f docker-compose.evtfwd.yml down
+docker-compose -f docker-compose.strfry.yml down
+docker-compose -f docker-compose.dgraph.yml down
+```
 
 ## Quick Commands
 
 ```bash
-# Build and start stack (compiles whitelist plugin automatically)
-docker-compose up -d --build
-
-# Stop stack
-docker-compose down
-
-# View logs
-docker-compose logs [service-name]
-
-# Check status
-docker-compose ps
-
 # Stream from top 20 relays (uses tmux)
 ./stream-relays.sh
 
@@ -91,7 +90,7 @@ docker-compose ps
 # Stop all streams
 ./stream-relays.sh stop
 
-# Switch Dgraph to a remote instance (updates whitelist plugin + wot crawler)
+# Switch Dgraph to a remote instance (updates whitelist server + wot crawler)
 ./switch-dgraph.sh remote
 
 # Switch back to local Dgraph container
@@ -100,9 +99,14 @@ docker-compose ps
 # Check which mode Dgraph is in
 ./switch-dgraph.sh status
 
-# Files modified by switch-dgraph.sh:
-#   docker-compose.yml        → DGRAPH_GRAPHQL_URL (whitelist plugin)
-#   ~/deepfry/config.yaml     → dgraph_addr (web-of-trust crawler)
+# Check whitelist server health
+curl http://localhost:8081/health
+
+# Check whitelist stats
+curl http://localhost:8081/stats
+
+# Check if a pubkey is whitelisted
+curl http://localhost:8081/check/<64-char-hex-pubkey>
 ```
 
 ## Next Steps
