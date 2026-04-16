@@ -173,20 +173,18 @@ func main() {
 }
 
 func loadExistingConfig() (string, []string) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("./config")
-	viper.AddConfigPath("/etc/web-of-trust/")
-
 	homeDir, err := os.UserHomeDir()
-	if err == nil {
-		viper.AddConfigPath(filepath.Join(homeDir, "deepfry"))
+	if err != nil {
+		log.Fatal("Could not determine home directory: ", err)
 	}
+
+	viper.SetConfigName("web-of-trust")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(filepath.Join(homeDir, "deepfry"))
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			log.Fatal("No config file found. Run the crawler first to generate one, or create config.yaml manually.")
+			log.Fatal("No config file found. Run the crawler first to generate one, or create web-of-trust.yaml manually.")
 		}
 		log.Fatalf("Error reading config: %v", err)
 	}

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,12 +97,13 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 				httpClient: &http.Client{
 					Timeout: 5 * time.Second,
 				},
-				pageSize: 1000,
-				logger:   log.New(io.Discard, "", 0),
+				pageSize:     1000,
+				queryTimeout: 2 * time.Minute,
+				logger:       log.New(io.Discard, "", 0),
 			}
 
 			// Execute GetAll
-			keys, err := repo.GetAll()
+			keys, err := repo.GetAll(context.Background())
 
 			// Check error expectation
 			if (err != nil) != tt.wantErr {
@@ -177,11 +179,12 @@ func TestGraphQLRepository_Pagination(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
-	keys, err := repo.GetAll()
+	keys, err := repo.GetAll(context.Background())
 	if err != nil {
 		t.Fatalf("GetAll() failed: %v", err)
 	}
@@ -221,11 +224,12 @@ func TestGraphQLRepository_Deduplication(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
-	keys, err := repo.GetAll()
+	keys, err := repo.GetAll(context.Background())
 	if err != nil {
 		t.Fatalf("GetAll() failed: %v", err)
 	}
@@ -249,11 +253,12 @@ func TestGraphQLRepository_Timeout(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 100 * time.Millisecond, // Short timeout
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
-	_, err := repo.GetAll()
+	_, err := repo.GetAll(context.Background())
 	if err == nil {
 		t.Error("Expected timeout error, got nil")
 	}
@@ -271,13 +276,14 @@ func TestGraphQLRepository_ContextCancellation(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
 	// This will fail because GetAll creates its own context
 	// But the test demonstrates the timeout handling
-	_, err := repo.GetAll()
+	_, err := repo.GetAll(context.Background())
 	if err == nil {
 		t.Error("Expected error from slow server, got nil")
 	}
@@ -381,7 +387,7 @@ func TestNewGraphQLRepository_DefaultEndpoint(t *testing.T) {
 	pageSize := 1000
 	logger := log.New(io.Discard, "", 0)
 
-	repo := NewGraphQLRepository(endpoint, pageSize, logger)
+	repo := NewGraphQLRepository(endpoint, pageSize, logger, 30*time.Second, 90*time.Second, 2*time.Minute)
 
 	if repo.endpoint != endpoint {
 		t.Errorf("Expected endpoint %s, got %s", endpoint, repo.endpoint)
@@ -413,7 +419,7 @@ func TestNewGraphQLRepository_CustomEndpoint(t *testing.T) {
 	pageSize := 500
 	logger := log.New(io.Discard, "", 0)
 
-	repo := NewGraphQLRepository(customEndpoint, pageSize, logger)
+	repo := NewGraphQLRepository(customEndpoint, pageSize, logger, 30*time.Second, 90*time.Second, 2*time.Minute)
 
 	if repo.endpoint != customEndpoint {
 		t.Errorf("Expected custom endpoint %s, got %s", customEndpoint, repo.endpoint)

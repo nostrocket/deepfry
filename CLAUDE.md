@@ -73,6 +73,13 @@ docker-compose -f docker-compose.evtfwd.yml up -d
 
 Secrets go in `.env` (see `.env.example`). Keys: `STRFRY_PRIVATE_KEY`, `NOSTR_SYNC_SECKEY_LIVE`, `NOSTR_SYNC_SECKEY_HISTORY`.
 
+## Config Files
+
+All DeepFry config files live in `~/deepfry/`. Never delete, overwrite, or `rm` files in this directory. When testing config loading, use a temporary directory instead.
+
+- `~/deepfry/web-of-trust.yaml` — web-of-trust crawler config
+- `~/deepfry/whitelist.yaml` — whitelist plugin config
+
 ## Protocol Rules
 
 - StrFry must stay unmodified — extend only via its stdin/stdout JSON plugin protocol

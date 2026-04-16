@@ -24,27 +24,21 @@ type Config struct {
 
 // LoadConfig loads the application configuration from various sources
 func LoadConfig() (*Config, error) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("./config")
-	viper.AddConfigPath("/etc/web-of-trust/")
-
-	// Add user home directory config path
 	homeDir, err := os.UserHomeDir()
-	if err == nil {
-		deepfryConfigDir := filepath.Join(homeDir, "deepfry")
-		viper.AddConfigPath(deepfryConfigDir)
-
-		// Ensure the directory exists
-		if _, err := os.Stat(deepfryConfigDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(deepfryConfigDir, 0755); err != nil {
-				log.Printf("Warning: Failed to create config directory %s: %v", deepfryConfigDir, err)
-			}
-		}
-	} else {
-		log.Printf("Warning: Could not determine user home directory: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("could not determine home directory: %w", err)
 	}
+
+	configDir := filepath.Join(homeDir, "deepfry")
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create config directory %s: %w", configDir, err)
+		}
+	}
+
+	viper.SetConfigName("web-of-trust")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(configDir)
 
 	// Set defaults with popular Nostr relays
 	viper.SetDefault("relay_urls", []string{
@@ -67,14 +61,16 @@ func LoadConfig() (*Config, error) {
 		}
 		log.Printf("No config file found, using defaults and flags")
 
-		// Try to save a default config to the user's home directory
-		if homeDir != "" {
-			configPath := filepath.Join(homeDir, "deepfry", "config.yaml")
-			if err := viper.SafeWriteConfigAs(configPath); err != nil {
-				log.Printf("Warning: Failed to write default config to %s: %v", configPath, err)
-			} else {
-				log.Printf("Created default configuration file at %s", configPath)
-			}
+		configPath := filepath.Join(configDir, "web-of-trust.yaml")
+		// viper.SafeWriteConfigAs does not write SetDefault values,
+		// so promote them to explicit values before writing.
+		for _, key := range viper.AllKeys() {
+			viper.Set(key, viper.Get(key))
+		}
+		if err := viper.SafeWriteConfigAs(configPath); err != nil {
+			log.Printf("Warning: Failed to write default config to %s: %v", configPath, err)
+		} else {
+			log.Printf("Created default configuration file at %s", configPath)
 		}
 	} else {
 		log.Printf("Using config file: %s", viper.ConfigFileUsed())

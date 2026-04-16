@@ -415,14 +415,16 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// "not connected" means the underlying websocket died — treat as transport failure
-		// so the relay gets marked dead and queued for reconnection
-		if strings.Contains(err.Error(), "not connected") {
-			c.logRelayError("connection_lost", fmt.Errorf("relay %s: %w", relayURL, err))
-			return &transportError{err: fmt.Errorf("relay %s: %w", relayURL, err)}
+		// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
+		cleanErr := cleanSubscribeError(err)
+		// "not connected" / "failed to write" means the underlying websocket died —
+		// treat as transport failure so the relay gets marked dead and queued for reconnection
+		if strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write") {
+			c.logRelayError("connection_lost", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
+			return &transportError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
 		}
-		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %w", relayURL, err))
-		return &subscriptionError{err: fmt.Errorf("relay %s: %w", relayURL, err)}
+		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
+		return &subscriptionError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
 	}
 	// Ensure subscription is unsubscribed when this function returns
 	defer sub.Unsub()
@@ -563,6 +565,20 @@ func (c *Crawler) logSignatureValidationMetrics(pubkey string, valid bool) {
 
 	metricsJSON, _ := json.Marshal(metrics)
 	log.Printf("DEBUG_METRICS: %s", string(metricsJSON))
+}
+
+// cleanSubscribeError extracts the root cause from a go-nostr Subscribe error,
+// stripping the verbose filter dump that go-nostr includes via %v formatting.
+// e.g. "couldn't subscribe to [{kinds:[3] authors:[...]}] at wss://...: failed to write: connection closed"
+// becomes "failed to write: connection closed"
+func cleanSubscribeError(err error) string {
+	msg := err.Error()
+	if idx := strings.Index(msg, "couldn't subscribe to"); idx != -1 {
+		if atIdx := strings.Index(msg[idx:], "]: "); atIdx != -1 {
+			return strings.TrimSpace(msg[idx+atIdx+3:])
+		}
+	}
+	return msg
 }
 
 func (c *Crawler) logRelayError(errorType string, err error) {

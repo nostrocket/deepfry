@@ -1,13 +1,14 @@
 package repository
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 )
 
 // This file is intentionally left blank.
 type KeyRepository interface {
-	GetAll() ([][32]byte, error)
+	GetAll(ctx context.Context) ([][32]byte, error)
 }
 
 // hexTo32ByteArray decodes a 64-character hex string to a [32]byte array.

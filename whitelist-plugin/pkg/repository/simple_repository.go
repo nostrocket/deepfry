@@ -1,6 +1,9 @@
 package repository
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type SimpleRepository struct {
 	keys [][32]byte
@@ -26,6 +29,6 @@ func NewSimpleRepository() *SimpleRepository {
 	return &SimpleRepository{keys: keys}
 }
 
-func (r *SimpleRepository) GetAll() ([][32]byte, error) {
+func (r *SimpleRepository) GetAll(_ context.Context) ([][32]byte, error) {
 	return r.keys, nil
 }

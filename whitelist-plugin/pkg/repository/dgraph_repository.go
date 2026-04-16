@@ -15,39 +15,38 @@ import (
 // It fetches all Profile pubkeys from Dgraph, merges them with hardcoded keys,
 // deduplicates, and returns the combined list.
 type GraphQLRepository struct {
-	endpoint   string
-	httpClient *http.Client
-	pageSize   int
-	logger     *log.Logger
+	endpoint     string
+	httpClient   *http.Client
+	pageSize     int
+	queryTimeout time.Duration
+	logger       *log.Logger
 }
 
 // NewGraphQLRepository creates a new GraphQLRepository.
-// Dgraph endpoint can be configured via DGRAPH_GRAPHQL_URL environment variable.
-// Defaults to http://dgraph:8080/graphql
-func NewGraphQLRepository(endpoint string, pageSize int, logger *log.Logger) *GraphQLRepository {
-	// Configure HTTP transport for connection reuse and pooling
+func NewGraphQLRepository(endpoint string, pageSize int, logger *log.Logger, httpTimeout, idleConnTimeout, queryTimeout time.Duration) *GraphQLRepository {
 	transport := &http.Transport{
-		MaxIdleConns:        10,               // Max idle connections across all hosts
-		MaxIdleConnsPerHost: 2,                // Max idle connections per host
-		IdleConnTimeout:     90 * time.Second, // Keep connections alive longer
-		DisableCompression:  false,            // Enable compression for smaller payloads
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     idleConnTimeout,
+		DisableCompression:  false,
 	}
 
 	return &GraphQLRepository{
 		endpoint: endpoint,
 		httpClient: &http.Client{
-			Timeout:   30 * time.Second,
+			Timeout:   httpTimeout,
 			Transport: transport,
 		},
-		pageSize: pageSize,
-		logger:   logger,
+		pageSize:     pageSize,
+		queryTimeout: queryTimeout,
+		logger:       logger,
 	}
 }
 
 // GetAll retrieves all whitelisted pubkeys from Dgraph and merges with hardcoded keys.
 // Returns deduplicated list of pubkeys as [32]byte arrays.
-func (r *GraphQLRepository) GetAll() ([][32]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func (r *GraphQLRepository) GetAll(ctx context.Context) ([][32]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
 	// Fetch all pubkeys from Dgraph

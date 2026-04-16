@@ -1,6 +1,7 @@
 package whitelist
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -19,7 +20,7 @@ type mockKeyRepo struct {
 	mu        sync.Mutex
 }
 
-func (m *mockKeyRepo) GetAll() ([][32]byte, error) {
+func (m *mockKeyRepo) GetAll(_ context.Context) ([][32]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.callCount++
@@ -41,7 +42,7 @@ func TestNewWhitelistRefresher(t *testing.T) {
 	interval := 5 * time.Minute
 	retryCount := 3
 
-	refresher := NewWhitelistRefresher(mockRepo, interval, retryCount, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, interval, retryCount, logger)
 
 	if refresher.keyRepo != mockRepo {
 		t.Errorf("Expected keyRepo to be set, got %v", refresher.keyRepo)
@@ -66,7 +67,7 @@ func TestNewWhitelistRefresher(t *testing.T) {
 func TestWhitelistRefresher_Start_Stop(t *testing.T) {
 	mockRepo := &mockKeyRepo{keys: [][32]byte{{1}}}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 100*time.Millisecond, 0, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 100*time.Millisecond, 0, logger)
 
 	refresher.Start()
 	time.Sleep(250 * time.Millisecond) // Allow multiple ticks
@@ -80,7 +81,7 @@ func TestWhitelistRefresher_Start_Stop(t *testing.T) {
 func TestWhitelistRefresher_refresh_Success(t *testing.T) {
 	mockRepo := &mockKeyRepo{keys: [][32]byte{{1}}}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 1*time.Hour, 0, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 1*time.Hour, 0, logger)
 
 	refresher.refresh()
 
@@ -96,7 +97,7 @@ func TestWhitelistRefresher_refresh_Success(t *testing.T) {
 func TestWhitelistRefresher_refresh_Failure_NoRetry(t *testing.T) {
 	mockRepo := &mockKeyRepo{err: errors.New("db error")}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 1*time.Hour, 0, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 1*time.Hour, 0, logger)
 
 	refresher.refresh()
 
@@ -108,7 +109,7 @@ func TestWhitelistRefresher_refresh_Failure_NoRetry(t *testing.T) {
 func TestWhitelistRefresher_refresh_Failure_WithRetry(t *testing.T) {
 	mockRepo := &mockKeyRepo{err: errors.New("db error")}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 1*time.Hour, 2, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 1*time.Hour, 2, logger)
 
 	refresher.refresh()
 
@@ -121,7 +122,7 @@ func TestWhitelistRefresher_refresh_Failure_WithRetry(t *testing.T) {
 func TestWhitelistRefresher_refresh_SuccessAfterRetry(t *testing.T) {
 	mockRepo := &mockKeyRepo{keys: [][32]byte{{2}}, err: errors.New("db error")}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 1*time.Hour, 2, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 1*time.Hour, 2, logger)
 
 	// Simulate success on retry
 	go func() {
@@ -142,7 +143,7 @@ func TestWhitelistRefresher_refresh_SuccessAfterRetry(t *testing.T) {
 func TestWhitelistRefresher_StopBeforeStart(t *testing.T) {
 	mockRepo := &mockKeyRepo{}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 1*time.Hour, 0, logger)
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 1*time.Hour, 0, logger)
 
 	refresher.Stop() // Should not panic or hang
 
@@ -154,7 +155,7 @@ func TestWhitelistRefresher_StopBeforeStart(t *testing.T) {
 func TestWhitelistRefresher_ContextCancellation(t *testing.T) {
 	mockRepo := &mockKeyRepo{keys: [][32]byte{{3}}}
 	logger := log.New(os.Stdout, "test", log.LstdFlags)
-	refresher := NewWhitelistRefresher(mockRepo, 10*time.Millisecond, 0, logger) // Shorter interval
+	refresher := NewWhitelistRefresher(context.Background(), mockRepo, 10*time.Millisecond, 0, logger) // Shorter interval
 
 	refresher.Start()
 	time.Sleep(20 * time.Millisecond) // Allow time for at least one tick

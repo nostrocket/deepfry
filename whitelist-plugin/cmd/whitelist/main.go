@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
+	"whitelist-plugin/pkg/config"
 	"whitelist-plugin/pkg/handler"
 	"whitelist-plugin/pkg/repository"
 	"whitelist-plugin/pkg/whitelist"
@@ -21,13 +21,18 @@ func main() {
 	// Initialize logger for errors (stderr only)
 	logger := log.New(os.Stderr, "[whitelist-plugin] ", log.LstdFlags)
 
-	// Initialize components
-	endpoint := os.Getenv("DGRAPH_GRAPHQL_URL")
-	if endpoint == "" {
-		endpoint = "http://localhost:8080/graphql"
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logger.Fatalf("Failed to load config: %v", err)
 	}
-	keyRepo := repository.NewGraphQLRepository(endpoint, 1000, logger)
-	refresher := whitelist.NewWhitelistRefresher(keyRepo, 5*time.Minute, 3, logger)
+
+	// Initialize components
+	keyRepo := repository.NewGraphQLRepository(
+		cfg.DgraphGraphQLURL, 1000, logger,
+		cfg.HTTPTimeout, cfg.IdleConnTimeout, cfg.QueryTimeout,
+	)
+	refresher := whitelist.NewWhitelistRefresher(ctx, keyRepo, cfg.RefreshInterval, cfg.RefreshRetryCount, logger)
 
 	// Start background refresh
 	refresher.Start()
@@ -55,21 +60,42 @@ func runEventLoop(ctx context.Context, h handler.Handler, io handler.IOAdapter, 
 	buf := make([]byte, 0, initBuf)
 	scanner.Buffer(buf, maxBuf)
 
-	for scanner.Scan() {
-		// graceful shutdown check
+	type scanResult struct {
+		line []byte
+		err  error
+	}
+	lines := make(chan scanResult)
+
+	go func() {
+		defer close(lines)
+		for scanner.Scan() {
+			// Copy the bytes since scanner reuses its buffer
+			line := make([]byte, len(scanner.Bytes()))
+			copy(line, scanner.Bytes())
+			lines <- scanResult{line: line}
+		}
+		if err := scanner.Err(); err != nil {
+			lines <- scanResult{err: err}
+		}
+	}()
+
+	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		response := processLine(scanner.Bytes(), h, io, logger)
-		if _, err := os.Stdout.Write(response); err != nil {
-			return err
+			return nil
+		case result, ok := <-lines:
+			if !ok {
+				return nil
+			}
+			if result.err != nil {
+				return result.err
+			}
+			response := processLine(result.line, h, io, logger)
+			if _, err := os.Stdout.Write(response); err != nil {
+				return err
+			}
 		}
 	}
-
-	return scanner.Err()
 }
 
 // processLine is responsible for turning a raw line into a serialized response.

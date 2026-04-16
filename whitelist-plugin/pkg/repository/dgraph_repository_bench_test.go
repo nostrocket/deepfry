@@ -52,14 +52,15 @@ func BenchmarkGetAll(b *testing.B) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		callCount = 0
-		keys, err := repo.GetAll()
+		keys, err := repo.GetAll(b.Context())
 		if err != nil {
 			b.Fatalf("GetAll() failed: %v", err)
 		}
@@ -96,8 +97,9 @@ func BenchmarkFetchPubkeysPage(b *testing.B) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		pageSize: 1000,
-		logger:   log.New(io.Discard, "", 0),
+		pageSize:     1000,
+		queryTimeout: 2 * time.Minute,
+		logger:       log.New(io.Discard, "", 0),
 	}
 
 	b.ResetTimer()

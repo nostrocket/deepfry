@@ -31,7 +31,7 @@ make build-healthcheck
 
 ### Run
 
-1. **Configure**: Edit `~/deepfry/config.yaml` with your settings (auto-created on first crawler run)
+1. **Configure**: Edit `~/deepfry/web-of-trust.yaml` with your settings (auto-created on first crawler run)
 2. **Discover relays**: `./bin/discover-relays` (finds and tests the 50 fastest relays, adds them to config)
 3. **Crawl follows**: `./bin/crawler`
 4. **Export popular pubkeys**: `./bin/pubkeys`
@@ -39,7 +39,7 @@ make build-healthcheck
 
 ## Configuration
 
-Config file is searched in order: `.`, `./config`, `/etc/web-of-trust/`, `~/deepfry/`. A default config is auto-created at `~/deepfry/config.yaml` on first crawler run.
+Config file location: `~/deepfry/web-of-trust.yaml`. A default config is auto-created on first crawler run.
 
 ```yaml
 relay_urls:                          # Nostr relays to connect to
@@ -139,7 +139,7 @@ A utility that:
 
 ### Core Packages
 
-- **`pkg/config/`**: Shared configuration loading via Viper (YAML, multi-path search)
+- **`pkg/config/`**: Shared configuration loading via Viper (YAML, `~/deepfry/web-of-trust.yaml`)
 - **`pkg/crawler/`**: Core crawling logic, multi-relay management, and Nostr client handling
 - **`pkg/dgraph/`**: Dgraph client wrapper with graph operations for pubkey relationships
 

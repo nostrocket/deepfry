@@ -19,8 +19,8 @@ type WhitelistRefresher struct {
 	logger     *log.Logger
 }
 
-func NewWhitelistRefresher(keyRepo repository.KeyRepository, interval time.Duration, retryCount int, logger *log.Logger) *WhitelistRefresher {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewWhitelistRefresher(ctx context.Context, keyRepo repository.KeyRepository, interval time.Duration, retryCount int, logger *log.Logger) *WhitelistRefresher {
+	ctx, cancel := context.WithCancel(ctx)
 	r := &WhitelistRefresher{
 		whitelist:  NewWhiteList([][32]byte{}),
 		keyRepo:    keyRepo,
@@ -61,11 +61,21 @@ func (r *WhitelistRefresher) Stop() {
 
 func (r *WhitelistRefresher) refresh() {
 	for attempt := 0; attempt <= r.retryCount; attempt++ {
-		keys, err := r.keyRepo.GetAll()
+		keys, err := r.keyRepo.GetAll(r.ctx)
 		if err != nil {
+			// If context was cancelled, stop retrying immediately
+			if r.ctx.Err() != nil {
+				r.logger.Printf("Refresh cancelled")
+				return
+			}
 			r.logger.Printf("Failed to fetch keys (attempt %d/%d): %v", attempt+1, r.retryCount+1, err)
 			if attempt < r.retryCount {
-				time.Sleep(time.Second * time.Duration(attempt+1))
+				select {
+				case <-r.ctx.Done():
+					r.logger.Printf("Refresh cancelled during retry backoff")
+					return
+				case <-time.After(time.Second * time.Duration(attempt+1)):
+				}
 			}
 			continue
 		}
