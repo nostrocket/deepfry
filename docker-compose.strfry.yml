@@ -16,6 +16,31 @@ services:
     networks:
       - deepfry-net
 
+  # Internal quarantine relay for non-whitelisted events. See quarantine/SPEC.md.
+  # Shares the Dockerfile with mainline strfry (both plugins ship in the image).
+  # The db path MUST differ from mainline — enforced by quarantine-db-guard.sh.
+  strfry-quarantine:
+    build:
+      context: .
+      dockerfile: Dockerfile.strfry
+    container_name: strfry-quarantine
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/quarantine-db-guard.sh"]
+    command: ["strfry", "--config=/etc/strfry.conf", "relay"]
+    environment:
+      QUARANTINE_EXPECTED_DB: "/app/strfry-quarantine-db/"
+      MAINLINE_DB_PATH: "/app/strfry-db/"
+    volumes:
+      - ./data/strfry-quarantine-db:/app/strfry-quarantine-db
+      - ./config/strfry/strfry-quarantine.conf:/etc/strfry.conf:ro
+      - ./config/strfry/quarantine-db-guard.sh:/usr/local/bin/quarantine-db-guard.sh:ro
+      # NOTE: the mainline ./data/strfry-db volume is intentionally NOT mounted here.
+      # Adding it would be a destructive misconfiguration; the guard (exit 4) catches it.
+    expose:
+      - "7778" # internal-only; no `ports:` mapping to the host
+    networks:
+      - deepfry-net
+
 networks:
   deepfry-net:
     external: true

@@ -1,15 +1,16 @@
 # Whitelist Plugin
 
-A two-component system that enforces web-of-trust based write access on StrFry relays. A centralized **server** holds an in-memory whitelist refreshed from Dgraph, and a thin **client plugin** on each StrFry instance forwards pubkey checks over HTTP.
+A system that enforces web-of-trust based write access on StrFry relays. A centralized **server** holds an in-memory whitelist refreshed from Dgraph; thin **plugin binaries** on each StrFry instance forward pubkey checks over HTTP.
 
 ## Overview
 
 **Problem**: StrFry's writePolicy plugin interface spawns a subprocess per relay process. When streaming from 20+ upstream relays, each subprocess independently fetches the full whitelist from Dgraph, wasting resources and creating unnecessary load.
 
-**Solution**: Split into two binaries:
+**Solution**: Three binaries in this module:
 
 - **Whitelist Server** (`cmd/server`) -- single instance that owns the Dgraph connection, maintains the in-memory whitelist cache, and exposes an HTTP API for pubkey checks.
-- **Whitelist Client Plugin** (`cmd/whitelist`) -- thin StrFry writePolicy plugin that translates between StrFry's JSONL stdin/stdout protocol and the server's HTTP API.
+- **Whitelist Client Plugin** (`cmd/whitelist`) -- thin StrFry writePolicy plugin that translates between StrFry's JSONL stdin/stdout protocol and the server's HTTP API. Accepts events from whitelisted pubkeys, rejects everything else.
+- **Router Plugin** (`cmd/router`) -- drop-in alternative to the whitelist plugin that additionally forwards non-whitelisted events (kinds 0, 1, 3) to a quarantine relay for later analysis. Used as a data-gathering tool to detect parallel webs-of-trust and inform future classifier/review work. See [`quarantine/SPEC.md`](../quarantine/SPEC.md) for the full specification. The whitelist plugin remains available and unchanged — the router is opt-in.
 
 ```
                     Whitelist Server (single instance)
@@ -46,12 +47,13 @@ A two-component system that enforces web-of-trust based write access on StrFry r
 ### Build
 
 ```bash
-# Build both binaries
+# Build all three binaries
 make
 
 # Or individually
-make build          # Client plugin
-make build-server   # Server
+make build          # Client plugin (cmd/whitelist)
+make build-server   # Whitelist server (cmd/server)
+make build-router   # Router plugin (cmd/router)
 ```
 
 ### Run
@@ -176,6 +178,67 @@ check_timeout: 2s
 | `server_url` | `http://localhost:8081` | Whitelist server URL |
 | `check_timeout` | `2s` | HTTP request timeout per pubkey check |
 
+## Router Plugin (optional)
+
+A drop-in alternative to the client plugin that performs the same accept/reject decision on mainline StrFry, but **additionally** forwards rejected events (kinds 0, 1, 3 only) to a separate quarantine StrFry relay. This gives operators a queryable record of what the whitelist is rejecting — needed for detecting parallel webs-of-trust and for any future spam classifier / review pipeline.
+
+The router is opt-in: the existing `whitelist` binary is unaffected. Swap by changing `config/strfry/strfry.conf:99` from `plugin = "/app/plugins/whitelist"` to `plugin = "/app/plugins/router"` and restarting StrFry.
+
+Full specification: [`quarantine/SPEC.md`](../quarantine/SPEC.md).
+
+### How It Works
+
+1. Receives an event from StrFry over stdin (same JSONL protocol as the whitelist plugin).
+2. Calls the whitelist server (`GET /check/{pubkey}`).
+3. Whitelisted → returns `accept`.
+4. Not whitelisted → applies a **heuristic filter** (kind ∈ {0, 1, 3}, content ≤ 256 KiB, non-empty id/pubkey). If the event passes, it is enqueued for async publication to the quarantine relay via a persistent WebSocket connection. Either way, returns `reject` to mainline.
+
+The quarantine publish is **fire-and-forget**: the plugin's stdout response is never delayed by the quarantine path. The publish runs on a background goroutine with a bounded channel; when the channel is full the event is dropped and a counter is incremented.
+
+### Quarantine Path Invariants
+
+- Mainline StrFry's accept/reject decision is never affected by quarantine failures (connection loss, queue full, upstream errors).
+- Only kinds 0 (profile), 1 (text note), 3 (contacts) are forwarded — everything else is dropped at the heuristic gate to keep the quarantine LMDB focused on signal relevant to parallel-WoT analysis.
+- Event payloads only live in StrFry LMDB, never in logs or Dgraph (plugin stderr logs pubkey prefix + event id, never content).
+
+### Configuration
+
+Config file: `~/deepfry/router.yaml` (auto-created with defaults if missing). Env overrides use the `ROUTER_` prefix (e.g. `ROUTER_QUARANTINE_ENABLED=false`).
+
+```yaml
+server_url: "http://whitelist-server:8081"
+check_timeout: 2s
+
+quarantine:
+  enabled: true
+  relay_url: "ws://strfry-quarantine:7778"
+  buffer_size: 10000
+  publish_timeout: 5s
+  metrics_interval: 60s
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `server_url` | `http://localhost:8081` | Whitelist server URL |
+| `check_timeout` | `2s` | HTTP request timeout per pubkey check |
+| `quarantine.enabled` | `true` | When false, behaves byte-identically to the whitelist plugin (no side-channel) |
+| `quarantine.relay_url` | `ws://strfry-quarantine:7778` | WebSocket URL of the quarantine relay |
+| `quarantine.buffer_size` | `10000` | Bounded channel capacity; events dropped when full |
+| `quarantine.publish_timeout` | `5s` | Per-publish and per-connect timeout |
+| `quarantine.metrics_interval` | `60s` | How often the publisher logs counters to stderr |
+
+### Quarantine StrFry
+
+A second StrFry instance on port 7778 (internal-only, no host port published) with no writePolicy plugin. Config lives in `config/strfry/strfry-quarantine.conf`.
+
+The quarantine container runs with a **fail-fast DB isolation guard** (`config/strfry/quarantine-db-guard.sh`) as its entrypoint. The guard refuses to start if:
+
+- the configured `db` path equals the mainline `db` path (exit 2),
+- the configured path does not equal the expected quarantine path (exit 3), or
+- the mainline DB path is visible inside the container's filesystem (exit 4, volume-mount leak).
+
+This protects mainline data from any misconfiguration. The guard test matrix (`config/strfry/quarantine-db-guard_test.sh`) exercises all cases.
+
 ## Docker Deployment
 
 The whitelist system spans two compose files:
@@ -185,12 +248,12 @@ The whitelist system spans two compose files:
 docker-compose -f docker-compose.dgraph.yml up -d
 ```
 
-**`docker-compose.strfry.yml`** -- contains StrFry with the client plugin:
+**`docker-compose.strfry.yml`** -- contains mainline StrFry (with both plugin binaries baked in) and the `strfry-quarantine` instance:
 ```bash
 docker-compose -f docker-compose.strfry.yml up -d
 ```
 
-The server waits for Dgraph to be healthy before starting. StrFry's plugin connects to the server over the shared `deepfry-net` Docker network.
+The server waits for Dgraph to be healthy before starting. Both plugin binaries (`/app/plugins/whitelist` and `/app/plugins/router`) are shipped in the same image; mainline's `strfry.conf:99` selects which one runs. The StrFry plugin connects to the server over the shared `deepfry-net` Docker network. The router plugin additionally publishes to `strfry-quarantine:7778` over the same network.
 
 ### Config Files in Docker
 
@@ -198,6 +261,8 @@ The server waits for Dgraph to be healthy before starting. StrFry's plugin conne
 |------|-----------|---------|
 | `config/whitelist/whitelist-server.yaml` | `/root/deepfry/whitelist.yaml` in whitelist-server | Server |
 | `config/whitelist/whitelist.yaml` | `/root/deepfry/whitelist.yaml` in strfry | Client plugin |
+| `config/strfry/strfry-quarantine.conf` | `/etc/strfry.conf` in strfry-quarantine | Quarantine relay |
+| `config/strfry/quarantine-db-guard.sh` | `/usr/local/bin/quarantine-db-guard.sh` in strfry-quarantine | DB isolation guard (entrypoint) |
 
 ## File Structure
 
@@ -206,19 +271,28 @@ whitelist-plugin/
 ├── cmd/
 │   ├── server/
 │   │   └── main.go              # Server entry point
-│   └── whitelist/
-│       └── main.go              # Client plugin entry point (StrFry subprocess)
+│   ├── whitelist/
+│   │   └── main.go              # Client plugin entry point (StrFry subprocess)
+│   └── router/
+│   │   └── main.go              # Router plugin entry point (quarantine-routing variant)
 ├── pkg/
 │   ├── client/
 │   │   ├── client.go            # HTTP client (Checker implementation)
 │   │   └── client_test.go
 │   ├── config/
-│   │   └── config.go            # ServerConfig and ClientConfig with Viper
+│   │   ├── config.go            # ServerConfig and ClientConfig with Viper
+│   │   └── router_config.go     # RouterConfig (server + quarantine sections)
 │   ├── handler/
 │   │   ├── handler.go           # Checker, Handler, and IOAdapter interfaces
-│   │   ├── messages.go          # StrFry JSONL protocol types
+│   │   ├── messages.go          # StrFry JSONL protocol types (+ RouterInputMsg)
 │   │   ├── whitelist_handler.go # Core accept/reject logic
-│   │   └── jsonl_io_adapter.go  # JSONL serialization
+│   │   ├── jsonl_io_adapter.go  # JSONL serialization (whitelist plugin)
+│   │   ├── router_handler.go    # Router accept/reject/quarantine logic
+│   │   └── router_io_adapter.go # JSONL serialization (router plugin)
+│   ├── heuristics/
+│   │   └── heuristics.go        # Pre-quarantine garbage gate (kind 0/1/3 allowlist)
+│   ├── quarantine/
+│   │   └── publisher.go         # Async go-nostr publisher with bounded channel + reconnect
 │   ├── repository/
 │   │   ├── repository.go        # KeyRepository interface
 │   │   ├── dgraph_repository.go # Paginated GraphQL fetch from Dgraph
@@ -238,11 +312,13 @@ whitelist-plugin/
 ### Build Commands
 
 ```bash
-make                     # Build both binaries
+make                     # Build all three binaries
 make build               # Build client plugin only
-make build-server        # Build server only
+make build-server        # Build whitelist server only
+make build-router        # Build router plugin only
 make build-alpine        # Static client plugin for Alpine
 make build-server-alpine # Static server for Alpine
+make build-router-alpine # Static router plugin for Alpine
 make test                # Run all tests
 make bench               # Run benchmarks
 make fmt                 # Format code
@@ -258,10 +334,12 @@ make clean               # Remove bin/
 go test ./... -short
 
 # Specific packages
-go test ./pkg/server/...    # Server HTTP handler tests
-go test ./pkg/client/...    # Client HTTP tests
-go test ./pkg/handler/...   # StrFry protocol + handler tests
-go test ./pkg/whitelist/... # Cache and refresher tests
+go test ./pkg/server/...     # Server HTTP handler tests
+go test ./pkg/client/...     # Client HTTP tests
+go test ./pkg/handler/...    # StrFry protocol + both handler tests
+go test ./pkg/whitelist/...  # Cache and refresher tests
+go test ./pkg/heuristics/... # Router pre-quarantine filter
+go test ./pkg/quarantine/... # Publisher backpressure + reconnect
 
 # Benchmarks
 make bench
@@ -281,13 +359,20 @@ type KeyRepository interface {
     GetAll(ctx context.Context) ([][32]byte, error)
 }
 
-// Handler processes StrFry plugin events
+// Handler processes StrFry plugin events (whitelist plugin; id/pubkey only).
 type Handler interface {
     Handle(input InputMsg) (OutputMsg, error)
 }
+
+// EventEnqueuer is the subset of the quarantine publisher the router handler
+// depends on. Kept as an interface so the handler can be tested without the
+// WebSocket machinery.
+type EventEnqueuer interface {
+    Enqueue(evt nostr.Event) bool
+}
 ```
 
-The `Checker` interface is the key abstraction that decouples the handler from the whitelist implementation. The server uses `*whitelist.Whitelist` (local map lookup), while the client plugin uses `*client.WhitelistClient` (HTTP call to server). The handler doesn't know which one it's using.
+The `Checker` interface is the key abstraction that decouples the handler from the whitelist implementation. The server uses `*whitelist.Whitelist` (local map lookup), while both plugins use `*client.WhitelistClient` (HTTP call to server). The router plugin additionally depends on `EventEnqueuer` (implemented by `*quarantine.Publisher`) but uses it only after a reject decision — it never affects whether the event is accepted.
 
 ## Requirements
 

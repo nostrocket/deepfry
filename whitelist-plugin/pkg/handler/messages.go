@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/nbd-wtf/go-nostr"
 )
 
 // EventType represents the type of event (currently always "new").
@@ -148,4 +150,40 @@ func (i *InputMsg) ParseEvent() (id string, pubKey string, err error) {
 		return "", "", fmt.Errorf("missing event fields: id and pubkey")
 	}
 	return i.Event.ID, i.Event.Pubkey, nil
+}
+
+// RouterInputMsg mirrors the StrFry plugin input but keeps the full event
+// payload so the router can forward it to the quarantine relay. The whitelist
+// plugin continues to use InputMsg (id + pubkey only).
+type RouterInputMsg struct {
+	Type       string          `json:"type"`
+	Event      json.RawMessage `json:"event"`
+	ReceivedAt int64           `json:"receivedAt"`
+	SourceType SourceType      `json:"sourceType"`
+	SourceInfo string          `json:"sourceInfo"`
+}
+
+// DeserializeRouterInputMsg deserializes a JSONL line to a RouterInputMsg,
+// preserving the raw event bytes so they can be republished verbatim.
+func DeserializeRouterInputMsg(data []byte) (RouterInputMsg, error) {
+	var msg RouterInputMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return msg, fmt.Errorf("failed to deserialize RouterInputMsg: %w", err)
+	}
+	return msg, nil
+}
+
+// ParseFullEvent unmarshals the raw event into a go-nostr Event.
+func (i *RouterInputMsg) ParseFullEvent() (nostr.Event, error) {
+	var evt nostr.Event
+	if len(i.Event) == 0 {
+		return evt, fmt.Errorf("missing event payload")
+	}
+	if err := json.Unmarshal(i.Event, &evt); err != nil {
+		return evt, fmt.Errorf("failed to parse event: %w", err)
+	}
+	if evt.ID == "" || evt.PubKey == "" {
+		return evt, fmt.Errorf("missing event fields: id and pubkey")
+	}
+	return evt, nil
 }

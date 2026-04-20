@@ -54,7 +54,8 @@ The stack is split into separate compose files so each layer can be managed inde
 | Dgraph | `dgraph` | `docker-compose.dgraph.yml` | 8080 (HTTP/GraphQL), 9080 (gRPC) | Graph database for pubkey relationships |
 | Dgraph Ratel | `dgraph-ratel` | `docker-compose.dgraph.yml` | 8000 | Dgraph web UI |
 | Whitelist Server | `whitelist-server` | `docker-compose.dgraph.yml` | 8081 | Centralized pubkey whitelist cache (refreshes from Dgraph) |
-| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay with whitelist client plugin |
+| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay. The image ships two interchangeable writePolicy plugins (`/app/plugins/whitelist` and `/app/plugins/router`); `strfry.conf` selects which one runs. |
+| StrFry Quarantine | `strfry-quarantine` | `docker-compose.strfry.yml` | 7778 (internal only, `expose:`) | Secondary StrFry for events the router plugin rejects from mainline. Internal-only — never exposed to the host. See [`quarantine/SPEC.md`](quarantine/SPEC.md). |
 | Event Forwarders | `fwd-*` | `docker-compose.evtfwd.yml` | -- | Sync events from upstream relays |
 
 ### Startup
@@ -63,12 +64,14 @@ The stack is split into separate compose files so each layer can be managed inde
 # 1. Start Dgraph + Whitelist Server
 docker-compose -f docker-compose.dgraph.yml up -d
 
-# 2. Start StrFry (waits for whitelist-server on deepfry-net)
+# 2. Start StrFry + StrFry Quarantine (waits for whitelist-server on deepfry-net)
 docker-compose -f docker-compose.strfry.yml up -d
 
 # 3. Start event forwarders (requires .env with keys)
 docker-compose -f docker-compose.evtfwd.yml up -d
 ```
+
+`strfry-quarantine` uses its own data directory (`./data/strfry-quarantine-db`) and is guarded by `config/strfry/quarantine-db-guard.sh`, which refuses to start the container if it could write to the mainline DB. This is a hard safety boundary: mainline data cannot be corrupted by a misconfigured quarantine instance.
 
 ### Shutdown
 

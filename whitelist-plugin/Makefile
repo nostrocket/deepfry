@@ -1,5 +1,6 @@
 APP=whitelist
 APP_SERVER=whitelist-server
+APP_ROUTER=router
 PKG=whitelist-plugin
 
 # Version can be set via environment variable or defaults to dev
@@ -24,9 +25,9 @@ LDFLAGS=-X 'event-forwarder/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-server run test fmt vet tidy clean help bench build-alpine build-linux build-server-alpine build-server-linux
+.PHONY: all build build-server build-router run test fmt vet tidy clean help bench build-alpine build-linux build-server-alpine build-server-linux build-router-alpine build-router-linux
 
-all: build build-server
+all: build build-server build-router
 
 ## Build the plugin (thin client)
 build:
@@ -35,6 +36,10 @@ build:
 ## Build the whitelist server
 build-server:
 	go build $(BUILD_FLAGS) -o bin/$(APP_SERVER)$(BINARY_EXT) ./cmd/server
+
+## Build the router plugin (quarantine-routing alternative to the whitelist plugin)
+build-router:
+	go build $(BUILD_FLAGS) -o bin/$(APP_ROUTER)$(BINARY_EXT) ./cmd/$(APP_ROUTER)
 
 ## Build static plugin binary for Alpine Linux (musl libc)
 build-alpine:
@@ -71,6 +76,24 @@ build-server-linux:
 		-tags netgo \
 		-o bin/$(APP_SERVER)-linux ./cmd/server
 	@echo "Built static server binary for Linux: bin/$(APP_SERVER)-linux"
+
+## Build static router plugin binary for Alpine Linux (musl libc)
+build-router-alpine:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_ROUTER)-alpine ./cmd/$(APP_ROUTER)
+	@echo "Built static router binary for Alpine Linux: bin/$(APP_ROUTER)-alpine"
+
+## Build static router plugin binary for generic Linux
+build-router-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_ROUTER)-linux ./cmd/$(APP_ROUTER)
+	@echo "Built static router binary for Linux: bin/$(APP_ROUTER)-linux"
 
 ## Run the application
 run:

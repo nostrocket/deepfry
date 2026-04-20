@@ -6,6 +6,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
     -o /whitelist ./cmd/whitelist
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -a -installsuffix cgo \
+    -ldflags "-w -s -extldflags '-static'" \
+    -tags netgo \
+    -o /router ./cmd/router
 
 FROM dockurr/strfry:latest
 COPY --from=plugin-builder /whitelist /app/plugins/whitelist
+COPY --from=plugin-builder /router /app/plugins/router
