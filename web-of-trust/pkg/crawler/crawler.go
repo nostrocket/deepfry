@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"web-of-trust/pkg/dgraph"
@@ -30,16 +31,18 @@ func (e *transportError) Error() string { return e.err.Error() }
 func (e *transportError) Unwrap() error { return e.err }
 
 const (
-	initialBackoff = 30 * time.Second
-	maxBackoff     = 5 * time.Minute
+	initialBackoff         = 30 * time.Second
+	maxBackoff             = 5 * time.Minute
+	maxConsecutiveFailures = 5
 )
 
 type relayState struct {
-	url     string
-	conn    *nostr.Relay
-	alive   bool
-	backoff time.Duration
-	retryAt time.Time
+	url      string
+	conn     *nostr.Relay
+	alive    bool
+	backoff  time.Duration
+	retryAt  time.Time
+	failures atomic.Int32
 }
 
 type Crawler struct {
@@ -49,6 +52,7 @@ type Crawler struct {
 	timeout       time.Duration
 	debug         bool
 	dbUpdateMutex sync.Mutex
+	onConnectFail func(url string)
 }
 
 type Config struct {
@@ -57,6 +61,7 @@ type Config struct {
 	Timeout         time.Duration
 	Debug           bool
 	ForwardRelayURL string
+	OnConnectFail   func(url string)
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -78,15 +83,15 @@ func New(cfg Config) (*Crawler, error) {
 	connected := 0
 
 	for _, url := range cfg.RelayURLs {
-		rs := &relayState{url: url, backoff: initialBackoff}
 		relay, err := nostr.RelayConnect(context.Background(), url)
 		if err != nil {
-			log.Printf("WARN: Failed to connect to relay %s: %v", url, err)
-			relays = append(relays, rs)
+			log.Printf("WARN: Failed to connect to relay %s, removing from config: %v", url, err)
+			if cfg.OnConnectFail != nil {
+				cfg.OnConnectFail(url)
+			}
 			continue
 		}
-		rs.conn = relay
-		rs.alive = true
+		rs := &relayState{url: url, backoff: initialBackoff, conn: relay, alive: true}
 		relays = append(relays, rs)
 		connected++
 		if cfg.Debug {
@@ -102,10 +107,11 @@ func New(cfg Config) (*Crawler, error) {
 	log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
 
 	c := &Crawler{
-		relays:   relays,
-		dgClient: dgClient,
-		timeout:  cfg.Timeout,
-		debug:    cfg.Debug,
+		relays:        relays,
+		dgClient:      dgClient,
+		timeout:       cfg.Timeout,
+		debug:         cfg.Debug,
+		onConnectFail: cfg.OnConnectFail,
 	}
 
 	// Connect to forward relay if configured
@@ -162,50 +168,66 @@ func (c *Crawler) forwardEvent(ctx context.Context, event *nostr.Event) {
 }
 
 func (c *Crawler) markRelayDead(url string) {
+	kept := c.relays[:0]
 	for _, rs := range c.relays {
-		if rs.url == url {
-			if rs.conn != nil {
-				rs.conn.Close()
-			}
-			rs.conn = nil
-			rs.alive = false
-			rs.retryAt = time.Now().Add(rs.backoff)
-			log.Printf("Relay %s marked dead, next retry in %v", url, rs.backoff)
-			rs.backoff *= 2
-			if rs.backoff > maxBackoff {
-				rs.backoff = maxBackoff
-			}
-			return
+		if rs.url != url {
+			kept = append(kept, rs)
+			continue
 		}
+		if rs.conn != nil {
+			rs.conn.Close()
+		}
+		rs.conn = nil
+		rs.alive = false
+		failures := int(rs.failures.Add(1))
+		if failures >= maxConsecutiveFailures {
+			log.Printf("Relay %s failed %d consecutive times, removing from config", url, failures)
+			if c.onConnectFail != nil {
+				c.onConnectFail(url)
+			}
+			continue
+		}
+		rs.retryAt = time.Now().Add(rs.backoff)
+		log.Printf("Relay %s marked dead (failure %d/%d), next retry in %v", url, failures, maxConsecutiveFailures, rs.backoff)
+		rs.backoff *= 2
+		if rs.backoff > maxBackoff {
+			rs.backoff = maxBackoff
+		}
+		kept = append(kept, rs)
 	}
+	c.relays = kept
 }
 
 func (c *Crawler) ReconnectRelays(ctx context.Context) {
+	kept := c.relays[:0]
 	for _, rs := range c.relays {
 		if rs.alive {
+			kept = append(kept, rs)
 			continue
 		}
 		if time.Now().Before(rs.retryAt) {
 			if c.debug {
 				log.Printf("Skipping reconnect for %s, next retry at %v", rs.url, rs.retryAt.Format(time.RFC3339))
 			}
+			kept = append(kept, rs)
 			continue
 		}
 		relay, err := nostr.RelayConnect(ctx, rs.url)
 		if err != nil {
-			rs.retryAt = time.Now().Add(rs.backoff)
-			log.Printf("WARN: Reconnect to %s failed, next retry in %v: %v", rs.url, rs.backoff, err)
-			rs.backoff *= 2
-			if rs.backoff > maxBackoff {
-				rs.backoff = maxBackoff
+			log.Printf("WARN: Reconnect to %s failed, removing from config: %v", rs.url, err)
+			if c.onConnectFail != nil {
+				c.onConnectFail(rs.url)
 			}
 			continue
 		}
 		rs.conn = relay
 		rs.alive = true
 		rs.backoff = initialBackoff
+		rs.failures.Store(0)
+		kept = append(kept, rs)
 		log.Printf("Reconnected to relay: %s", rs.url)
 	}
+	c.relays = kept
 
 	// Reconnect forward relay if needed
 	if c.forwardRelay != nil && !c.forwardRelay.alive {
@@ -277,13 +299,15 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			continue
 		}
 		wg.Add(1)
-		go func(relay *nostr.Relay, relayURL string) {
+		go func(rs *relayState) {
 			defer wg.Done()
-			err := c.queryRelay(relayQueryContext, relay, relayURL, filter, eventsChan)
+			err := c.queryRelay(relayQueryContext, rs.conn, rs.url, filter, eventsChan)
 			if err != nil {
-				errorsChan <- relayError{url: relayURL, err: err}
+				errorsChan <- relayError{url: rs.url, err: err}
+				return
 			}
-		}(rs.conn, rs.url)
+			rs.failures.Store(0)
+		}(rs)
 	}
 
 	// Close channels when all goroutines complete

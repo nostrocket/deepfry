@@ -100,3 +100,19 @@ func SaveForwardRelayURL(url string) error {
 	viper.Set("forward_relay_url", url)
 	return viper.WriteConfig()
 }
+
+// RemoveRelayURL removes a relay URL from relay_urls in the config file.
+func RemoveRelayURL(url string) error {
+	current := viper.GetStringSlice("relay_urls")
+	filtered := make([]string, 0, len(current))
+	for _, u := range current {
+		if u != url {
+			filtered = append(filtered, u)
+		}
+	}
+	if len(filtered) == len(current) {
+		return nil
+	}
+	viper.Set("relay_urls", filtered)
+	return viper.WriteConfig()
+}

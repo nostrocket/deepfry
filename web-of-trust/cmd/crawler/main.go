@@ -74,6 +74,13 @@ func main() {
 		Timeout:         cfg.Timeout,
 		Debug:           cfg.Debug,
 		ForwardRelayURL: cfg.ForwardRelayURL,
+		OnConnectFail: func(url string) {
+			if err := config.RemoveRelayURL(url); err != nil {
+				log.Printf("Warning: could not remove relay %s from config: %v", url, err)
+			} else {
+				log.Printf("Removed relay %s from config", url)
+			}
+		},
 	}
 
 	crawler, err := crawler.New(crawlerCfg)

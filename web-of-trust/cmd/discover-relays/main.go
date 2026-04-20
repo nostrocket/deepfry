@@ -148,26 +148,19 @@ func main() {
 		}
 		finalURLs = append(finalURLs, newURLs...)
 	} else {
-		existingSet := make(map[string]bool)
-		for _, u := range existingRelays {
-			existingSet[nostr.NormalizeURL(u)] = true
-		}
 		finalURLs = append(finalURLs, existingRelays...)
-		for _, u := range newURLs {
-			if !existingSet[nostr.NormalizeURL(u)] {
-				finalURLs = append(finalURLs, u)
-			}
-		}
+		finalURLs = append(finalURLs, newURLs...)
 	}
+	finalURLs = dedupURLs(finalURLs)
 
 	if err := writeRelayURLsToConfig(configPath, finalURLs); err != nil {
 		log.Fatalf("Failed to write config: %v", err)
 	}
 
-	added := len(finalURLs) - len(existingRelays)
 	if *replace {
 		log.Printf("Wrote %d relay URLs to %s (replaced)", len(finalURLs), configPath)
 	} else {
+		added := len(finalURLs) - len(dedupURLs(existingRelays))
 		log.Printf("Added %d new relay URLs to %s (total: %d)", added, configPath, len(finalURLs))
 	}
 }
@@ -318,6 +311,22 @@ func discoverFromNIP65(ctx context.Context) ([]string, error) {
 	}
 
 	return normalizeAndDedup(allURLs), nil
+}
+
+// dedupURLs removes duplicates by normalized URL while preserving the original
+// form of the first occurrence and the input order.
+func dedupURLs(urls []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, u := range urls {
+		norm := nostr.NormalizeURL(u)
+		if seen[norm] {
+			continue
+		}
+		seen[norm] = true
+		out = append(out, u)
+	}
+	return out
 }
 
 func normalizeAndDedup(urls []string) []string {
