@@ -90,32 +90,22 @@ YAML
     echo "  Updated config/whitelist/whitelist-server.yaml → http://${REMOTE_HOST}:8080/graphql"
 
     # --- docker-compose.strfry.yml (own network, no external deepfry-net) ---
+    #
+    # Transform the existing compose in place rather than regenerating it, so
+    # any services added to it (e.g. strfry-quarantine) carry over automatically.
+    # Two changes:
+    #   1. Rename deepfry-net → strfry-net everywhere (service refs + top-level).
+    #   2. In the top-level networks block, replace `external: true` with
+    #      `driver: bridge` so remote mode owns its network (the shared
+    #      deepfry-net only exists when dgraph is on this machine).
 
     backup_file "$STRFRY_COMPOSE"
-    cat > "$STRFRY_COMPOSE" <<YAML
-services:
-  strfry:
-    build:
-      context: .
-      dockerfile: Dockerfile.strfry
-    container_name: strfry
-    restart: unless-stopped
-    environment:
-      STRFRY_PRIVATE_KEY: \${STRFRY_PRIVATE_KEY:-}
-    volumes:
-      - ./data/strfry-db:/app/strfry-db
-      - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
-      - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
-    ports:
-      - "7777:7777" # Nostr WebSocket
-    networks:
-      - strfry-net
-
-networks:
-  strfry-net:
-    name: strfry-net
-    driver: bridge
-YAML
+    awk '
+      { gsub(/deepfry-net/, "strfry-net") }
+      /^    external: true$/  { next }
+      /^    name: strfry-net$/ { print; print "    driver: bridge"; next }
+      { print }
+    ' "$BACKUP_DIR/$(basename "$STRFRY_COMPOSE")" > "$STRFRY_COMPOSE"
     echo "  Updated docker-compose.strfry.yml → strfry-net (local network)"
 
     # --- docker-compose.evtfwd.yml (join strfry-net, point at local strfry) ---
