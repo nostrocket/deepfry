@@ -26,7 +26,10 @@ services:
     container_name: strfry-quarantine
     restart: unless-stopped
     entrypoint: ["/usr/local/bin/quarantine-db-guard.sh"]
-    command: ["strfry", "--config=/etc/strfry.conf", "relay"]
+    # Absolute path: the dockurr/strfry image keeps the binary at /app/strfry
+    # and isn't in PATH, so the guard's `exec "$@"` would otherwise fail.
+    command: ["/app/strfry", "--config=/etc/strfry.conf", "relay"]
+    working_dir: /app
     environment:
       QUARANTINE_EXPECTED_DB: "/app/strfry-quarantine-db/"
       MAINLINE_DB_PATH: "/app/strfry-db/"
@@ -36,8 +39,8 @@ services:
       - ./config/strfry/quarantine-db-guard.sh:/usr/local/bin/quarantine-db-guard.sh:ro
       # NOTE: the mainline ./data/strfry-db volume is intentionally NOT mounted here.
       # Adding it would be a destructive misconfiguration; the guard (exit 4) catches it.
-    expose:
-      - "7778" # internal-only; no `ports:` mapping to the host
+    ports:
+      - "7778:7778" # Nostr WebSocket (quarantine)
     networks:
       - deepfry-net
 
