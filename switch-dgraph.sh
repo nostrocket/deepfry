@@ -472,7 +472,7 @@ discover_and_pick() {
     done
 
     if [[ -z "$dgraph_cands" && -z "$strfry_cands" && -z "$whitelist_entries" ]]; then
-        echo "No services detected on $subnet."
+        echo "No services detected on: $subnets"
         fallback_manual
         return
     fi

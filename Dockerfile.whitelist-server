@@ -1,16 +1,23 @@
 FROM golang:1.24-alpine AS builder
+
+# Go shells out to `git` for -buildvcs stamping; it's not in the stock alpine image.
+RUN apk add --no-cache git
+
 WORKDIR /build
 
-# Copy the repo's .git so Go's -buildvcs=auto (default) stamps commit, time,
-# and dirty-tree status into the binary. Read at runtime via
+# Copy the repo's .git so `go build -buildvcs=true` stamps commit, time, and
+# dirty-tree status into the binary. Read at runtime via
 # runtime/debug.ReadBuildInfo by whitelist-plugin/pkg/version.
 COPY .git /build/.git
 COPY whitelist-plugin /build/whitelist-plugin
 
 WORKDIR /build/whitelist-plugin
 
+# -buildvcs=true (vs auto) makes the build fail loudly if git or .git ever
+# goes missing, instead of silently producing an "unknown" commit.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -a -installsuffix cgo \
+    -buildvcs=true \
     -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
     -o /whitelist-server ./cmd/server
