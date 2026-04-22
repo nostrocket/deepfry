@@ -14,7 +14,7 @@ WOT_CONFIG="$HOME/deepfry/web-of-trust.yaml"
 # Backup directory
 BACKUP_DIR="$SCRIPT_DIR/.switch-dgraph-backups"
 
-# Ports scanned by masscan and mapped to services
+# Ports probed on each live host and mapped to services
 PORT_DGRAPH_HTTP=8080
 PORT_DGRAPH_GRPC=9080
 PORT_STRFRY=7777
@@ -32,16 +32,17 @@ Usage: $(basename "$0") <command> [flags]
 Commands:
   remote [--yes|-y] [--host <ip>] [--subnet <cidr>] [--verbose|-v]
             Point this machine's strfry at a remote Dgraph + whitelist-server.
-            Auto-discovers hosts on the LAN via masscan (installed on demand).
+            Discovery is a parallel ICMP ping-sweep across every attached /24
+            followed by TCP connect probes (nc -z) on live hosts. No sudo,
+            no install beyond nc (auto-installed if missing on Linux).
             --yes         Skip confirmation prompts (still prompts on whitelist
                           version mismatch when alternative candidates exist).
             --host X      Skip discovery and use X for Dgraph, whitelist, and
                           strfry. Implies --yes.
-            --subnet CIDR Override the default-route subnet masscan scans
-                          (e.g. 192.168.2.0/24). Useful when the auto-detected
-                          interface isn't the one the services live on (VPN,
-                          multiple NICs, etc.).
-            --verbose     Print raw masscan output and per-host probe results.
+            --subnet CIDR Override the auto-detected subnets (comma/space
+                          separated, e.g. 192.168.2.0/24,10.0.0.0/24).
+                          CIDRs wider than /22 are rejected.
+            --verbose     Print live-host list and per-(host,port) probe results.
   local     Switch back to single-machine mode (everything on deepfry-net).
   status    Show current mode.
 
@@ -79,62 +80,78 @@ restore_file() {
 
 # --- Auto-discovery helpers ------------------------------------------------
 
-ensure_masscan() {
-    if command -v masscan >/dev/null 2>&1; then
+ensure_nc() {
+    if command -v nc >/dev/null 2>&1; then
         return 0
     fi
 
     local os
     os=$(uname -s)
-    echo "masscan not found in PATH."
+    echo "nc (netcat) not found in PATH."
 
     local install_cmd=""
     case "$os" in
         Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                install_cmd="brew install masscan"
-            else
-                echo "Homebrew not installed. See https://brew.sh/ then re-run." >&2
-                exit 1
-            fi
+            # nc ships with macOS; if it's missing something is very wrong.
+            echo "macOS normally ships nc at /usr/bin/nc — check your PATH." >&2
+            exit 1
             ;;
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
-                install_cmd="sudo apt-get update && sudo apt-get install -y masscan"
+                install_cmd="sudo apt-get update && sudo apt-get install -y netcat-openbsd"
             elif command -v dnf >/dev/null 2>&1; then
-                install_cmd="sudo dnf install -y masscan"
+                install_cmd="sudo dnf install -y nmap-ncat"
             elif command -v yum >/dev/null 2>&1; then
-                install_cmd="sudo yum install -y masscan"
+                install_cmd="sudo yum install -y nmap-ncat"
             elif command -v pacman >/dev/null 2>&1; then
-                install_cmd="sudo pacman -S --noconfirm masscan"
+                install_cmd="sudo pacman -S --noconfirm openbsd-netcat"
             elif command -v apk >/dev/null 2>&1; then
-                install_cmd="sudo apk add masscan"
+                install_cmd="sudo apk add netcat-openbsd"
             else
-                echo "No supported package manager found. Install masscan manually." >&2
+                echo "No supported package manager found. Install nc manually." >&2
                 exit 1
             fi
             ;;
         *)
-            echo "Unsupported OS ($os). Install masscan manually." >&2
+            echo "Unsupported OS ($os). Install nc manually." >&2
             exit 1
             ;;
     esac
 
     if [[ $ASSUME_YES -eq 0 ]]; then
-        read -rp "Install masscan via '$install_cmd'? [Y/n] " reply
+        read -rp "Install nc via '$install_cmd'? [Y/n] " reply
         case "$reply" in
-            n|N) echo "Cannot continue without masscan." >&2; exit 1 ;;
+            n|N) echo "Cannot continue without nc." >&2; exit 1 ;;
         esac
     fi
 
     echo "Running: $install_cmd"
     eval "$install_cmd"
 
-    if ! command -v masscan >/dev/null 2>&1; then
-        echo "masscan still not found after install." >&2
+    if ! command -v nc >/dev/null 2>&1; then
+        echo "nc still not found after install." >&2
         exit 1
     fi
 }
+
+# OS-specific timeout flags for ping and nc.
+# - ping: macOS uses `-t <sec>` (whole-command timeout), Linux uses `-W <sec>`
+#   (wait per-reply).
+# - nc: BSD (macOS) needs `-G <sec>` for connect timeout because its `-w` is
+#   only the idle timeout — a firewall silently dropping SYN hangs for ~75s
+#   without `-G`. Linux netcat-openbsd does respect `-w` for connects.
+PING_TIMEOUT_FLAG=""
+NC_TIMEOUT_FLAGS=""
+_init_os_flags() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        PING_TIMEOUT_FLAG="-t 1"
+        NC_TIMEOUT_FLAGS="-G 1 -w 1"
+    else
+        PING_TIMEOUT_FLAG="-W 1"
+        NC_TIMEOUT_FLAGS="-w 1"
+    fi
+}
+_init_os_flags
 
 # Echoes every non-loopback /24 the host is attached to, space-separated.
 detect_subnets() {
@@ -159,27 +176,69 @@ detect_subnets() {
     echo "$subnets"
 }
 
-# Writes "host port" lines to stdout. Fatal on sudo/masscan error.
-# $1 is a space-separated list of CIDRs; masscan accepts them all in one run.
-run_masscan() {
-    local subnets="$1"
-    local ports="${PORT_STRFRY},${PORT_DGRAPH_HTTP},${PORT_WHITELIST},${PORT_DGRAPH_GRPC}"
-    local tmp
-    tmp=$(mktemp -t masscan.XXXXXX)
-    sudo -v || { echo "sudo authentication failed." >&2; rm -f "$tmp"; return 1; }
-    # shellcheck disable=SC2086
-    if ! sudo masscan -p "$ports" $subnets --rate=1000 -oL "$tmp" >/dev/null; then
-        echo "masscan failed (see stderr above)." >&2
-        rm -f "$tmp"
+# Guard against ping-sweeping /16 or wider — too many hosts for a bash loop.
+# Accepts /22 (1024 hosts) through /32.
+_check_cidr_size() {
+    local cidr="$1"
+    local prefix="${cidr##*/}"
+    # If no /prefix was given, assume /32 single host.
+    [[ "$prefix" == "$cidr" ]] && return 0
+    if ! [[ "$prefix" =~ ^[0-9]+$ ]]; then
+        echo "Bad CIDR prefix in $cidr" >&2
         return 1
     fi
-    if [[ $VERBOSE -eq 1 ]]; then
-        echo "--- raw masscan output ---" >&2
-        cat "$tmp" >&2
-        echo "--- end masscan ---" >&2
+    if (( prefix < 22 )); then
+        echo "Refusing to ping-sweep $cidr — prefix /$prefix is too broad (pass a narrower --subnet)." >&2
+        return 1
     fi
-    # -oL format: "open tcp <port> <ip> <timestamp>"
-    awk '$1=="open" {print $4, $3}' "$tmp"
+    return 0
+}
+
+# Writes live host IPs (one per line) to stdout.
+# $1 is a space-separated list of /24 CIDRs.
+ping_sweep() {
+    local subnets="$1"
+    local tmp
+    tmp=$(mktemp -t pingsweep.XXXXXX)
+    local cidr base octet launched=0
+
+    for cidr in $subnets; do
+        _check_cidr_size "$cidr" || { rm -f "$tmp"; return 1; }
+        base=$(echo "${cidr%/*}" | awk -F. '{print $1"."$2"."$3}')
+        for octet in $(seq 1 254); do
+            # shellcheck disable=SC2086
+            ( ping -c 1 $PING_TIMEOUT_FLAG "${base}.${octet}" >/dev/null 2>&1 && \
+                echo "${base}.${octet}" >> "$tmp" ) &
+            launched=$((launched + 1))
+            # Throttle to avoid process-table churn on large sweeps.
+            if (( launched % 128 == 0 )); then wait; fi
+        done
+    done
+    wait
+    sort -u "$tmp"
+    rm -f "$tmp"
+}
+
+# Writes "host port" lines to stdout for each TCP port that connects.
+# $1: space-separated hosts. $2: space-separated ports.
+tcp_sweep() {
+    local hosts="$1"
+    local ports="$2"
+    local tmp
+    tmp=$(mktemp -t tcpsweep.XXXXXX)
+    local host port launched=0
+
+    for host in $hosts; do
+        for port in $ports; do
+            # shellcheck disable=SC2086
+            ( nc -z $NC_TIMEOUT_FLAGS "$host" "$port" >/dev/null 2>&1 && \
+                echo "$host $port" >> "$tmp" ) &
+            launched=$((launched + 1))
+            if (( launched % 128 == 0 )); then wait; fi
+        done
+    done
+    wait
+    sort -u "$tmp"
     rm -f "$tmp"
 }
 
@@ -193,7 +252,8 @@ verify_dgraph_http() {
 verify_dgraph_grpc() {
     local host="$1"
     if command -v nc >/dev/null 2>&1; then
-        nc -zw2 "$host" "$PORT_DGRAPH_GRPC" >/dev/null 2>&1
+        # shellcheck disable=SC2086
+        nc -z $NC_TIMEOUT_FLAGS "$host" "$PORT_DGRAPH_GRPC" >/dev/null 2>&1
     else
         # Fallback: bash /dev/tcp
         (exec 3<>"/dev/tcp/${host}/${PORT_DGRAPH_GRPC}") 2>/dev/null && exec 3>&- 3<&-
@@ -384,7 +444,7 @@ pick_whitelist_host() {
 discover_and_pick() {
     # Sets DGRAPH_HOST, WHITELIST_HOST, STRFRY_HOST (may be empty if user skips).
 
-    ensure_masscan
+    ensure_nc
 
     local subnets
     if [[ -n "$EXPLICIT_SUBNET" ]]; then
@@ -396,21 +456,37 @@ discover_and_pick() {
         return
     fi
 
-    echo "Scanning subnets: $subnets"
-    local scan
-    if ! scan=$(run_masscan "$subnets"); then
-        echo "masscan scan failed; falling back to manual entry." >&2
+    echo "Pinging subnets for live hosts: $subnets"
+    local live
+    if ! live=$(ping_sweep "$subnets"); then
+        echo "Ping sweep failed; falling back to manual entry." >&2
         fallback_manual
         return
     fi
 
+    # Always include localhost so a fully-local stack is discoverable.
+    live=$(printf "%s\n127.0.0.1\n" "$live" | sort -u)
+
+    local live_count
+    live_count=$(echo "$live" | grep -c . || true)
+    echo "  Found $live_count live host(s); probing ports..."
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "--- live hosts ---" >&2
+        echo "$live" >&2
+        echo "--- end live hosts ---" >&2
+    fi
+
+    local ports="${PORT_STRFRY} ${PORT_DGRAPH_HTTP} ${PORT_WHITELIST} ${PORT_DGRAPH_GRPC}"
+    local scan
+    scan=$(tcp_sweep "$live" "$ports")
     local hit_count
     hit_count=$(echo "$scan" | grep -c . || true)
-    echo "  masscan reported $hit_count open-port hit(s)."
-
-    # Always include localhost as a probe candidate (masscan usually skips it).
-    scan=$(printf "%s\n127.0.0.1 %d\n127.0.0.1 %d\n127.0.0.1 %d\n127.0.0.1 %d\n" \
-        "$scan" "$PORT_DGRAPH_HTTP" "$PORT_DGRAPH_GRPC" "$PORT_STRFRY" "$PORT_WHITELIST")
+    echo "  TCP probe found $hit_count open port(s)."
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "--- open host:port pairs ---" >&2
+        echo "$scan" >&2
+        echo "--- end open ---" >&2
+    fi
 
     local dgraph_http_cands=""
     local dgraph_grpc_cands=""

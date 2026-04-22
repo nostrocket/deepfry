@@ -285,7 +285,7 @@ Running Dgraph on one machine and StrFry on another — use `switch-dgraph.sh`.
 ./switch-dgraph.sh local                    # restores from backups in .switch-dgraph-backups/
 ```
 
-Discovery scans every non-loopback `/24` the host is attached to (so Docker-internal subnets and the real LAN both get covered) via `masscan` for Dgraph HTTP (8080), Dgraph gRPC (9080), StrFry (7777), and the whitelist server (8081). Use `--subnet 192.168.30.0/24` (comma/space-separated accepted) to narrow or redirect the scan. Each candidate is then probed over HTTP to confirm the service is actually there:
+Discovery is a two-phase pure-bash sweep across every non-loopback `/24` the host is attached to (so Docker-internal subnets and the real LAN both get covered): a parallel ICMP ping sweep finds live hosts in ~2s, then parallel `nc -z` TCP connect probes on Dgraph HTTP (8080), Dgraph gRPC (9080), StrFry (7777), and the whitelist server (8081) finish in another ~2s. No sudo, no masscan, no raw sockets — if `curl` to a port would work, the probe will find it. Use `--subnet 192.168.30.0/24` (comma/space-separated accepted, /22 or narrower) to override the auto-detected list. Each open port is then probed over HTTP to confirm the service is actually there:
 
 - Dgraph via `GET /health`
 - StrFry via the NIP-11 relay info doc
@@ -293,7 +293,7 @@ Discovery scans every non-loopback `/24` the host is attached to (so Docker-inte
 
 When multiple whitelist candidates exist and `--yes` is set, the version-matched one wins. If only one whitelist candidate is found and it mismatches (or is unavailable), the script accepts it with a warning. If multiple non-matching candidates are found under `--yes`, the script drops back to an interactive prompt for safety.
 
-`masscan` is installed on demand (first run): `brew install masscan` on macOS; `apt`/`dnf`/`yum`/`pacman`/`apk` on Linux. The scan itself requires `sudo`.
+`nc` is used for the TCP probe phase. macOS ships it; on Linux it's auto-installed via `apt-get install netcat-openbsd` / `dnf install nmap-ncat` / `pacman -S openbsd-netcat` / `apk add netcat-openbsd` if missing.
 
 Files the script rewrites on `remote`:
 
