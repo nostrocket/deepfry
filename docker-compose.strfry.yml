@@ -8,9 +8,10 @@ services:
     environment:
       STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
     volumes:
-      - ./data/strfry-db:/app/strfry-db
+      - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
       - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
+      - ./config/whitelist/router.yaml:/root/deepfry/router.yaml
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
@@ -34,7 +35,7 @@ services:
       QUARANTINE_EXPECTED_DB: "/app/strfry-quarantine-db/"
       MAINLINE_DB_PATH: "/app/strfry-db/"
     volumes:
-      - ./data/strfry-quarantine-db:/app/strfry-quarantine-db
+      - ${STRFRY_QUARANTINE_DB_PATH:-./data/strfry-quarantine-db}:/app/strfry-quarantine-db
       - ./config/strfry/strfry-quarantine.conf:/etc/strfry.conf:ro
       - ./config/strfry/quarantine-db-guard.sh:/usr/local/bin/quarantine-db-guard.sh:ro
       # NOTE: the mainline ./data/strfry-db volume is intentionally NOT mounted here.

@@ -8,7 +8,8 @@ STRFRY_COMPOSE="$SCRIPT_DIR/docker-compose.strfry.yml"
 EVTFWD_COMPOSE="$SCRIPT_DIR/docker-compose.evtfwd.yml"
 WL_CLIENT_CONFIG="$SCRIPT_DIR/config/whitelist/whitelist.yaml"
 WL_SERVER_CONFIG="$SCRIPT_DIR/config/whitelist/whitelist-server.yaml"
-WOT_CONFIG="$HOME/deepfry/config.yaml"
+WL_ROUTER_CONFIG="$SCRIPT_DIR/config/whitelist/router.yaml"
+WOT_CONFIG="$HOME/deepfry/web-of-trust.yaml"
 
 # Backup directory
 BACKUP_DIR="$SCRIPT_DIR/.switch-dgraph-backups"
@@ -23,11 +24,12 @@ Commands:
   status    Show current mode
 
 When switching to remote, this script updates:
-  - config/whitelist/whitelist.yaml       (plugin points at remote whitelist-server)
+  - config/whitelist/whitelist.yaml        (plugin points at remote whitelist-server)
   - config/whitelist/whitelist-server.yaml (server points at remote Dgraph)
-  - docker-compose.strfry.yml             (own network instead of external deepfry-net)
-  - docker-compose.evtfwd.yml             (own network instead of external deepfry-net)
-  - ~/deepfry/config.yaml                 (web-of-trust crawler's dgraph_addr)
+  - config/whitelist/router.yaml           (router plugin points at remote whitelist-server)
+  - docker-compose.strfry.yml              (own network instead of external deepfry-net)
+  - docker-compose.evtfwd.yml              (own network instead of external deepfry-net)
+  - ~/deepfry/web-of-trust.yaml            (web-of-trust crawler's dgraph_addr)
 EOF
     exit 1
 }
@@ -89,6 +91,17 @@ server_listen_addr: ":8081"
 YAML
     echo "  Updated config/whitelist/whitelist-server.yaml → http://${REMOTE_HOST}:8080/graphql"
 
+    # --- Router plugin config (strfry router plugin → remote whitelist-server) ---
+    # Defaults in whitelist-plugin/pkg/config/router_config.go cover quarantine
+    # settings (ws://strfry-quarantine:7778 etc.) — only server_url needs
+    # overriding per environment.
+
+    backup_file "$WL_ROUTER_CONFIG"
+    cat > "$WL_ROUTER_CONFIG" <<YAML
+server_url: "http://${REMOTE_HOST}:8081"
+YAML
+    echo "  Updated config/whitelist/router.yaml → http://${REMOTE_HOST}:8081"
+
     # --- docker-compose.strfry.yml (own network, no external deepfry-net) ---
     #
     # Transform the existing compose in place rather than regenerating it, so
@@ -115,15 +128,15 @@ YAML
         > "$EVTFWD_COMPOSE"
     echo "  Updated docker-compose.evtfwd.yml → strfry-net"
 
-    # --- ~/deepfry/config.yaml (web-of-trust crawler) ---
+    # --- ~/deepfry/web-of-trust.yaml (web-of-trust crawler) ---
 
     if [[ -f "$WOT_CONFIG" ]]; then
         backup_file "$WOT_CONFIG"
         sed "s|^dgraph_addr:.*|dgraph_addr: ${REMOTE_HOST}:9080|" \
             "$BACKUP_DIR/$(basename "$WOT_CONFIG")" > "$WOT_CONFIG"
-        echo "  Updated ~/deepfry/config.yaml → ${REMOTE_HOST}:9080"
+        echo "  Updated ~/deepfry/web-of-trust.yaml → ${REMOTE_HOST}:9080"
     else
-        echo "  Warning: ~/deepfry/config.yaml not found, skipping."
+        echo "  Warning: ~/deepfry/web-of-trust.yaml not found, skipping."
         echo "  Set dgraph_addr to ${REMOTE_HOST}:9080 manually when you create it."
     fi
 
@@ -152,6 +165,7 @@ switch_local() {
 
     restore_file "$WL_CLIENT_CONFIG" && switched=1
     restore_file "$WL_SERVER_CONFIG" && switched=1
+    restore_file "$WL_ROUTER_CONFIG" && switched=1
     restore_file "$STRFRY_COMPOSE" && switched=1
     restore_file "$EVTFWD_COMPOSE" && switched=1
     restore_file "$WOT_CONFIG" && switched=1
@@ -178,6 +192,7 @@ show_status() {
         echo ""
         echo "  whitelist client:  $(grep 'server_url' "$WL_CLIENT_CONFIG" 2>/dev/null || echo 'n/a')"
         echo "  whitelist server:  $(grep 'dgraph_graphql_url' "$WL_SERVER_CONFIG" 2>/dev/null || echo 'n/a')"
+        echo "  router plugin:     $(grep 'server_url' "$WL_ROUTER_CONFIG" 2>/dev/null || echo 'n/a')"
         echo "  wot crawler:       $(grep 'dgraph_addr' "$WOT_CONFIG" 2>/dev/null || echo 'n/a')"
         echo ""
         local network

@@ -43,6 +43,68 @@ We welcome external contributors.
 - **Semantic Search** indexes events using **Embeddings Generator** and ranks them using semantic similarity, BM25, and trust scores.
 - **Profile Builder** and **Thread Inference Engine** consume events from StrFry to build profiles and thread graphs.
 
+---
+
+## Quickstart
+
+Get a single-machine DeepFry running in about five minutes.
+
+**Prerequisites**
+- Docker + Docker Compose (v2).
+- Git.
+- (Optional, for local development only) Go 1.24.1+.
+
+**1. Clone and enter the repo**
+
+```bash
+git clone https://github.com/your-org/deepfry.git
+cd deepfry
+```
+
+**2. Create `.env`**
+
+Copy the template and generate a StrFry relay key. `.env` is gitignored and holds all machine-local overrides (secrets, on-disk paths, build labels).
+
+```bash
+cp .env.example .env
+echo "STRFRY_PRIVATE_KEY=$(openssl rand -hex 32)" >> .env
+```
+
+If you plan to run the event forwarders, also generate two sync keys:
+
+```bash
+echo "NOSTR_SYNC_SECKEY_LIVE=$(openssl rand -hex 32)"    >> .env
+echo "NOSTR_SYNC_SECKEY_HISTORY=$(openssl rand -hex 32)" >> .env
+```
+
+Want the on-disk databases on a different drive? See [Machine-specific paths](#machine-specific-paths).
+
+**3. Start the stack**
+
+Make sure Docker is running (on macOS: `open -a Docker`, then wait for it to finish starting). Bring up Dgraph + whitelist-server first, then StrFry (it needs the whitelist-server on the shared network), then optionally the forwarders:
+
+```bash
+docker compose -f docker-compose.dgraph.yml up -d
+docker compose -f docker-compose.strfry.yml up -d
+docker compose -f docker-compose.evtfwd.yml up -d   # optional
+```
+
+**4. Verify**
+
+```bash
+curl -sSf http://localhost:8081/health && echo " whitelist ok"
+docker logs strfry --tail=20
+open http://localhost:8000          # Dgraph UI (macOS; use xdg-open on linux)
+# ws://localhost:7777                 -- point any Nostr client here
+```
+
+**5. What next**
+- Tune the knobs in the [Configuration Reference](#configuration-reference).
+- For split-machine deployments (Dgraph on one host, StrFry on another), see [Split-machine deployment](#split-machine-deployment).
+- For the quarantine relay's safety model, see [`quarantine/SPEC.md`](quarantine/SPEC.md).
+
+---
+
 ## Running it
 
 The stack is split into separate compose files so each layer can be managed independently.
@@ -55,71 +117,182 @@ The stack is split into separate compose files so each layer can be managed inde
 | Dgraph Ratel | `dgraph-ratel` | `docker-compose.dgraph.yml` | 8000 | Dgraph web UI |
 | Whitelist Server | `whitelist-server` | `docker-compose.dgraph.yml` | 8081 | Centralized pubkey whitelist cache (refreshes from Dgraph) |
 | StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay. The image ships two interchangeable writePolicy plugins (`/app/plugins/whitelist` and `/app/plugins/router`); `strfry.conf` selects which one runs. |
-| StrFry Quarantine | `strfry-quarantine` | `docker-compose.strfry.yml` | 7778 (internal only, `expose:`) | Secondary StrFry for events the router plugin rejects from mainline. Internal-only — never exposed to the host. See [`quarantine/SPEC.md`](quarantine/SPEC.md). |
+| StrFry Quarantine | `strfry-quarantine` | `docker-compose.strfry.yml` | 7778 (WebSocket) | Secondary StrFry for events the router plugin rejects from mainline. Separate LMDB, guarded against mounting the mainline DB. See [`quarantine/SPEC.md`](quarantine/SPEC.md). |
 | Event Forwarders | `fwd-*` | `docker-compose.evtfwd.yml` | -- | Sync events from upstream relays |
-
-### Startup
-
-```bash
-# 1. Start Dgraph + Whitelist Server
-docker-compose -f docker-compose.dgraph.yml up -d
-
-# 2. Start StrFry + StrFry Quarantine (waits for whitelist-server on deepfry-net)
-docker-compose -f docker-compose.strfry.yml up -d
-
-# 3. Start event forwarders (requires .env with keys)
-docker-compose -f docker-compose.evtfwd.yml up -d
-```
-
-`strfry-quarantine` uses its own data directory (`./data/strfry-quarantine-db`) and is guarded by `config/strfry/quarantine-db-guard.sh`, which refuses to start the container if it could write to the mainline DB. This is a hard safety boundary: mainline data cannot be corrupted by a misconfigured quarantine instance.
 
 ### Shutdown
 
 ```bash
-docker-compose -f docker-compose.evtfwd.yml down
-docker-compose -f docker-compose.strfry.yml down
-docker-compose -f docker-compose.dgraph.yml down
+docker compose -f docker-compose.evtfwd.yml down
+docker compose -f docker-compose.strfry.yml down
+docker compose -f docker-compose.dgraph.yml down
 ```
 
-## Quick Commands
+### Machine-specific paths
+
+By default, on-disk databases live under `./data/` in the repo. To put them elsewhere (e.g. a larger SSD), set the following in your `.env` file — it's gitignored and picked up automatically by `docker compose`:
+
+```bash
+STRFRY_DB_PATH=/mnt/ssd/strfry-db
+STRFRY_QUARANTINE_DB_PATH=/mnt/ssd/strfry-quarantine-db
+DGRAPH_DATA_PATH=/mnt/ssd/dgraph
+```
+
+Paths can be absolute or relative to the project directory. Unset variables fall back to the `./data/...` defaults. See `.env.example` for the full list.
+
+`strfry-quarantine` is guarded by `config/strfry/quarantine-db-guard.sh`, which refuses to start the container if its configured DB path matches the mainline's. This is a hard safety boundary: mainline data cannot be corrupted by a misconfigured quarantine instance.
+
+### Useful commands
 
 ```bash
 # Stream from top 20 relays (uses tmux)
-./stream-relays.sh
+./stream-relays.sh          # start
+./stream-relays.sh attach   # attach
+./stream-relays.sh stop     # stop
 
-# Attach to monitor streams
-./stream-relays.sh attach
-
-# Stop all streams
-./stream-relays.sh stop
-
-# Split-machine deployment: run dgraph on one machine, strfry on another
-# Updates whitelist configs, compose networks, and wot crawler
-./switch-dgraph.sh remote
-
-# Switch back to single-machine mode
-./switch-dgraph.sh local
-
-# Check current mode
-./switch-dgraph.sh status
-
-# Check whitelist server health
+# Whitelist server HTTP API
 curl http://localhost:8081/health
-
-# Check whitelist stats
 curl http://localhost:8081/stats
-
-# Check if a pubkey is whitelisted
 curl http://localhost:8081/check/<64-char-hex-pubkey>
 ```
 
-## Next Steps
+---
 
-1. Set up `.env` file with `STRFRY_PRIVATE_KEY` (copy from `.env.example`)
-2. Test Nostr WebSocket connection to `ws://localhost:7777`
-3. Access Dgraph UI at http://localhost:8000
-4. Begin implementing subsystem services
+## Configuration Reference
 
+DeepFry has three kinds of configuration:
+
+- **`.env`** at the repo root — docker-compose variables (secrets, machine-specific paths, build labels). Gitignored. Template at `.env.example`.
+- **`~/deepfry/*.yaml`** on the host — per-service runtime config, read by Go services via Viper. Auto-created with defaults on first run when missing.
+- **`config/**/*`** in the repo — files mounted read-only into containers (StrFry conf, whitelist/router plugin YAML, Dgraph schema). Edited in-tree.
+
+### `.env` variables
+
+All optional unless marked required. Unset variables fall back to the defaults shown.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STRFRY_PRIVATE_KEY` | *(empty — required for signed responses)* | StrFry relay Nostr signing key (32-byte hex). |
+| `NOSTR_SYNC_SECKEY_LIVE` | *(empty — required for live forwarders)* | Signs sync-progress events (kind 30078) for **live** forwarders. One key shared across all live instances. |
+| `NOSTR_SYNC_SECKEY_HISTORY` | *(empty — required for history forwarders)* | Same idea, for the **history** forwarders. Must differ from the live key — the `d`-tag is derived from it and identifies each sync stream. |
+| `STRFRY_DB_PATH` | `./data/strfry-db` | Host path for mainline StrFry LMDB. Can be absolute. |
+| `STRFRY_QUARANTINE_DB_PATH` | `./data/strfry-quarantine-db` | Host path for the quarantine relay's LMDB. Must differ from the mainline — enforced by `config/strfry/quarantine-db-guard.sh`. |
+| `DGRAPH_DATA_PATH` | `./data/dgraph` | Host path for Dgraph's data directory. |
+| `FWD_VERSION` | `dev` | Label baked into the event-forwarder image. |
+| `FWD_GIT_COMMIT` | `unknown` | Git SHA label for the forwarder image. |
+| `FWD_BUILD_TIME` | `unknown` | Build-time label for the forwarder image. |
+
+### `~/deepfry/whitelist.yaml` — whitelist client + server
+
+One file, two consumers. The whitelist **server** (runs next to Dgraph) reads the server fields; the **plugin** (runs inside StrFry) reads the client fields. Unknown keys are ignored, so the file can hold both.
+
+Server side (`ServerConfig` in `whitelist-plugin/pkg/config/config.go`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `dgraph_graphql_url` | `http://localhost:8080/graphql` | Dgraph GraphQL endpoint the server queries on each refresh. |
+| `refresh_interval` | `6h` | How often the server rebuilds its in-memory whitelist from Dgraph. |
+| `refresh_retry_count` | `3` | Retries per refresh attempt on failure. |
+| `idle_conn_timeout` | `90s` | HTTP keep-alive idle timeout. |
+| `http_timeout` | `30s` | Per-request HTTP timeout. |
+| `query_timeout` | `20m` | Dgraph query timeout (refreshes can pull millions of rows). |
+| `server_listen_addr` | `:8081` | HTTP listen address for `/check/{pk}`, `/health`, `/stats`. |
+| `debug` | `true` | Verbose logging. |
+
+Client side (`ClientConfig`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `server_url` | `http://localhost:8081` | Whitelist server the plugin calls to authorize writes. |
+| `check_timeout` | `2s` | Per-pubkey lookup timeout. |
+
+### `~/deepfry/router.yaml` — router plugin
+
+The router plugin is the whitelist plugin's superset: same accept/reject decision, plus it forwards rejected events to the quarantine relay. Selected by `plugin = "/app/plugins/router"` at `config/strfry/strfry.conf:117`.
+
+All keys honor the `ROUTER_` env-var prefix (e.g. `ROUTER_SERVER_URL`, `ROUTER_QUARANTINE_ENABLED`). Defaults in `whitelist-plugin/pkg/config/router_config.go`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `server_url` | `http://localhost:8081` | Whitelist server (same as the client plugin). |
+| `check_timeout` | `2s` | Per-pubkey lookup timeout. |
+| `quarantine.enabled` | `true` | Turn the quarantine side-channel on/off. Rejections still happen when off; they're just not forwarded. |
+| `quarantine.relay_url` | `ws://strfry-quarantine:7778` | WebSocket to the quarantine StrFry. |
+| `quarantine.buffer_size` | `10000` | In-memory queue for events awaiting publish to quarantine. |
+| `quarantine.publish_timeout` | `5s` | Per-event publish timeout. |
+| `quarantine.metrics_interval` | `60s` | Cadence for metrics log lines. |
+
+### `~/deepfry/web-of-trust.yaml` — WoT crawler
+
+Defaults in `web-of-trust/pkg/config/config.go`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `relay_urls` | `[damus.io, nos.lol, relay.nostr.band, nostr-pub.wellorder.net, relay.primal.net]` | Relays the crawler subscribes to (kind 3). |
+| `dgraph_addr` | `localhost:9080` | Dgraph gRPC endpoint. |
+| `pubkey` | *a default seed npub* | Starting point for graph traversal (npub or hex). |
+| `timeout` | `30s` | gRPC query timeout. |
+| `stale_pubkey_threshold` | `86400` (seconds) | Age after which a pubkey's follow list is re-fetched. |
+| `forward_relay_url` | *(empty)* | Optional outbound relay for republishing. |
+| `debug` | `false` | Verbose logging. |
+
+### Event forwarder (per container)
+
+Each `fwd-*` service in `docker-compose.evtfwd.yml` is configured via environment, set inline in the compose file. Defaults live in `event-forwarder/pkg/config/keys.go`; override them per service in the compose block.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `SOURCE_RELAY_URL` | *(required)* | Upstream relay (e.g. `wss://relay.damus.io`). |
+| `DEEPFRY_RELAY_URL` | *(required)* | Target (`ws://strfry:7777` in-network). |
+| `NOSTR_SYNC_SECKEY` | *(required)* | Signs kind-30078 sync-progress events; in compose this is wired to `${NOSTR_SYNC_SECKEY_LIVE}` or `${NOSTR_SYNC_SECKEY_HISTORY}`. |
+| `QUIET_MODE` | `false` | Disable the TUI (use for `docker logs`-style output). |
+| `SYNC_WINDOW_SECONDS` | `5` | Per-window duration. History forwarders use `3600`. |
+| `SYNC_MAX_BATCH` | `1000` | Events per window. History uses `5000`. |
+| `SYNC_MAX_CATCHUP_LAG_SECONDS` | `10` | When behind by more than this, the forwarder compresses windows. History uses `86400`. |
+| `SYNC_START_TIME` | *(empty → recent)* | RFC3339 start; history forwarders set `2020-01-01T00:00:00Z`. |
+| `NETWORK_INITIAL_BACKOFF_SECONDS` | `1` | Reconnect backoff floor. |
+| `NETWORK_MAX_BACKOFF_SECONDS` | `30` | Reconnect backoff ceiling. |
+| `NETWORK_BACKOFF_JITTER` | `0.2` | Randomization factor (0.0–1.0). |
+| `TIMEOUT_PUBLISH_SECONDS` | `10` | Per-event publish timeout. |
+| `TIMEOUT_SUBSCRIBE_SECONDS` | `10` | REQ subscribe timeout. |
+
+> One forwarder instance per (source relay, live/history) pair. Live and history must use **different** sync seckeys so their sync-progress events don't collide.
+
+### StrFry relay (`config/strfry/strfry.conf`)
+
+Stock StrFry config — consult [the StrFry docs](https://github.com/hoytech/strfry) for the full option list. Two things we set intentionally:
+
+| Key | Value | Purpose |
+|---|---|---|
+| `writePolicy.plugin` | `/app/plugins/router` (line 117) | Selects the router plugin over the plain whitelist plugin. Both binaries ship in the image; flip this to `/app/plugins/whitelist` to disable quarantine routing. |
+| `relay.port` | `7777` | WebSocket port (exposed on the host). |
+
+The quarantine relay uses `config/strfry/strfry-quarantine.conf` with **no** writePolicy plugin and a separate DB path. The `quarantine-db-guard.sh` entrypoint enforces DB separation (exit codes 1–4 signal specific safety failures).
+
+---
+
+## Split-machine deployment
+
+Running Dgraph on one machine and StrFry on another — use `switch-dgraph.sh`.
+
+```bash
+./switch-dgraph.sh remote    # prompts for the remote host, rewrites configs + compose networks
+./switch-dgraph.sh status    # shows current mode and the URLs each config points at
+./switch-dgraph.sh local     # restores from backups in .switch-dgraph-backups/
+```
+
+Files the script rewrites on `remote`:
+
+| File | Field updated |
+|---|---|
+| `config/whitelist/whitelist.yaml` | `server_url` → `http://<remote>:8081` |
+| `config/whitelist/whitelist-server.yaml` | `dgraph_graphql_url` → `http://<remote>:8080/graphql` |
+| `config/whitelist/router.yaml` | `server_url` → `http://<remote>:8081` |
+| `docker-compose.strfry.yml` | Renames `deepfry-net` → `strfry-net`, switches to a local bridge network. |
+| `docker-compose.evtfwd.yml` | Same network rename. |
+| `~/deepfry/web-of-trust.yaml` | `dgraph_addr` → `<remote>:9080` (only if the file exists). |
+
+Originals are backed up to `.switch-dgraph-backups/` and restored by `switch-dgraph.sh local`.
 
 ---
 

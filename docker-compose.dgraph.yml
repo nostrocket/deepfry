@@ -11,7 +11,7 @@ services:
       - "8080:8080" # HTTP (GraphQL+/Admin)
       - "9080:9080" # gRPC
     volumes:
-      - ./data/dgraph:/dgraph
+      - ${DGRAPH_DATA_PATH:-./data/dgraph}:/dgraph
       - ./config/dgraph/schema.graphql:/dgraph-seed/schema.graphql
       - ./config/dgraph/seed_data.graphql:/dgraph-seed/seed_data.graphql
       - ./config/dgraph/entrypoint.sh:/entrypoint.sh:ro
