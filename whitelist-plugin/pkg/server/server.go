@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+	"whitelist-plugin/pkg/version"
 	"whitelist-plugin/pkg/whitelist"
 )
 
@@ -44,6 +45,7 @@ func (s *WhitelistServer) Handler() http.Handler {
 	mux.HandleFunc("GET /check/{pubkey}", s.handleCheck)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	mux.HandleFunc("GET /version", s.handleVersion)
 	return mux
 }
 
@@ -124,4 +126,9 @@ func (s *WhitelistServer) handleStats(w http.ResponseWriter, r *http.Request) {
 		Entries:     s.entries.Load(),
 		LastRefresh: refreshStr,
 	})
+}
+
+func (s *WhitelistServer) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(version.Info())
 }

@@ -276,21 +276,35 @@ The quarantine relay uses `config/strfry/strfry-quarantine.conf` with **no** wri
 Running Dgraph on one machine and StrFry on another — use `switch-dgraph.sh`.
 
 ```bash
-./switch-dgraph.sh remote    # prompts for the remote host, rewrites configs + compose networks
-./switch-dgraph.sh status    # shows current mode and the URLs each config points at
-./switch-dgraph.sh local     # restores from backups in .switch-dgraph-backups/
+./switch-dgraph.sh remote              # auto-discovers hosts via masscan, prompts to confirm
+./switch-dgraph.sh remote --yes        # auto-discovers, skips prompts (prefers version-matched whitelist)
+./switch-dgraph.sh remote --host <ip>  # skip discovery, use this host for all services (implies --yes)
+./switch-dgraph.sh status              # shows current mode and the URLs each config points at
+./switch-dgraph.sh local               # restores from backups in .switch-dgraph-backups/
 ```
+
+Discovery scans the LAN (the default-route interface's `/24`) via `masscan` for Dgraph HTTP (8080), Dgraph gRPC (9080), StrFry (7777), and the whitelist server (8081). Each candidate is then probed over HTTP to confirm the service is actually there:
+
+- Dgraph via `GET /health`
+- StrFry via the NIP-11 relay info doc
+- Whitelist via `GET /version` — the returned commit is compared against this checkout's `git rev-parse --short HEAD`
+
+When multiple whitelist candidates exist and `--yes` is set, the version-matched one wins. If only one whitelist candidate is found and it mismatches, the script accepts it with a warning. If multiple mismatched candidates are found under `--yes`, the script drops back to an interactive prompt for safety.
+
+`masscan` is installed on demand (first run): `brew install masscan` on macOS; `apt`/`dnf`/`yum`/`pacman`/`apk` on Linux. The scan itself requires `sudo`.
 
 Files the script rewrites on `remote`:
 
 | File | Field updated |
 |---|---|
-| `config/whitelist/whitelist.yaml` | `server_url` → `http://<remote>:8081` |
-| `config/whitelist/whitelist-server.yaml` | `dgraph_graphql_url` → `http://<remote>:8080/graphql` |
-| `config/whitelist/router.yaml` | `server_url` → `http://<remote>:8081` |
+| `config/whitelist/whitelist.yaml` | `server_url` → `http://<whitelist>:8081` |
+| `config/whitelist/whitelist-server.yaml` | `dgraph_graphql_url` → `http://<dgraph>:8080/graphql` |
+| `config/whitelist/router.yaml` | `server_url` → `http://<whitelist>:8081` |
 | `docker-compose.strfry.yml` | Renames `deepfry-net` → `strfry-net`, switches to a local bridge network. |
 | `docker-compose.evtfwd.yml` | Same network rename. |
-| `~/deepfry/web-of-trust.yaml` | `dgraph_addr` → `<remote>:9080` (only if the file exists). |
+| `~/deepfry/web-of-trust.yaml` | `dgraph_addr` → `<dgraph>:9080`, `forward_relay_url` → `ws://<strfry>:7777` (only if the file exists). |
+
+For the `/version` check to be useful, the whitelist server needs to be built with its git commit embedded — set `WL_GIT_COMMIT` in `.env` before `docker-compose build whitelist-server` (see `.env.example`).
 
 Originals are backed up to `.switch-dgraph-backups/` and restored by `switch-dgraph.sh local`.
 

@@ -1,9 +1,17 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /build
 COPY whitelist-plugin/ .
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -a -installsuffix cgo \
-    -ldflags "-w -s -extldflags '-static'" \
+    -ldflags "-w -s -extldflags '-static' \
+      -X 'whitelist-plugin/pkg/version.Version=${VERSION}' \
+      -X 'whitelist-plugin/pkg/version.Commit=${GIT_COMMIT}' \
+      -X 'whitelist-plugin/pkg/version.Built=${BUILD_TIME}'" \
     -tags netgo \
     -o /whitelist-server ./cmd/server
 

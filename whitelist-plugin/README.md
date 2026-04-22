@@ -23,6 +23,7 @@ A system that enforces web-of-trust based write access on StrFry relays. A centr
                     │    GET /check/{pubkey}             │
                     │    GET /health                     │
                     │    GET /stats                      │
+                    │    GET /version                    │
                     └──────────────┬───────────────────┘
                                    │
               ┌────────────────────┼────────────────────┐
@@ -90,6 +91,9 @@ curl http://localhost:8081/stats
 | `/check/{pubkey}` | GET | Check if a 64-char hex pubkey is whitelisted | `{"whitelisted": true}` or `{"whitelisted": false}` |
 | `/health` | GET | Readiness check | `200 ok` when whitelist loaded, `503` before |
 | `/stats` | GET | Cache statistics | `{"entries": 45000, "last_refresh": "2026-04-16T07:00:00Z"}` |
+| `/version` | GET | Build info (injected via ldflags at build time) | `{"version": "dev", "commit": "abc1234", "built": "2026-04-22T12:00:00Z"}` |
+
+`/version` is what `switch-dgraph.sh` queries to verify the whitelist server on the LAN was built from the same git HEAD as this checkout. Pass `WL_GIT_COMMIT=$(git rev-parse --short HEAD)` when building the image (see `.env.example`) so the check is meaningful.
 
 ### How It Works
 
@@ -298,7 +302,7 @@ whitelist-plugin/
 │   │   ├── dgraph_repository.go # Paginated GraphQL fetch from Dgraph
 │   │   └── simple_repository.go # Hardcoded keys for testing
 │   ├── server/
-│   │   ├── server.go            # HTTP server (/check, /health, /stats)
+│   │   ├── server.go            # HTTP server (/check, /health, /stats, /version)
 │   │   └── server_test.go
 │   └── whitelist/
 │       ├── whitelist.go         # Lock-free in-memory map (atomic.Pointer)
@@ -385,6 +389,7 @@ The `Checker` interface is the key abstraction that decouples the handler from t
 | FR-07 | Cache whitelist in memory with O(1) lookups | Done |
 | FR-08 | Async periodic refresh with atomic swap (no read stalls) | Done |
 | FR-09 | Expose last-refresh metadata (/stats endpoint) | Done |
+| FR-10 | Expose build info (/version endpoint) for LAN version-match checks | Done |
 | NFR-02 | Handle malformed JSON gracefully | Done |
 | NFR-04 | Fail closed by default | Done |
 | NFR-06 | Handle 10k events/sec in handler path | Done (benchmark verified) |

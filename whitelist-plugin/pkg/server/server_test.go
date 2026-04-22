@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"whitelist-plugin/pkg/version"
 	"whitelist-plugin/pkg/whitelist"
 )
 
@@ -158,5 +159,28 @@ func TestHandleStats(t *testing.T) {
 	}
 	if body2.LastRefresh == "" {
 		t.Fatal("expected non-empty last_refresh")
+	}
+}
+
+func TestHandleVersion(t *testing.T) {
+	_, ts := setupServer(nil, true)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/version")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var body version.BuildInfo
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if body.Version != version.Version || body.Commit != version.Commit || body.Built != version.Built {
+		t.Fatalf("mismatch: got %+v, want %+v", body, version.Info())
 	}
 }

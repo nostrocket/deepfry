@@ -19,9 +19,9 @@ else
     BINARY_EXT =
 endif
 
-LDFLAGS=-X 'event-forwarder/pkg/version.Version=$(VERSION)' \
-        -X 'event-forwarder/pkg/version.Commit=$(GIT_COMMIT)' \
-        -X 'event-forwarder/pkg/version.Built=$(BUILD_TIME)'
+LDFLAGS=-X 'whitelist-plugin/pkg/version.Version=$(VERSION)' \
+        -X 'whitelist-plugin/pkg/version.Commit=$(GIT_COMMIT)' \
+        -X 'whitelist-plugin/pkg/version.Built=$(BUILD_TIME)'
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
