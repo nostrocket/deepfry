@@ -22,19 +22,26 @@ PORT_WHITELIST=8081
 
 ASSUME_YES=0
 EXPLICIT_HOST=""
+EXPLICIT_SUBNET=""
+VERBOSE=0
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") <command> [flags]
 
 Commands:
-  remote [--yes|-y] [--host <ip>]
+  remote [--yes|-y] [--host <ip>] [--subnet <cidr>] [--verbose|-v]
             Point this machine's strfry at a remote Dgraph + whitelist-server.
             Auto-discovers hosts on the LAN via masscan (installed on demand).
-            --yes     Skip confirmation prompts (still prompts on whitelist
-                      version mismatch when alternative candidates exist).
-            --host X  Skip discovery and use X for Dgraph, whitelist, and
-                      strfry. Implies --yes.
+            --yes         Skip confirmation prompts (still prompts on whitelist
+                          version mismatch when alternative candidates exist).
+            --host X      Skip discovery and use X for Dgraph, whitelist, and
+                          strfry. Implies --yes.
+            --subnet CIDR Override the default-route subnet masscan scans
+                          (e.g. 192.168.2.0/24). Useful when the auto-detected
+                          interface isn't the one the services live on (VPN,
+                          multiple NICs, etc.).
+            --verbose     Print raw masscan output and per-host probe results.
   local     Switch back to single-machine mode (everything on deepfry-net).
   status    Show current mode.
 
@@ -129,33 +136,51 @@ ensure_masscan() {
     fi
 }
 
-# Echoes a single CIDR (a.b.c.0/24) for the default-route interface.
-detect_subnet() {
-    local os iface addr
+# Echoes every non-loopback /24 the host is attached to, space-separated.
+detect_subnets() {
+    local os subnets
     os=$(uname -s)
 
     if [[ "$os" == "Darwin" ]]; then
-        iface=$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')
-        [[ -z "$iface" ]] && { echo "Could not determine default interface." >&2; return 1; }
-        addr=$(ifconfig "$iface" 2>/dev/null | awk '/inet / {print $2; exit}')
+        # macOS: walk every inet entry, coerce each to a /24.
+        subnets=$(ifconfig 2>/dev/null | awk '
+            /inet / && $2 !~ /^127\./ {
+                split($2, o, ".")
+                print o[1]"."o[2]"."o[3]".0/24"
+            }' | sort -u | tr '\n' ' ')
     else
-        iface=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')
-        [[ -z "$iface" ]] && { echo "Could not determine default interface." >&2; return 1; }
-        addr=$(ip -o -4 addr show "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+        # Linux: ip prints CIDRs directly; coerce each to its /24 base.
+        subnets=$(ip -o -4 addr show 2>/dev/null | awk '{print $4}' | \
+            awk -F/ '$1 !~ /^127\./ {split($1, o, "."); print o[1]"."o[2]"."o[3]".0/24"}' | \
+            sort -u | tr '\n' ' ')
     fi
 
-    [[ -z "$addr" ]] && { echo "Could not determine local IP on $iface." >&2; return 1; }
-    echo "$(echo "$addr" | awk -F. '{print $1"."$2"."$3".0"}')/24"
+    [[ -z "$subnets" ]] && { echo "No non-loopback subnets found." >&2; return 1; }
+    echo "$subnets"
 }
 
-# Writes "host port" lines to stdout (one per open port).
+# Writes "host port" lines to stdout. Fatal on sudo/masscan error.
+# $1 is a space-separated list of CIDRs; masscan accepts them all in one run.
 run_masscan() {
-    local subnet="$1"
+    local subnets="$1"
     local ports="${PORT_STRFRY},${PORT_DGRAPH_HTTP},${PORT_WHITELIST},${PORT_DGRAPH_GRPC}"
-    local out
-    out=$(sudo masscan -p "$ports" "$subnet" --rate=1000 -oL - 2>/dev/null || true)
+    local tmp
+    tmp=$(mktemp -t masscan.XXXXXX)
+    sudo -v || { echo "sudo authentication failed." >&2; rm -f "$tmp"; return 1; }
+    # shellcheck disable=SC2086
+    if ! sudo masscan -p "$ports" $subnets --rate=1000 -oL "$tmp" >/dev/null; then
+        echo "masscan failed (see stderr above)." >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "--- raw masscan output ---" >&2
+        cat "$tmp" >&2
+        echo "--- end masscan ---" >&2
+    fi
     # -oL format: "open tcp <port> <ip> <timestamp>"
-    echo "$out" | awk '$1=="open" {print $4, $3}'
+    awk '$1=="open" {print $4, $3}' "$tmp"
+    rm -f "$tmp"
 }
 
 # Prints probe results to stderr and echoes "host" on stdout for matches.
@@ -183,13 +208,28 @@ verify_strfry() {
     [[ -n "$body" ]] && echo "$body" | grep -q '"supported_nips"'
 }
 
-# Echoes the remote short commit on success; empty string on failure.
+# Echoes one of:
+#   <short-sha>  — /version responded with a real commit
+#   unavailable  — /version missing/placeholder but /health answered
+# Returns non-zero if neither endpoint responded.
 verify_whitelist() {
     local host="$1"
-    local body
+    local body commit
     body=$(curl -fsS -m 2 "http://${host}:${PORT_WHITELIST}/version" 2>/dev/null || true)
-    [[ -z "$body" ]] && return 1
-    echo "$body" | sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+    if [[ -n "$body" ]]; then
+        commit=$(echo "$body" | sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        case "$commit" in
+            ""|none|unknown) ;;       # fall through to /health probe
+            *) echo "$commit"; return 0 ;;
+        esac
+    fi
+    # /health returns 200 when ready or 503 while loading — both mean "server is there".
+    local code
+    code=$(curl -s -o /dev/null -m 2 -w "%{http_code}" "http://${host}:${PORT_WHITELIST}/health" 2>/dev/null || echo "000")
+    case "$code" in
+        200|503) echo "unavailable"; return 0 ;;
+    esac
+    return 1
 }
 
 # Picks a host for a service, interactively if needed.
@@ -257,14 +297,17 @@ pick_whitelist_host() {
         return 0
     fi
 
-    # Partition into matched / mismatched tokens, preserving order.
-    local matched="" mismatched=""
-    local entry host commit n_match=0 n_mismatch=0
+    # Partition into match / mismatch / unavailable, preserving order.
+    local matched="" mismatched="" unavailable=""
+    local entry host commit n_match=0 n_mismatch=0 n_unavailable=0
     for entry in "$@"; do
         host="${entry%%|*}"
         commit="${entry#*|}"
         [[ "$commit" == "$entry" ]] && commit=""
-        if [[ -n "$local_commit" && "$commit" == "$local_commit" ]]; then
+        if [[ "$commit" == "unavailable" ]]; then
+            unavailable="$unavailable $entry"
+            n_unavailable=$((n_unavailable + 1))
+        elif [[ -n "$local_commit" && "$commit" == "$local_commit" ]]; then
             matched="$matched $entry"
             n_match=$((n_match + 1))
         else
@@ -275,11 +318,13 @@ pick_whitelist_host() {
 
     echo "  whitelist candidates (local HEAD: ${local_commit:-unknown}):"
     local i=1
-    for entry in $matched $mismatched; do
+    for entry in $matched $mismatched $unavailable; do
         host="${entry%%|*}"
         commit="${entry#*|}"
         [[ "$commit" == "$entry" ]] && commit=""
-        if [[ -n "$local_commit" && "$commit" == "$local_commit" ]]; then
+        if [[ "$commit" == "unavailable" ]]; then
+            echo "    [$i] $host  [version unavailable: server has no /version or no commit embedded]"
+        elif [[ -n "$local_commit" && "$commit" == "$local_commit" ]]; then
             echo "    [$i] $host  [version match: $commit]"
         else
             echo "    [$i] $host  [version mismatch: remote=${commit:-unknown} local=${local_commit:-unknown}]"
@@ -287,14 +332,14 @@ pick_whitelist_host() {
         i=$((i + 1))
     done
 
-    local n_total=$((n_match + n_mismatch))
+    local n_total=$((n_match + n_mismatch + n_unavailable))
     local reply picked=""
 
     if [[ $ASSUME_YES -eq 1 ]]; then
         if [[ $n_match -gt 0 ]]; then
             picked=$(echo $matched | awk '{print $1}')
         elif [[ $n_total -eq 1 ]]; then
-            picked=$(echo $mismatched | awk '{print $1}')
+            picked=$(echo $mismatched $unavailable | awk '{print $1}')
             echo "  Warning: only one whitelist candidate and it does not match local HEAD." >&2
         else
             echo "  Multiple whitelist candidates found, none matching local HEAD." >&2
@@ -304,7 +349,7 @@ pick_whitelist_host() {
                 chosen=""; return 0
             fi
             if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "$n_total" ]; then
-                picked=$(echo $matched $mismatched | awk -v idx="$reply" '{print $idx}')
+                picked=$(echo $matched $mismatched $unavailable | awk -v idx="$reply" '{print $idx}')
             else
                 chosen="$reply"
                 return 0
@@ -316,7 +361,7 @@ pick_whitelist_host() {
             chosen=""; return 0
         fi
         if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "$n_total" ]; then
-            picked=$(echo $matched $mismatched | awk -v idx="$reply" '{print $idx}')
+            picked=$(echo $matched $mismatched $unavailable | awk -v idx="$reply" '{print $idx}')
         else
             chosen="$reply"
             return 0
@@ -341,16 +386,27 @@ discover_and_pick() {
 
     ensure_masscan
 
-    local subnet
-    if ! subnet=$(detect_subnet); then
+    local subnets
+    if [[ -n "$EXPLICIT_SUBNET" ]]; then
+        # Accept comma- or space-separated list.
+        subnets=$(echo "$EXPLICIT_SUBNET" | tr ',' ' ')
+    elif ! subnets=$(detect_subnets); then
         echo "Subnet detection failed; falling back to manual entry." >&2
         fallback_manual
         return
     fi
 
-    echo "Scanning $subnet for Dgraph/StrFry/whitelist endpoints..."
+    echo "Scanning subnets: $subnets"
     local scan
-    scan=$(run_masscan "$subnet")
+    if ! scan=$(run_masscan "$subnets"); then
+        echo "masscan scan failed; falling back to manual entry." >&2
+        fallback_manual
+        return
+    fi
+
+    local hit_count
+    hit_count=$(echo "$scan" | grep -c . || true)
+    echo "  masscan reported $hit_count open-port hit(s)."
 
     # Always include localhost as a probe candidate (masscan usually skips it).
     scan=$(printf "%s\n127.0.0.1 %d\n127.0.0.1 %d\n127.0.0.1 %d\n127.0.0.1 %d\n" \
@@ -371,18 +427,27 @@ discover_and_pick() {
                 case " $dgraph_http_cands " in *" $host "*) continue ;; esac
                 if verify_dgraph_http "$host"; then
                     dgraph_http_cands="$dgraph_http_cands $host"
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] dgraph-http ${host}:${port} OK" >&2
+                else
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] dgraph-http ${host}:${port} FAIL (/health not 200)" >&2
                 fi
                 ;;
             "$PORT_DGRAPH_GRPC")
                 case " $dgraph_grpc_cands " in *" $host "*) continue ;; esac
                 if verify_dgraph_grpc "$host"; then
                     dgraph_grpc_cands="$dgraph_grpc_cands $host"
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] dgraph-grpc ${host}:${port} OK" >&2
+                else
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] dgraph-grpc ${host}:${port} FAIL (TCP closed)" >&2
                 fi
                 ;;
             "$PORT_STRFRY")
                 case " $strfry_cands " in *" $host "*) continue ;; esac
                 if verify_strfry "$host"; then
                     strfry_cands="$strfry_cands $host"
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] strfry ${host}:${port} OK" >&2
+                else
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] strfry ${host}:${port} FAIL (no NIP-11 doc)" >&2
                 fi
                 ;;
             "$PORT_WHITELIST")
@@ -390,6 +455,9 @@ discover_and_pick() {
                 local commit
                 if commit=$(verify_whitelist "$host") && [[ -n "$commit" ]]; then
                     whitelist_entries="$whitelist_entries $host|$commit"
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] whitelist ${host}:${port} OK (commit=$commit)" >&2
+                else
+                    [[ $VERBOSE -eq 1 ]] && echo "  [probe] whitelist ${host}:${port} FAIL (/version not available)" >&2
                 fi
                 ;;
         esac
@@ -534,6 +602,8 @@ switch_remote() {
     if [[ -n "$WHITELIST_REMOTE_COMMIT" ]]; then
         if [[ "$WHITELIST_COMMIT_MATCHES" == "1" ]]; then
             echo "                    [version match: $WHITELIST_REMOTE_COMMIT]"
+        elif [[ "$WHITELIST_REMOTE_COMMIT" == "unavailable" ]]; then
+            echo "                    [version unavailable: rebuild whitelist-server to embed commit]"
         else
             local local_commit
             local_commit=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -604,6 +674,7 @@ parse_remote_flags() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -y|--yes) ASSUME_YES=1; shift ;;
+            -v|--verbose) VERBOSE=1; shift ;;
             --host)
                 [[ $# -lt 2 ]] && { echo "--host requires a value" >&2; usage; }
                 EXPLICIT_HOST="$2"
@@ -613,6 +684,15 @@ parse_remote_flags() {
             --host=*)
                 EXPLICIT_HOST="${1#--host=}"
                 ASSUME_YES=1
+                shift
+                ;;
+            --subnet)
+                [[ $# -lt 2 ]] && { echo "--subnet requires a value" >&2; usage; }
+                EXPLICIT_SUBNET="$2"
+                shift 2
+                ;;
+            --subnet=*)
+                EXPLICIT_SUBNET="${1#--subnet=}"
                 shift
                 ;;
             *) echo "Unknown flag: $1" >&2; usage ;;

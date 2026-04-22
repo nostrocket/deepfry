@@ -93,7 +93,7 @@ curl http://localhost:8081/stats
 | `/stats` | GET | Cache statistics | `{"entries": 45000, "last_refresh": "2026-04-16T07:00:00Z"}` |
 | `/version` | GET | Build info (injected via ldflags at build time) | `{"version": "dev", "commit": "abc1234", "built": "2026-04-22T12:00:00Z"}` |
 
-`/version` is what `switch-dgraph.sh` queries to verify the whitelist server on the LAN was built from the same git HEAD as this checkout. Pass `WL_GIT_COMMIT=$(git rev-parse --short HEAD)` when building the image (see `.env.example`) so the check is meaningful.
+`/version` is what `switch-dgraph.sh` queries to verify the whitelist server on the LAN was built from the same git HEAD as this checkout. The commit is stamped automatically by Go's `-buildvcs=auto` at build time — no env vars required. A dirty working tree gets a `-dirty` suffix.
 
 ### How It Works
 

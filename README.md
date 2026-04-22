@@ -276,20 +276,22 @@ The quarantine relay uses `config/strfry/strfry-quarantine.conf` with **no** wri
 Running Dgraph on one machine and StrFry on another — use `switch-dgraph.sh`.
 
 ```bash
-./switch-dgraph.sh remote              # auto-discovers hosts via masscan, prompts to confirm
-./switch-dgraph.sh remote --yes        # auto-discovers, skips prompts (prefers version-matched whitelist)
-./switch-dgraph.sh remote --host <ip>  # skip discovery, use this host for all services (implies --yes)
-./switch-dgraph.sh status              # shows current mode and the URLs each config points at
-./switch-dgraph.sh local               # restores from backups in .switch-dgraph-backups/
+./switch-dgraph.sh remote                   # auto-discovers hosts via masscan, prompts to confirm
+./switch-dgraph.sh remote --yes             # auto-discovers, skips prompts (prefers version-matched whitelist)
+./switch-dgraph.sh remote --host <ip>       # skip discovery, use this host for all services (implies --yes)
+./switch-dgraph.sh remote --subnet <cidr>   # scan this CIDR instead of the default-route subnet
+./switch-dgraph.sh remote --verbose         # print raw masscan output + per-probe results for debugging
+./switch-dgraph.sh status                   # shows current mode and the URLs each config points at
+./switch-dgraph.sh local                    # restores from backups in .switch-dgraph-backups/
 ```
 
-Discovery scans the LAN (the default-route interface's `/24`) via `masscan` for Dgraph HTTP (8080), Dgraph gRPC (9080), StrFry (7777), and the whitelist server (8081). Each candidate is then probed over HTTP to confirm the service is actually there:
+Discovery scans every non-loopback `/24` the host is attached to (so Docker-internal subnets and the real LAN both get covered) via `masscan` for Dgraph HTTP (8080), Dgraph gRPC (9080), StrFry (7777), and the whitelist server (8081). Use `--subnet 192.168.30.0/24` (comma/space-separated accepted) to narrow or redirect the scan. Each candidate is then probed over HTTP to confirm the service is actually there:
 
 - Dgraph via `GET /health`
 - StrFry via the NIP-11 relay info doc
-- Whitelist via `GET /version` — the returned commit is compared against this checkout's `git rev-parse --short HEAD`
+- Whitelist via `GET /version` — the returned commit is compared against this checkout's `git rev-parse --short HEAD`. Servers built before `/version` existed, or servers that couldn't read their own commit, still show up as candidates but are labelled `[version unavailable]`.
 
-When multiple whitelist candidates exist and `--yes` is set, the version-matched one wins. If only one whitelist candidate is found and it mismatches, the script accepts it with a warning. If multiple mismatched candidates are found under `--yes`, the script drops back to an interactive prompt for safety.
+When multiple whitelist candidates exist and `--yes` is set, the version-matched one wins. If only one whitelist candidate is found and it mismatches (or is unavailable), the script accepts it with a warning. If multiple non-matching candidates are found under `--yes`, the script drops back to an interactive prompt for safety.
 
 `masscan` is installed on demand (first run): `brew install masscan` on macOS; `apt`/`dnf`/`yum`/`pacman`/`apk` on Linux. The scan itself requires `sudo`.
 
@@ -304,7 +306,7 @@ Files the script rewrites on `remote`:
 | `docker-compose.evtfwd.yml` | Same network rename. |
 | `~/deepfry/web-of-trust.yaml` | `dgraph_addr` → `<dgraph>:9080`, `forward_relay_url` → `ws://<strfry>:7777` (only if the file exists). |
 
-For the `/version` check to be useful, the whitelist server needs to be built with its git commit embedded — set `WL_GIT_COMMIT` in `.env` before `docker-compose build whitelist-server` (see `.env.example`).
+The whitelist server embeds its git commit automatically via Go's `-buildvcs=auto` (the Dockerfile copies `.git` into the build context). `docker compose -f docker-compose.dgraph.yml up -d --build whitelist-server` is all you need — no env vars.
 
 Originals are backed up to `.switch-dgraph-backups/` and restored by `switch-dgraph.sh local`.
 

@@ -1,17 +1,17 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /build
-COPY whitelist-plugin/ .
 
-ARG VERSION=dev
-ARG GIT_COMMIT=unknown
-ARG BUILD_TIME=unknown
+# Copy the repo's .git so Go's -buildvcs=auto (default) stamps commit, time,
+# and dirty-tree status into the binary. Read at runtime via
+# runtime/debug.ReadBuildInfo by whitelist-plugin/pkg/version.
+COPY .git /build/.git
+COPY whitelist-plugin /build/whitelist-plugin
+
+WORKDIR /build/whitelist-plugin
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -a -installsuffix cgo \
-    -ldflags "-w -s -extldflags '-static' \
-      -X 'whitelist-plugin/pkg/version.Version=${VERSION}' \
-      -X 'whitelist-plugin/pkg/version.Commit=${GIT_COMMIT}' \
-      -X 'whitelist-plugin/pkg/version.Built=${BUILD_TIME}'" \
+    -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
     -o /whitelist-server ./cmd/server
 

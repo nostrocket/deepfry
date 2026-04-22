@@ -42,10 +42,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.whitelist-server
-      args:
-        VERSION: ${WL_VERSION:-dev}
-        GIT_COMMIT: ${WL_GIT_COMMIT:-unknown}
-        BUILD_TIME: ${WL_BUILD_TIME:-unknown}
     container_name: whitelist-server
     restart: unless-stopped
     ports:
