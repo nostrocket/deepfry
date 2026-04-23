@@ -664,9 +664,40 @@ switch_remote() {
         discover_and_pick
     fi
 
-    if [[ -z "$DGRAPH_HOST" || -z "$WHITELIST_HOST" || -z "$STRFRY_HOST" ]]; then
-        echo "Error: missing host for one or more services (dgraph=${DGRAPH_HOST:-none}, whitelist=${WHITELIST_HOST:-none}, strfry=${STRFRY_HOST:-none})." >&2
+    # Dgraph is the only hard requirement (it's what this script primarily switches).
+    # Whitelist and strfry commonly live alongside dgraph on a shared remote box —
+    # if discovery couldn't resolve them independently, default to the dgraph host
+    # so the common "everything on one remote" case doesn't silently fail.
+    if [[ -z "$DGRAPH_HOST" ]]; then
+        echo "" >&2
+        echo "ERROR: no Dgraph host resolved. Nothing written." >&2
+        echo "  dgraph=${DGRAPH_HOST:-none} whitelist=${WHITELIST_HOST:-none} strfry=${STRFRY_HOST:-none}" >&2
+        echo "" >&2
+        echo "  Re-run with --host <ip> to skip discovery, or --verbose to see why probes failed." >&2
         exit 1
+    fi
+    if [[ -z "$WHITELIST_HOST" ]]; then
+        echo "  (no whitelist-server discovered — defaulting to dgraph host: $DGRAPH_HOST)"
+        WHITELIST_HOST="$DGRAPH_HOST"
+    fi
+    if [[ -z "$STRFRY_HOST" ]]; then
+        echo "  (no strfry discovered — defaulting to dgraph host: $DGRAPH_HOST)"
+        STRFRY_HOST="$DGRAPH_HOST"
+    fi
+
+    echo ""
+    echo "Resolved endpoints — about to write configs:"
+    echo "  Dgraph HTTP :   http://${DGRAPH_HOST}:${PORT_DGRAPH_HTTP}"
+    echo "  Dgraph gRPC :   ${DGRAPH_HOST}:${PORT_DGRAPH_GRPC}"
+    echo "  Whitelist   :   http://${WHITELIST_HOST}:${PORT_WHITELIST}"
+    echo "  StrFry      :   ws://${STRFRY_HOST}:${PORT_STRFRY}"
+    echo ""
+    if [[ $ASSUME_YES -eq 0 ]]; then
+        local reply
+        read -rp "Apply these settings? [Y/n] " reply
+        case "$reply" in
+            n|N) echo "Aborted — nothing written."; exit 0 ;;
+        esac
     fi
 
     apply_remote_configs
@@ -690,12 +721,19 @@ switch_remote() {
     echo "  gRPC endpoint:    ${DGRAPH_HOST}:${PORT_DGRAPH_GRPC}"
     echo "  StrFry forward:   ws://${STRFRY_HOST}:${PORT_STRFRY}"
     echo ""
-    echo "On this machine (strfry):"
-    echo "  docker-compose -f docker-compose.strfry.yml up -d"
-    echo "  docker-compose -f docker-compose.evtfwd.yml up -d"
+    echo "Mode: remote — verify with \`$(basename "$0") status\`"
     echo ""
-    echo "On the remote machine (dgraph):"
-    echo "  docker-compose -f docker-compose.dgraph.yml up -d"
+    echo "Restart strfry on whichever machine(s) run it (the writePolicy plugin"
+    echo "only reads whitelist.yaml / router.yaml at strfry startup):"
+    echo "  docker compose -f docker-compose.strfry.yml restart"
+    echo "  docker compose -f docker-compose.evtfwd.yml restart"
+    echo ""
+    echo "If strfry runs on a different machine than this one, copy the updated"
+    echo "config/whitelist/*.yaml over to that machine first (or run this script"
+    echo "there too)."
+    echo ""
+    echo "On the remote dgraph machine (if not already running):"
+    echo "  docker compose -f docker-compose.dgraph.yml up -d"
 }
 
 switch_local() {
