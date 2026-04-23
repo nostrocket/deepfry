@@ -436,7 +436,11 @@ pick_whitelist_host() {
     if [[ -n "$local_commit" && "$commit" == "$local_commit" ]]; then
         chosen_commit_matches=1
     fi
-    [[ $ASSUME_YES -eq 1 ]] && echo "  whitelist: $chosen (auto-selected)"
+    # NB: don't end on `[[ ]] && cmd` — when the test is false under set -e the
+    # function returns non-zero and the script exits silently. Use an explicit if.
+    if [[ $ASSUME_YES -eq 1 ]]; then
+        echo "  whitelist: $chosen (auto-selected)"
+    fi
 }
 
 # --- Remote switch ---------------------------------------------------------
