@@ -31,6 +31,7 @@ We welcome external contributors.
 | 6   | Embeddings Generator                 | Produce embeddings for search                                                    | Vector DB (TBA)                | —                                  |
 | 7   | Profile Builder                      | Aggregate actions: likes, mutes, replies, reposts, zaps                          | ID references in profile store | 18, 25, 51, 57                     |
 | 8   | Thread Inference Engine              | Build thread graphs from replies/quotes                                          | Dgraph (event-id graph)        | 1                                  |
+| 9   | Quarantine Rescuer                   | One-shot CLI: pull events from quarantine back to mainline when their author becomes whitelisted | None (operates on StrFry LMDBs via `strfry export`/`delete`) | 1                                  |
 
 ---
 
@@ -42,6 +43,7 @@ We welcome external contributors.
 - **Search Plugin** in StrFry handles NIP-50 requests and calls the **Semantic Search Service**.
 - **Semantic Search** indexes events using **Embeddings Generator** and ranks them using semantic similarity, BM25, and trust scores.
 - **Profile Builder** and **Thread Inference Engine** consume events from StrFry to build profiles and thread graphs.
+- **Quarantine Rescuer** is the inverse of the router plugin: when the WoT crawler discovers a previously-unknown pubkey and Dgraph promotes it, this CLI replays that pubkey's quarantined events into mainline so nothing is lost across the freshness gap.
 
 ---
 
@@ -154,6 +156,11 @@ Paths can be absolute or relative to the project directory. Unset variables fall
 curl http://localhost:8081/health
 curl http://localhost:8081/stats
 curl http://localhost:8081/check/<64-char-hex-pubkey>
+
+# Rescue quarantined events whose author is now whitelisted.
+# Reads ~/deepfry/whitelist.yaml; calls docker exec against strfry-quarantine.
+# See quarantine-rescuer/README.md for flags and operational notes.
+( cd quarantine-rescuer && make build && ./bin/quarantine-rescue --dry-run )
 ```
 
 ---

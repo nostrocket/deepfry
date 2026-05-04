@@ -60,7 +60,7 @@ Capture non-whitelisted events in a queryable form so the operator can **observe
 - N1. Spam classification beyond trivial garbage rejection.
 - N2. Human review UI or API.
 - N3. Parallel-WoT detection / cluster analysis.
-- N4. Decision logic for "promote this pubkey to the whitelist" — we are gathering data first.
+- N4. Decision logic for "promote this pubkey to the whitelist" — we are gathering data first. (See "Recovery path" below for the related-but-separate problem of replaying quarantined events when a pubkey is *separately* added to the whitelist by the WoT crawler.)
 - N5. Long-term retention guarantees for quarantine events (7-day rolling window is acceptable).
 - N6. Horizontal scaling / HA — single-instance quarantine is fine for MVP.
 - N7. Public access to the quarantine relay — it is internal-only.
@@ -531,6 +531,18 @@ Restart the strfry container. Rollback = revert the line, restart. NFR-4 (≤ 1 
 ### 9.2 Quarantine retention
 
 LMDB grows unbounded by default. Add a simple cron-style cleanup: a sidecar container (or host cron) that runs `strfry delete --age=604800` (7 days) nightly against the quarantine db. Out of scope to automate in this spec — document as a day-2 operational task.
+
+### 9.2.1 Recovery path (quarantine-rescuer)
+
+The router moves events from mainline → quarantine on reject. The inverse path — quarantine → mainline when a pubkey *later* becomes whitelisted (typically because the WoT crawler discovered them on its next pass) — is implemented as a separate one-shot CLI in `quarantine-rescuer/`.
+
+Mechanics (see `quarantine-rescuer/README.md` for full detail):
+- Reads `~/deepfry/whitelist.yaml` to reach the same whitelist server the router uses, so the rescuer's view of "who is whitelisted" never diverges from mainline's.
+- Reads quarantine via `docker exec strfry-quarantine /app/strfry … export` (read-only LMDB transaction; safe alongside the running relay).
+- Forwards each whitelisted pubkey's events oldest-first via NIP-01 to mainline (preserves replaceable-kind semantics).
+- Deletes only the successfully forwarded events via `strfry delete --filter '{"ids":[…]}'` (separate writer; LMDB serialises against the relay).
+
+This is **not** the "promotion decision" deferred in §2.2/N4 — promotion is "the rescuer also adds the pubkey to Dgraph." The rescuer assumes promotion has already happened elsewhere.
 
 ### 9.3 Observability
 

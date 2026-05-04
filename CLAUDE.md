@@ -18,7 +18,7 @@ Upstream Relays → Event Forwarder → StrFry Relay (LMDB, port 7777)
 Web of Trust Crawler → subscribes kind 3 from StrFry → writes pubkey graph to Dgraph
 ```
 
-**Production-ready subsystems:** event-forwarder, whitelist-plugin, web-of-trust
+**Production-ready subsystems:** event-forwarder, whitelist-plugin, web-of-trust, quarantine-rescuer
 **Placeholder subsystems:** search-plugin, semantic-search, embeddings-generator, profile-builder, thread-inference
 
 ## Build & Test Commands
@@ -54,6 +54,16 @@ make build-pubkeys      # Build pubkeys exporter
 ```bash
 make bench              # Run benchmarks
 make build-alpine       # Static Alpine binary
+```
+
+### Quarantine Rescuer (`cd quarantine-rescuer`)
+One-shot CLI that pulls events for newly-whitelisted pubkeys from the
+quarantine LMDB back into the main StrFry instance. Reads `~/deepfry/whitelist.yaml`
+for the whitelist server URL (same config the live plugin uses). Runs on the
+strfry host; calls `docker exec` against the quarantine container.
+```bash
+make build              # ./bin/quarantine-rescue
+./bin/quarantine-rescue --dry-run   # preview only
 ```
 
 ## Infrastructure
