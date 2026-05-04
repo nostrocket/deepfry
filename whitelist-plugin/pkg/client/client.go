@@ -8,10 +8,20 @@ import (
 	"time"
 )
 
+// DefaultCacheSize and DefaultCacheTTL bound the per-pubkey decision cache.
+// 30s is short enough that a freshly whitelisted pubkey starts being
+// accepted within seconds of the server's next refresh, while still
+// collapsing 1000s of events from the same author down to one HTTP call.
+const (
+	DefaultCacheSize = 8192
+	DefaultCacheTTL  = 30 * time.Second
+)
+
 type WhitelistClient struct {
 	serverURL  string
 	httpClient *http.Client
 	logger     *log.Logger
+	cache      *ttlCache
 }
 
 func NewWhitelistClient(serverURL string, timeout time.Duration, logger *log.Logger) *WhitelistClient {
@@ -21,6 +31,7 @@ func NewWhitelistClient(serverURL string, timeout time.Duration, logger *log.Log
 			Timeout: timeout,
 		},
 		logger: logger,
+		cache:  newTTLCache(DefaultCacheSize, DefaultCacheTTL),
 	}
 }
 
@@ -43,8 +54,13 @@ func (c *WhitelistClient) CheckHealth() error {
 }
 
 // IsWhitelisted calls the whitelist server to check a pubkey.
-// Returns false on any error (fail closed).
+// Returns false on any error (fail closed). Successful responses are
+// cached for DefaultCacheTTL; transient failures are not.
 func (c *WhitelistClient) IsWhitelisted(pubkey string) bool {
+	if v, ok := c.cache.Get(pubkey); ok {
+		return v
+	}
+
 	url := fmt.Sprintf("%s/check/%s", c.serverURL, pubkey)
 
 	resp, err := c.httpClient.Get(url)
@@ -65,5 +81,6 @@ func (c *WhitelistClient) IsWhitelisted(pubkey string) bool {
 		return false
 	}
 
+	c.cache.Set(pubkey, body.Whitelisted)
 	return body.Whitelisted
 }
