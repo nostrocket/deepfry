@@ -25,9 +25,17 @@ func NewClient(serverURL string, timeout time.Duration, logger *slog.Logger) *Cl
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Default MaxIdleConnsPerHost (2) is too low for the burst of concurrent
+	// /check requests this client makes — unpooled connections close after
+	// each request and pile up in TIME_WAIT, eventually exhausting the
+	// ephemeral port range for the (local, server) tuple and surfacing as
+	// EADDRNOTAVAIL ("can't assign requested address") on connect.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 32
+	transport.MaxConnsPerHost = 32
 	return &Client{
 		serverURL:  serverURL,
-		httpClient: &http.Client{Timeout: timeout},
+		httpClient: &http.Client{Timeout: timeout, Transport: transport},
 		logger:     logger,
 	}
 }
