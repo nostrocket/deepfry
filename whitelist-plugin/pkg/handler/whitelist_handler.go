@@ -14,21 +14,27 @@ func NewWhitelistHandler(checker Checker, logger *log.Logger) *WhitelistHandler 
 }
 
 func (h *WhitelistHandler) Handle(input InputMsg) (OutputMsg, error) {
-	// Extract event ID and pubkey from the event
 	eventId, pubkey, err := input.ParseEvent()
-
 	if err != nil {
-		return Reject(eventId, RejectReasonNotInWoT), nil
+		h.log("decision=reject reason=malformed err=%v", err)
+		return RejectMalformed(), nil
 	}
 
-	if h.logger != nil {
-		h.logger.Printf("Handling event ID: %s", eventId)
+	ok, checkErr := h.checker.IsWhitelisted(pubkey)
+	if checkErr != nil {
+		h.log("decision=reject id=%s pubkey=%s reason=check_failed err=%v", eventId, pubkeyPrefix(pubkey), checkErr)
+		return Reject(eventId, RejectReasonCheckFailed), nil
 	}
-
-	// Check whitelist
-	if h.checker.IsWhitelisted(pubkey) {
+	if ok {
+		h.log("decision=accept id=%s pubkey=%s", eventId, pubkeyPrefix(pubkey))
 		return Accept(eventId), nil
 	}
-
+	h.log("decision=reject id=%s pubkey=%s reason=not_in_wot", eventId, pubkeyPrefix(pubkey))
 	return Reject(eventId, RejectReasonNotInWoT), nil
+}
+
+func (h *WhitelistHandler) log(format string, args ...any) {
+	if h.logger != nil {
+		h.logger.Printf(format, args...)
+	}
 }

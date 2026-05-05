@@ -19,20 +19,20 @@ func NewWhiteList(keys [][32]byte) *Whitelist {
 	return wl
 }
 
-func (wl *Whitelist) IsWhitelisted(key string) bool {
+func (wl *Whitelist) IsWhitelisted(key string) (bool, error) {
 	if len(key) != 64 {
-		return false
+		return false, nil
 	}
 	var k [32]byte
 	if _, err := hex.Decode(k[:], []byte(strings.ToLower(key))); err != nil {
-		return false
+		return false, nil
 	}
 	mp := wl.list.Load()
 	if mp == nil {
-		return false
+		return false, nil
 	}
 	_, ok := (*mp)[k]
-	return ok
+	return ok, nil
 }
 
 func (wl *Whitelist) Len() int {

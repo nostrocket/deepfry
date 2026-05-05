@@ -69,7 +69,7 @@ func BenchmarkIsWhitelisted(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = wl.IsWhitelisted(hexes[i%len(hexes)]) // hit
+				_, _ = wl.IsWhitelisted(hexes[i%len(hexes)]) // hit
 			}
 		})
 
@@ -77,7 +77,7 @@ func BenchmarkIsWhitelisted(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = wl.IsWhitelisted(missStr) // miss
+				_, _ = wl.IsWhitelisted(missStr) // miss
 			}
 		})
 	}

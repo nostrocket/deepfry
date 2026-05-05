@@ -44,7 +44,12 @@ func (h *RouterHandler) Handle(input RouterInputMsg) (OutputMsg, error) {
 		return RejectMalformed(), nil
 	}
 
-	if h.checker.IsWhitelisted(evt.PubKey) {
+	ok, checkErr := h.checker.IsWhitelisted(evt.PubKey)
+	if checkErr != nil {
+		h.log("decision=reject id=%s pubkey=%s reason=check_failed err=%v", evt.ID, pubkeyPrefix(evt.PubKey), checkErr)
+		return Reject(evt.ID, RejectReasonCheckFailed), nil
+	}
+	if ok {
 		h.log("decision=accept id=%s pubkey=%s", evt.ID, pubkeyPrefix(evt.PubKey))
 		return Accept(evt.ID), nil
 	}
@@ -52,15 +57,15 @@ func (h *RouterHandler) Handle(input RouterInputMsg) (OutputMsg, error) {
 	if h.quarantineEnabled && h.publisher != nil {
 		if res := heuristics.Filter(evt); res.Keep {
 			if h.publisher.Enqueue(evt) {
-				h.log("decision=reject id=%s pubkey=%s quarantined=y", evt.ID, pubkeyPrefix(evt.PubKey))
+				h.log("decision=reject id=%s pubkey=%s reason=not_in_wot quarantined=y", evt.ID, pubkeyPrefix(evt.PubKey))
 			} else {
-				h.log("decision=reject id=%s pubkey=%s quarantined=n reason=queue_full", evt.ID, pubkeyPrefix(evt.PubKey))
+				h.log("decision=reject id=%s pubkey=%s reason=not_in_wot quarantined=n cause=queue_full", evt.ID, pubkeyPrefix(evt.PubKey))
 			}
 		} else {
-			h.log("decision=reject id=%s pubkey=%s quarantined=n reason=%s", evt.ID, pubkeyPrefix(evt.PubKey), res.Reason)
+			h.log("decision=reject id=%s pubkey=%s reason=not_in_wot quarantined=n cause=%s", evt.ID, pubkeyPrefix(evt.PubKey), res.Reason)
 		}
 	} else {
-		h.log("decision=reject id=%s pubkey=%s quarantined=n reason=quarantine_disabled", evt.ID, pubkeyPrefix(evt.PubKey))
+		h.log("decision=reject id=%s pubkey=%s reason=not_in_wot quarantined=n cause=quarantine_disabled", evt.ID, pubkeyPrefix(evt.PubKey))
 	}
 
 	return Reject(evt.ID, RejectReasonNotInWoT), nil

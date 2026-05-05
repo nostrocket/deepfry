@@ -20,17 +20,13 @@ func TestNewWhiteList_IsWhitelisted_and_case_insensitivity(t *testing.T) {
 	wl := NewWhiteList([][32]byte{k})
 
 	// exact lowercase hex -> should be whitelisted
-	if !wl.IsWhitelisted(hexStr) {
+	if ok, _ := wl.IsWhitelisted(hexStr); !ok {
 		t.Fatalf("expected key %s to be whitelisted", hexStr)
 	}
 
 	// uppercase hex should also be accepted (IsWhitelisted lowercases input)
-	upper := hex.EncodeToString(k[:])
-	upper = string([]byte(upper)) // keep same but treat as test of case-insensitivity
-	upper = string([]byte(upper))
-	upper = hex.EncodeToString(k[:])
-	upper = stringsToUpper(upper)
-	if !wl.IsWhitelisted(upper) {
+	upper := stringsToUpper(hex.EncodeToString(k[:]))
+	if ok, _ := wl.IsWhitelisted(upper); !ok {
 		t.Fatalf("expected uppercase key %s to be whitelisted", upper)
 	}
 }
@@ -42,17 +38,17 @@ func TestIsWhitelisted_invalid_length_and_nonhex(t *testing.T) {
 	wl := NewWhiteList([][32]byte{k})
 
 	// too short
-	if wl.IsWhitelisted(hexStr[:10]) {
+	if ok, _ := wl.IsWhitelisted(hexStr[:10]); ok {
 		t.Fatalf("short key unexpectedly considered whitelisted")
 	}
 	// too long
-	if wl.IsWhitelisted(hexStr + "00") {
+	if ok, _ := wl.IsWhitelisted(hexStr + "00"); ok {
 		t.Fatalf("long key unexpectedly considered whitelisted")
 	}
 
 	// invalid hex characters (z is not hex)
 	invalid := make64CharsWithChar('z')
-	if wl.IsWhitelisted(invalid) {
+	if ok, _ := wl.IsWhitelisted(invalid); ok {
 		t.Fatalf("non-hex key unexpectedly considered whitelisted")
 	}
 }
@@ -62,13 +58,13 @@ func TestIsWhitelisted_empty_and_nil_store(t *testing.T) {
 	wl := NewWhiteList(nil)
 	k := makeKey(0x03)
 	hexStr := hex.EncodeToString(k[:])
-	if wl.IsWhitelisted(hexStr) {
+	if ok, _ := wl.IsWhitelisted(hexStr); ok {
 		t.Fatalf("expected no key to be whitelisted for empty whitelist")
 	}
 
 	// zero value Whitelist (list pointer nil) should be safe and return false
 	var zero Whitelist
-	if zero.IsWhitelisted(hexStr) {
+	if ok, _ := zero.IsWhitelisted(hexStr); ok {
 		t.Fatalf("expected zero-value Whitelist to return false")
 	}
 }
@@ -86,13 +82,13 @@ func TestNewWhiteList_immutability_of_input_slice(t *testing.T) {
 
 	// original hex (before modification) should still be whitelisted
 	origHex := hex.EncodeToString(k[:])
-	if !wl.IsWhitelisted(origHex) {
+	if ok, _ := wl.IsWhitelisted(origHex); !ok {
 		t.Fatalf("expected original key %s to remain whitelisted after mutating input slice", origHex)
 	}
 
 	// mutated key should not be whitelisted
 	mutHex := hex.EncodeToString(keys[0][:])
-	if wl.IsWhitelisted(mutHex) {
+	if ok, _ := wl.IsWhitelisted(mutHex); ok {
 		t.Fatalf("mutated key unexpectedly considered whitelisted")
 	}
 }

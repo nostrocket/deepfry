@@ -38,9 +38,10 @@ type RejectReason string
 
 // Allowed RejectReason values.
 const (
-	RejectReasonNotInWoT  RejectReason = "rejected: not in web of trust"
-	RejectReasonMalformed RejectReason = "rejected: malformed event"
-	RejectReasonInternal  RejectReason = "rejected: internal error"
+	RejectReasonNotInWoT     RejectReason = "rejected: not in web of trust"
+	RejectReasonMalformed    RejectReason = "rejected: malformed event"
+	RejectReasonInternal     RejectReason = "rejected: internal error"
+	RejectReasonCheckFailed  RejectReason = "rejected: whitelist check unavailable"
 )
 
 type Event struct {

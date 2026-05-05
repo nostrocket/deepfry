@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 	"testing"
@@ -10,10 +11,19 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 )
 
-// fakeChecker implements Checker with a fixed whitelist set.
-type fakeChecker struct{ allow map[string]bool }
+// fakeChecker implements Checker with a fixed whitelist set and an optional
+// transient error to simulate whitelist-server failures.
+type fakeChecker struct {
+	allow map[string]bool
+	err   error
+}
 
-func (f *fakeChecker) IsWhitelisted(pk string) bool { return f.allow[pk] }
+func (f *fakeChecker) IsWhitelisted(pk string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.allow[pk], nil
+}
 
 // fakeEnqueuer records the events that were handed off to the publisher.
 type fakeEnqueuer struct {
@@ -141,6 +151,37 @@ func TestRouterHandler_MalformedEvent(t *testing.T) {
 	}
 	if len(enq.events) != 0 {
 		t.Fatalf("expected no enqueue for malformed input, got %+v", enq.events)
+	}
+}
+
+func TestRouterHandler_CheckerError(t *testing.T) {
+	checker := &fakeChecker{allow: map[string]bool{}, err: errors.New("server unreachable")}
+	enq := &fakeEnqueuer{}
+	var buf bytes.Buffer
+	h := NewRouterHandler(checker, enq, true, log.New(&buf, "", 0))
+
+	out, err := h.Handle(wrapEvent(t, baseEvt("e6", "pk-stranger", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionReject {
+		t.Fatalf("expected reject, got %+v", out)
+	}
+	if out.Msg != string(RejectReasonCheckFailed) {
+		t.Fatalf("expected msg %q, got %q", RejectReasonCheckFailed, out.Msg)
+	}
+	if out.Id != "e6" {
+		t.Fatalf("expected id 'e6', got %q", out.Id)
+	}
+	if len(enq.events) != 0 {
+		t.Fatalf("expected no quarantine enqueue on check failure, got %+v", enq.events)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "reason=check_failed") {
+		t.Fatalf("expected reason=check_failed in log, got %q", logged)
+	}
+	if !strings.Contains(logged, "server unreachable") {
+		t.Fatalf("expected underlying error in log, got %q", logged)
 	}
 }
 

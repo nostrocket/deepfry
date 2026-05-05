@@ -297,5 +297,13 @@ func TestRejectReasonConstants(t *testing.T) {
 	if RejectReasonNotInWoT != "rejected: not in web of trust" {
 		t.Errorf("RejectReasonNotInWoT = %v, want 'rejected: not in web of trust'", RejectReasonNotInWoT)
 	}
-	// Add tests for additional constants as they are added
+	if RejectReasonMalformed != "rejected: malformed event" {
+		t.Errorf("RejectReasonMalformed = %v, want 'rejected: malformed event'", RejectReasonMalformed)
+	}
+	if RejectReasonInternal != "rejected: internal error" {
+		t.Errorf("RejectReasonInternal = %v, want 'rejected: internal error'", RejectReasonInternal)
+	}
+	if RejectReasonCheckFailed != "rejected: whitelist check unavailable" {
+		t.Errorf("RejectReasonCheckFailed = %v, want 'rejected: whitelist check unavailable'", RejectReasonCheckFailed)
+	}
 }

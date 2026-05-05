@@ -1,7 +1,7 @@
 package handler
 
 type Checker interface {
-	IsWhitelisted(pubkey string) bool
+	IsWhitelisted(pubkey string) (bool, error)
 }
 
 type IOAdapter interface {

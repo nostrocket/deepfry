@@ -90,7 +90,9 @@ func (s *WhitelistServer) handleCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.whitelist.IsWhitelisted(pubkey)
+	// In-memory whitelist never returns a non-nil error; ignored for parity
+	// with the Checker interface used by the plugin client.
+	result, _ := s.whitelist.IsWhitelisted(pubkey)
 
 	if s.debug {
 		s.logger.Printf("CHECK %s → %v", pubkey, result)

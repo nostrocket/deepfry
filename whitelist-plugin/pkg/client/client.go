@@ -54,33 +54,33 @@ func (c *WhitelistClient) CheckHealth() error {
 }
 
 // IsWhitelisted calls the whitelist server to check a pubkey.
-// Returns false on any error (fail closed). Successful responses are
-// cached for DefaultCacheTTL; transient failures are not.
-func (c *WhitelistClient) IsWhitelisted(pubkey string) bool {
+// Returns (false, err) on any transport/decode failure so callers can
+// distinguish "pubkey not in whitelist" (false, nil) from "check failed"
+// (false, err) and log/respond accordingly. Callers must still fail
+// closed on errors. Successful responses are cached for DefaultCacheTTL;
+// transient failures are not.
+func (c *WhitelistClient) IsWhitelisted(pubkey string) (bool, error) {
 	if v, ok := c.cache.Get(pubkey); ok {
-		return v
+		return v, nil
 	}
 
 	url := fmt.Sprintf("%s/check/%s", c.serverURL, pubkey)
 
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		c.logger.Printf("Whitelist check failed for %s: %v", pubkey, err)
-		return false
+		return false, fmt.Errorf("whitelist server unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.Printf("Whitelist check returned %d for %s", resp.StatusCode, pubkey)
-		return false
+		return false, fmt.Errorf("whitelist server returned %d", resp.StatusCode)
 	}
 
 	var body checkResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		c.logger.Printf("Whitelist check decode failed for %s: %v", pubkey, err)
-		return false
+		return false, fmt.Errorf("decode whitelist response: %w", err)
 	}
 
 	c.cache.Set(pubkey, body.Whitelisted)
-	return body.Whitelisted
+	return body.Whitelisted, nil
 }

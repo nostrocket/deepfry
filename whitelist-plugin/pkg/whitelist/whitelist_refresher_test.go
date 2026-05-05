@@ -89,7 +89,7 @@ func TestWhitelistRefresher_refresh_Success(t *testing.T) {
 		t.Errorf("Expected GetAll to be called once, got %d", mockRepo.getCallCount())
 	}
 	// Verify whitelist update (assuming IsWhitelisted works)
-	if !refresher.whitelist.IsWhitelisted("0100000000000000000000000000000000000000000000000000000000000000") {
+	if ok, _ := refresher.whitelist.IsWhitelisted("0100000000000000000000000000000000000000000000000000000000000000"); !ok {
 		t.Error("Expected key to be whitelisted after refresh")
 	}
 }
@@ -135,7 +135,7 @@ func TestWhitelistRefresher_refresh_SuccessAfterRetry(t *testing.T) {
 	if mockRepo.getCallCount() < 2 {
 		t.Errorf("Expected at least 2 calls, got %d", mockRepo.getCallCount())
 	}
-	if !refresher.whitelist.IsWhitelisted("0200000000000000000000000000000000000000000000000000000000000000") {
+	if ok, _ := refresher.whitelist.IsWhitelisted("0200000000000000000000000000000000000000000000000000000000000000"); !ok {
 		t.Error("Expected key to be whitelisted after successful retry")
 	}
 }
