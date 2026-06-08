@@ -18,6 +18,8 @@
 /whitelist-plugin/bin/
 /profile-builder/bin/
 /thread-inference/bin/
+/quarantine-rescuer/bin/
+/quarantine-cleaner/bin/
 
 # Test binary, built with `go test -c`
 *.test
