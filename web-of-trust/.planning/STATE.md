@@ -1,3 +1,17 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+last_updated: "2026-06-09T05:08:31.923Z"
+progress:
+  total_phases: 2
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 50
+---
+
 # Project State: Web-of-Trust Crawler — Crawl Coverage Fix
 
 **Last updated:** 2026-06-09
@@ -6,24 +20,26 @@
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Implement the fully-specified 8% crawl fix from `8pc_crawled.md` — coordinated changes to schema, selection logic, attempt tracking, and crawler loop wiring.
+**Current focus:** Phase 01 — code-changes-regression-test
 
 ## Current Position
 
+Phase: 01 (code-changes-regression-test) — COMPLETE
+Plan: 1 of 1 (complete)
 **Phase:** 1 — Code Changes + Regression Test
-**Plan:** Not started
-**Status:** Not started
-**Progress:** 0/2 phases complete
+**Plan:** 01-01 complete
+**Status:** Phase 1 complete — ready for Phase 2 (backfill + live verification)
+**Progress:** 1/2 phases complete
 
 ```
-[          ] 0%
+[=====     ] 50%
 ```
 
 ## Performance Metrics
 
-- Phases complete: 0 / 2
-- Requirements delivered: 0 / 9
-- Plans complete: 0 / 0
+- Phases complete: 1 / 2
+- Requirements delivered: 8 / 9
+- Plans complete: 1 / 1 (Phase 1)
 
 ## Accumulated Context
 
@@ -45,15 +61,15 @@
 
 ### Todos
 
-- [ ] Apply Fix A (schema): add `last_attempt: int @index(int)` to `EnsureSchema` in `pkg/dgraph/dgraph.go:54-66`
-- [ ] Apply Fix B (selection): replace `GetStalePubkeys` with frontier-first version; add `collectStale` helper
-- [ ] Apply Fix C (attempt tracking): add `MarkAttempted` to `pkg/dgraph/dgraph.go`
-- [ ] Apply Fix D (crawler loop): update `cmd/crawler/main.go` — pass `batchSize`, delete manual 500-cap block, call `MarkAttempted`
-- [ ] Add regression test to `pkg/dgraph/dgraph_stale_test.go`
-- [ ] Run `make build-crawler` to confirm build
-- [ ] Run `make test-integration` to confirm regression test passes
-- [ ] Run Fix E backfill on strfry host after deploy
-- [ ] Verify live crawler per spec §6
+- [x] Apply Fix A (schema): add `last_attempt: int @index(int)` to `EnsureSchema` in `pkg/dgraph/dgraph.go` (`25217ac`)
+- [x] Apply Fix B (selection): replace `GetStalePubkeys` with frontier-first version; add `collectStale` helper (`25217ac`)
+- [x] Apply Fix C (attempt tracking): add `MarkAttempted` to `pkg/dgraph/dgraph.go` (`25217ac`)
+- [x] Apply Fix D (crawler loop): update `cmd/crawler/main.go` — pass `batchSize`, delete manual 500-cap block, call `MarkAttempted` (`93c1436`)
+- [x] Add regression test to `pkg/dgraph/dgraph_stale_test.go` (`180645c`)
+- [x] Run `make build-crawler` to confirm build (clean)
+- [x] Run `make test-integration` to confirm regression test passes (green vs live Dgraph)
+- [ ] Run Fix E backfill on strfry host after deploy (Phase 2)
+- [ ] Verify live crawler per spec §6 (Phase 2)
 
 ### Blockers
 
