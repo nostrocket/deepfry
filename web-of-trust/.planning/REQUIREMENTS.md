@@ -23,8 +23,8 @@ Correctness + hardening pass on the crawler's Dgraph write path. Each maps to ro
 
 ### Verification
 
-- [ ] **TEST-03**: An automated regression test reproduces the chunk data-drop on pre-fix code and passes post-fix — asserting that a follow-list larger than the chunk size results in the full follow set persisted. Integration test acceptable (`//go:build integration`, `make test-integration`).
-- [ ] **TEST-04**: Unit-testable coverage (no live Dgraph, runs under `make test` / `-short`) exists for the parts that don't require Dgraph: the chunk-splitting boundary logic in `processFollowsInChunks`, and `RemoveFollower`'s input validation/escaping (malformed pubkeys rejected; special characters cannot alter query structure).
+- [x] **TEST-03**: An automated regression test reproduces the chunk data-drop on pre-fix code and passes post-fix — asserting that a follow-list larger than the chunk size results in the full follow set persisted. Integration test acceptable (`//go:build integration`, `make test-integration`).
+- [x] **TEST-04**: Unit-testable coverage (no live Dgraph, runs under `make test` / `-short`) exists for the parts that don't require Dgraph: the chunk-splitting boundary logic in `processFollowsInChunks`, and `RemoveFollower`'s input validation/escaping (malformed pubkeys rejected; special characters cannot alter query structure).
 
 ## Future Requirements
 
@@ -63,8 +63,8 @@ Deferred to future milestones (tracked in `.planning/codebase/CONCERNS.md`).
 | CHUNK-01 | Phase 3 | Complete |
 | CHUNK-02 | Phase 3 | Complete |
 | LEAK-01 | Phase 3 | Complete |
-| TEST-03 | Phase 3 | Pending |
-| TEST-04 | Phase 3 | Pending |
+| TEST-03 | Phase 3 | Complete |
+| TEST-04 | Phase 3 | Complete |
 | SEC-01 | Phase 4 | Pending |
 | SEC-02 | Phase 4 | Pending |
 

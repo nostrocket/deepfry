@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 3: Write-Path Correctness + Regression Coverage** - Fix the chunked-write data drop so >chunk-size follow-lists persist completely, preserve the version guard's genuine-duplicate dedup, eliminate the per-iteration `defer cancel()` leak, and add the unit + integration tests that prove it
+- [x] **Phase 3: Write-Path Correctness + Regression Coverage** - Fix the chunked-write data drop so >chunk-size follow-lists persist completely, preserve the version guard's genuine-duplicate dedup, eliminate the per-iteration `defer cancel()` leak, and add the unit + integration tests that prove it (completed 2026-06-09)
 - [ ] **Phase 4: Remove-Path Injection Hardening** - Rewrite `RemoveFollower` to use parameterised `$`-Vars / `%q`-quoted nquads and reject malformed pubkeys before mutating, consistent with the rest of `pkg/dgraph`
 
 ## Phase Details
@@ -32,7 +32,7 @@
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Regression tests: chunkSlice unit test (TEST-04) + large-kind3 integration test (TEST-03)
+- [x] 03-02-PLAN.md — Regression tests: chunkSlice unit test (TEST-04) + large-kind3 integration test (TEST-03)
 
 ### Phase 4: Remove-Path Injection Hardening
 
@@ -51,5 +51,5 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 3. Write-Path Correctness + Regression Coverage | 1/2 | In Progress|  |
+| 3. Write-Path Correctness + Regression Coverage | 2/2 | Complete   | 2026-06-09 |
 | 4. Remove-Path Injection Hardening | 0/0 | Not started | - |
