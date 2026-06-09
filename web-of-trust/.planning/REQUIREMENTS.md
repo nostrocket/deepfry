@@ -9,12 +9,12 @@ Correctness + hardening pass on the crawler's Dgraph write path. Each maps to ro
 
 ### Write Integrity
 
-- [ ] **CHUNK-01**: A pubkey whose follow-list exceeds the chunk size (chunking triggers above 500 follows; chunks of 200) has its **complete** follow-list persisted to Dgraph — every chunk's follows are written, not just the first. The per-event `kind3CreatedAt` version guard in `AddFollowers` (`pkg/dgraph/dgraph.go:165`) no longer discards chunks 2…N, which all carry the same `createdAt`.
-- [ ] **CHUNK-02**: The version guard's intended behaviour is preserved for genuine duplicates — a re-crawl of an already-fully-ingested pubkey at the same or older `kind3CreatedAt` still short-circuits without redundant rewrites. The fix distinguishes "same event, subsequent chunk" from "same event, already complete."
+- [x] **CHUNK-01**: A pubkey whose follow-list exceeds the chunk size (chunking triggers above 500 follows; chunks of 200) has its **complete** follow-list persisted to Dgraph — every chunk's follows are written, not just the first. The per-event `kind3CreatedAt` version guard in `AddFollowers` (`pkg/dgraph/dgraph.go:165`) no longer discards chunks 2…N, which all carry the same `createdAt`.
+- [x] **CHUNK-02**: The version guard's intended behaviour is preserved for genuine duplicates — a re-crawl of an already-fully-ingested pubkey at the same or older `kind3CreatedAt` still short-circuits without redundant rewrites. The fix distinguishes "same event, subsequent chunk" from "same event, already complete."
 
 ### Resource Hygiene
 
-- [ ] **LEAK-01**: `processFollowsInChunks` releases each chunk's context/`cancel` before the next iteration begins — no `defer cancel()` accumulation across the loop. Processing an N-chunk follow-list holds at most one live chunk context at a time.
+- [x] **LEAK-01**: `processFollowsInChunks` releases each chunk's context/`cancel` before the next iteration begins — no `defer cancel()` accumulation across the loop. Processing an N-chunk follow-list holds at most one live chunk context at a time.
 
 ### Injection Hardening
 
@@ -60,15 +60,16 @@ Deferred to future milestones (tracked in `.planning/codebase/CONCERNS.md`).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CHUNK-01 | Phase 3 | Pending |
-| CHUNK-02 | Phase 3 | Pending |
-| LEAK-01 | Phase 3 | Pending |
+| CHUNK-01 | Phase 3 | Complete |
+| CHUNK-02 | Phase 3 | Complete |
+| LEAK-01 | Phase 3 | Complete |
 | TEST-03 | Phase 3 | Pending |
 | TEST-04 | Phase 3 | Pending |
 | SEC-01 | Phase 4 | Pending |
 | SEC-02 | Phase 4 | Pending |
 
 **Coverage:**
+
 - v1.1 requirements: 7 total
 - Mapped to phases: 7 (Phase 3: CHUNK-01, CHUNK-02, LEAK-01, TEST-03, TEST-04 — Phase 4: SEC-01, SEC-02)
 - Unmapped: 0
