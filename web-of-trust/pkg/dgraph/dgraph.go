@@ -55,6 +55,7 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int @index(int) .
 last_db_update: int @index(int) .
+last_attempt: int @index(int) .
 follows: [uid] @reverse .
 
 type Profile {
@@ -62,6 +63,7 @@ type Profile {
   follows
   kind3CreatedAt
   last_db_update
+  last_attempt
 }`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
@@ -422,49 +424,110 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 	return true, nil
 }
 
-// GetStalePubkeys returns pubkeys with last_db_update older than the given
-// threshold, or pubkeys that don't have last_db_update set at all.
-// If olderThanUnix is not provided, defaults to 24 hours ago.
-// Results are sorted by age, with least recently updated first.
-// Returns a map of pubkey to kind3CreatedAt timestamp.
+// GetStalePubkeys returns up to `limit` pubkeys that need (re)crawling, as a map
+// of pubkey -> kind3CreatedAt. It prioritises the uncrawled frontier (pubkeys
+// never attempted) and only then tops up with previously-attempted pubkeys
+// whose last_attempt is older than olderThanUnix.
+//
+// IMPORTANT: never-attempted nodes are selected by an explicit `NOT has(last_attempt)`
+// query with an explicit `first:`. Do NOT use `orderasc: last_attempt` to surface
+// them — missing-value nodes sort last and Dgraph caps an unbounded sorted query at
+// 1000 rows, which is the bug this function previously had (it returned only
+// already-crawled accounts and never a single stub).
 func (c *Client) GetStalePubkeys(
 	ctx context.Context,
 	olderThanUnix int64,
+	limit int,
 ) (map[string]int64, error) {
-	query := fmt.Sprintf(`
+	out := make(map[string]int64, limit)
+
+	// Phase 1: the uncrawled frontier — pubkeys we have never attempted.
+	frontierQuery := fmt.Sprintf(`
 	{
-		stale(func: has(pubkey), orderasc: last_db_update) 
-		@filter(NOT has(last_db_update) OR lt(last_db_update, %d)) {
+		frontier(func: has(pubkey), first: %d) @filter(NOT has(last_attempt)) {
 			pubkey
 			kind3CreatedAt
 		}
-	}`, olderThanUnix)
+	}`, limit)
+	if err := c.collectStale(ctx, frontierQuery, "frontier", out); err != nil {
+		return nil, err
+	}
 
-	txn := c.dg.NewTxn()
+	// Phase 2: top up with previously-attempted pubkeys that have aged out.
+	if remaining := limit - len(out); remaining > 0 {
+		agedQuery := fmt.Sprintf(`
+		{
+			aged(func: has(last_attempt), first: %d, orderasc: last_attempt)
+			@filter(lt(last_attempt, %d)) {
+				pubkey
+				kind3CreatedAt
+			}
+		}`, remaining, olderThanUnix)
+		if err := c.collectStale(ctx, agedQuery, "aged", out); err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
+}
+
+// collectStale runs a stale-selection query whose root block is named `block`
+// and merges its {pubkey -> kind3CreatedAt} rows into out.
+func (c *Client) collectStale(
+	ctx context.Context,
+	query, block string,
+	out map[string]int64,
+) error {
+	txn := c.dg.NewReadOnlyTxn()
 	defer txn.Discard(ctx)
 
 	resp, err := txn.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query stale pubkeys failed: %w", err)
+		return fmt.Errorf("query stale pubkeys (%s) failed: %w", block, err)
 	}
 
-	var result struct {
-		Stale []struct {
-			Pubkey         string `json:"pubkey"`
-			Kind3CreatedAt int64  `json:"kind3CreatedAt"`
-		} `json:"stale"`
+	var parsed map[string][]struct {
+		Pubkey         string `json:"pubkey"`
+		Kind3CreatedAt int64  `json:"kind3CreatedAt"`
+	}
+	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
+		return fmt.Errorf("unmarshal stale pubkeys (%s) failed: %w", block, err)
+	}
+	for _, n := range parsed[block] {
+		out[n.Pubkey] = n.Kind3CreatedAt
+	}
+	return nil
+}
+
+// MarkAttempted stamps last_attempt = ts on every given pubkey. It records that
+// the crawler tried to fetch the pubkey's kind-3, regardless of whether an event
+// came back, so that un-fetchable pubkeys age out of the stale frontier instead
+// of being retried every loop.
+func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) error {
+	if len(pubkeys) == 0 {
+		return nil
 	}
 
-	if err := json.Unmarshal(resp.Json, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal stale pubkeys failed: %w", err)
+	uids, err := c.ResolvePubkeysToUIDs(ctx, pubkeys) // map[pubkey]uid, in clusterscan.go
+	if err != nil {
+		return fmt.Errorf("resolve pubkeys for mark-attempted failed: %w", err)
 	}
 
-	pubkeyMap := make(map[string]int64, len(result.Stale))
-	for _, node := range result.Stale {
-		pubkeyMap[node.Pubkey] = node.Kind3CreatedAt
+	var nquads strings.Builder
+	for _, uid := range uids {
+		nquads.WriteString(fmt.Sprintf("<%s> <last_attempt> \"%d\" .\n", uid, ts))
+	}
+	if nquads.Len() == 0 {
+		return nil
 	}
 
-	return pubkeyMap, nil
+	txn := c.dg.NewTxn()
+	defer txn.Discard(ctx)
+	mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
+	if _, err := txn.Mutate(ctx, mu); err != nil {
+		return fmt.Errorf("mark attempted failed: %w", err)
+	}
+	return nil
 }
 
 // CountPubkeys returns the total number of pubkeys in the graph.
