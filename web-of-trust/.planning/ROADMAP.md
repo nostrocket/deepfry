@@ -28,7 +28,7 @@
 
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Unify AddFollowers to one batched full-set write (CHUNK-01/02, LEAK-01); shared pubkey validator; delete chunks.go
+- [x] 03-01-PLAN.md — Unify AddFollowers to one batched full-set write (CHUNK-01/02, LEAK-01); shared pubkey validator; delete chunks.go
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -51,5 +51,5 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 3. Write-Path Correctness + Regression Coverage | 0/2 | Not started | - |
+| 3. Write-Path Correctness + Regression Coverage | 1/2 | In Progress|  |
 | 4. Remove-Path Injection Hardening | 0/0 | Not started | - |
