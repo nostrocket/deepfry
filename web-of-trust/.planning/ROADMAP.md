@@ -21,7 +21,8 @@
   2. A pure stub node (no `last_attempt`) IS returned by `GetStalePubkeys`, and a freshly-attempted node is NOT returned as stale, as asserted by the integration regression test (`make test-integration`)
   3. The Dgraph schema exposed by `EnsureSchema` includes `last_attempt: int @index(int)` listed on the `Profile` type
   4. Every pubkey batch queried by the crawler loop is immediately stamped with `last_attempt` via `MarkAttempted`, whether or not a kind-3 event came back
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — Fixes A-D + regression test: last_attempt schema, frontier-first GetStalePubkeys, MarkAttempted, crawler wiring, build + integration test
 
 ### Phase 2: Backfill + Live Verification
 **Goal**: The running crawler on the strfry host begins converting stub nodes to crawled nodes, demonstrating that the fix unblocks graph growth
@@ -37,5 +38,5 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Code Changes + Regression Test | 0/0 | Not started | - |
+| 1. Code Changes + Regression Test | 0/1 | Not started | - |
 | 2. Backfill + Live Verification | 0/0 | Not started | - |
