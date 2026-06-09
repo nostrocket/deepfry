@@ -74,9 +74,48 @@ type Profile {
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
 
+// Internal batching/timeout tuning for AddFollowers. These are the single
+// tuning point for the unified write path:
+//   - batchSize keeps each followee-resolution query string and each mutation
+//     under the ~4MB gRPC message cap (at ~10k followees the *query string*
+//     alone exceeds 4MB if issued in one shot, so the query is batched too).
+//   - the deadline scales with follow-list size so a large list neither fails
+//     prematurely nor hangs unbounded.
+const (
+	baseTimeout     = 30 * time.Second
+	perBatchTimeout = 5 * time.Second
+	batchSize       = 200
+)
+
+// chunkSlice splits items into consecutive windows of at most size elements.
+// It is a pure helper (no Dgraph dependency) so it can be unit-tested as the
+// seam for the internal batching in AddFollowers. It never returns a nil or
+// empty trailing chunk: an empty input yields zero chunks.
+func chunkSlice(items []string, size int) [][]string {
+	if size <= 0 || len(items) == 0 {
+		return nil
+	}
+	n := (len(items) + size - 1) / size
+	chunks := make([][]string, 0, n)
+	for start := 0; start < len(items); start += size {
+		end := start + size
+		if end > len(items) {
+			end = len(items)
+		}
+		chunks = append(chunks, items[start:end])
+	}
+	return chunks
+}
+
 // AddFollowers adds multiple follows edges from a single follower to multiple
 // followees. For kind 3 events, this completely replaces the user's follow list
 // (replaceable event behavior).
+//
+// This is the single write path for an entire kind-3 event: it receives the
+// FULL follow set, runs the version guard and remove-all-existing-follows
+// exactly once, and batches only the internal followee-resolution query and
+// edge mutations (in batchSize windows) to stay under the gRPC message cap. The
+// whole operation is one all-or-nothing transaction.
 func (c *Client) AddFollowers(
 	ctx context.Context,
 	signerPubkey string,
@@ -84,9 +123,19 @@ func (c *Client) AddFollowers(
 	follows map[string]struct{},
 	debug bool,
 ) error {
-	// Use the provided context directly - no additional timeout needed
-	// The caller should manage appropriate timeouts
-	queryCtx := ctx
+	// Validation gate (D-08/D-09): an invalid signer is rejected outright and
+	// nothing is written, so a malformed pubkey never reaches an nquad.
+	if !isValidHexPubkey(signerPubkey) {
+		return fmt.Errorf("invalid signer pubkey %q: must be 64 hex chars", signerPubkey)
+	}
+
+	// Size-scaled timeout (D-07): one live context for the whole operation, so
+	// there is nothing per-batch to leak. The deadline grows with the number of
+	// batches the follow set will require.
+	batches := (len(follows) + batchSize - 1) / batchSize
+	deadline := baseTimeout + time.Duration(batches)*perBatchTimeout
+	queryCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
 
 	if debug {
 		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows",
@@ -205,96 +254,104 @@ func (c *Client) AddFollowers(
 		}
 	}
 
-	// Step 3: Bulk query all followees at once
+	// Step 3: Resolve followees and create follow edges, batched in batchSize
+	// windows. Both the resolution QUERY STRING and the mutations are batched:
+	// at ~10k followees a single query string would itself blow past the ~4MB
+	// gRPC cap (D-06). Invalid followees are skipped and logged so one bad entry
+	// never aborts the rest of the list (D-09).
 	if len(follows) > 0 {
 		followeeList := make([]string, 0, len(follows))
 		for followee := range follows {
+			if !isValidHexPubkey(followee) {
+				log.Printf("WARN: skipping invalid followee pubkey %q for signer %s",
+					followee, signerPubkey)
+				continue
+			}
 			followeeList = append(followeeList, followee)
 		}
 
-		// Build single query for all followees
-		var queryParts []string
-		for i, followee := range followeeList {
-			part := fmt.Sprintf(
-				`followee_%d(func: eq(pubkey, %q)) { uid }`,
-				i,
-				followee,
-			)
-			queryParts = append(queryParts, part)
-		}
-
-		bulkQuery := fmt.Sprintf("{ %s }",
-			fmt.Sprintf("%s", strings.Join(queryParts, "\n")))
-
-		bulkResp, err := txn.Query(queryCtx, bulkQuery)
-		if err != nil {
-			return fmt.Errorf("bulk query followees failed: %w", err)
-		}
-
-		// Parse bulk results
-		var bulkResult map[string][]struct {
-			UID string `json:"uid"`
-		}
-		if err := json.Unmarshal(bulkResp.Json, &bulkResult); err != nil {
-			return fmt.Errorf("unmarshal bulk followees failed: %w", err)
-		}
-
-		// Step 4: Create missing followees in bulk
-		var createNQuads string
-		followeeUIDs := make([]string, len(followeeList))
-
-		for i, followee := range followeeList {
-			key := fmt.Sprintf("followee_%d", i)
-			if nodes, exists := bulkResult[key]; exists && len(nodes) > 0 {
-				// Followee exists
-				followeeUIDs[i] = nodes[0].UID
-			} else {
-				// Need to create followee
-				blankNodeID := fmt.Sprintf("new_followee_%d", i)
-				createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n",
-					blankNodeID, followee)
-				createNQuads += fmt.Sprintf(
-					"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
-				followeeUIDs[i] = "_:" + blankNodeID
-				if debug {
-					log.Printf("New pubkey added to graph (stub): %s", followee)
-				}
+		var allEdgeNQuads strings.Builder
+		for _, window := range chunkSlice(followeeList, batchSize) {
+			// Build the followee-resolution query for just this window.
+			queryParts := make([]string, 0, len(window))
+			for i, followee := range window {
+				queryParts = append(queryParts, fmt.Sprintf(
+					`followee_%d(func: eq(pubkey, %q)) { uid }`,
+					i,
+					followee,
+				))
 			}
-		}
+			bulkQuery := fmt.Sprintf("{ %s }", strings.Join(queryParts, "\n"))
 
-		// Create missing followees if any
-		if createNQuads != "" {
-			mu := &api.Mutation{
-				SetNquads: []byte(createNQuads),
-				CommitNow: false,
-			}
-			assigned, err := txn.Mutate(queryCtx, mu)
+			bulkResp, err := txn.Query(queryCtx, bulkQuery)
 			if err != nil {
-				return fmt.Errorf("create missing followees failed: %w", err)
+				return fmt.Errorf("bulk query followees failed: %w", err)
 			}
 
-			// Replace blank node references with actual UIDs
-			for i, uid := range followeeUIDs {
-				if strings.HasPrefix(uid, "_:") {
-					// Remove "_:" prefix
-					blankNodeID := uid[2:]
-					if actualUID, exists := assigned.Uids[blankNodeID]; exists {
-						followeeUIDs[i] = actualUID
+			var bulkResult map[string][]struct {
+				UID string `json:"uid"`
+			}
+			if err := json.Unmarshal(bulkResp.Json, &bulkResult); err != nil {
+				return fmt.Errorf("unmarshal bulk followees failed: %w", err)
+			}
+
+			// Stage stub creation for missing followees in this window.
+			var createNQuads string
+			followeeUIDs := make([]string, len(window))
+			for i, followee := range window {
+				key := fmt.Sprintf("followee_%d", i)
+				if nodes, exists := bulkResult[key]; exists && len(nodes) > 0 {
+					followeeUIDs[i] = nodes[0].UID
+				} else {
+					blankNodeID := fmt.Sprintf("new_followee_%d", i)
+					createNQuads += fmt.Sprintf("_:%s <pubkey> %q .\n",
+						blankNodeID, followee)
+					createNQuads += fmt.Sprintf(
+						"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
+					followeeUIDs[i] = "_:" + blankNodeID
+					if debug {
+						log.Printf("New pubkey added to graph (stub): %s", followee)
 					}
 				}
 			}
-		}
 
-		// Step 5: Create all follow edges in bulk
-		var edgeNQuads string
-		for _, followeeUID := range followeeUIDs {
-			if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
-				edgeNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
-					followerUID, followeeUID)
+			// Create missing followees in this window, if any.
+			if createNQuads != "" {
+				mu := &api.Mutation{
+					SetNquads: []byte(createNQuads),
+					CommitNow: false,
+				}
+				assigned, err := txn.Mutate(queryCtx, mu)
+				if err != nil {
+					return fmt.Errorf("create missing followees failed: %w", err)
+				}
+				for i, uid := range followeeUIDs {
+					if strings.HasPrefix(uid, "_:") {
+						blankNodeID := uid[2:]
+						if actualUID, exists := assigned.Uids[blankNodeID]; exists {
+							followeeUIDs[i] = actualUID
+						}
+					}
+				}
+			}
+
+			// Accumulate follow edges for this window.
+			for _, followeeUID := range followeeUIDs {
+				if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
+					allEdgeNQuads.WriteString(fmt.Sprintf("<%s> <follows> <%s> .\n",
+						followerUID, followeeUID))
+				}
 			}
 		}
 
-		if edgeNQuads != "" {
+		// Create all follow edges, batched in batchSize windows so the edge
+		// mutation also stays under the gRPC cap on huge follow lists.
+		edgeLines := strings.Split(strings.TrimRight(allEdgeNQuads.String(), "\n"), "\n")
+		if len(edgeLines) == 1 && edgeLines[0] == "" {
+			edgeLines = nil
+		}
+		for _, edgeWindow := range chunkSlice(edgeLines, batchSize) {
+			edgeNQuads := strings.Join(edgeWindow, "\n") + "\n"
 			mu := &api.Mutation{
 				SetNquads: []byte(edgeNQuads),
 				CommitNow: false,
@@ -514,7 +571,22 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 		return nil
 	}
 
-	uids, err := c.ResolvePubkeysToUIDs(ctx, pubkeys) // map[pubkey]uid, in clusterscan.go
+	// Validation gate (D-08/D-09), third pubkey-add site: skip+log malformed
+	// pubkeys before UID resolution so a bad pubkey never reaches a
+	// last_attempt nquad. Valid pubkeys still get stamped.
+	valid := make([]string, 0, len(pubkeys))
+	for _, pk := range pubkeys {
+		if !isValidHexPubkey(pk) {
+			log.Printf("WARN: skipping invalid pubkey %q in mark-attempted", pk)
+			continue
+		}
+		valid = append(valid, pk)
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+
+	uids, err := c.ResolvePubkeysToUIDs(ctx, valid) // map[pubkey]uid, in clusterscan.go
 	if err != nil {
 		return fmt.Errorf("resolve pubkeys for mark-attempted failed: %w", err)
 	}
