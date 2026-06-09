@@ -8,6 +8,16 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
+## Current Milestone: v1.1 Write Integrity & Hardening
+
+**Goal:** Eliminate silent data loss in the crawler's Dgraph write path and harden it — so large follow-lists persist completely, the chunk loop doesn't leak resources, the remove path can't be injected, and tests would catch a regression.
+
+**Target fixes:**
+- Chunked follow-lists silently drop data: `processFollowsInChunks` reuses one `kind3CreatedAt` across chunks, so `AddFollowers`' version guard (`pkg/dgraph/dgraph.go:165`) skips every chunk after the first. Pubkeys with >10k follows persist only the first 200 follows — directly undercutting the "expand the web of trust" core value.
+- `defer cancel()` accumulates inside the chunk `for` loop (`pkg/crawler/chunks.go:39-40`) instead of freeing per-iteration.
+- `RemoveFollower` builds DQL via raw string concatenation of unvalidated input (`pkg/dgraph/dgraph.go:344-355`), unlike the `$`-Vars / `%q` paths used elsewhere. Currently dead code (no callers) — latent, fixed for hygiene/defense-in-depth.
+- Thin test coverage: a single integration-gated test exists and nothing would have caught the chunk bug. Add unit tests (no live Dgraph) for the chunk/version-guard logic. (`make test-integration` already exists in the Makefile.)
+
 ## Requirements
 
 ### Validated
@@ -19,15 +29,17 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ Selects stale pubkeys to (re)crawl via `GetStalePubkeys` — existing (currently defective, see Active)
 - ✓ Cluster/trust analysis and weak-bridge detection — existing (`pkg/dgraph/clusterscan.go`, `cmd/clusterscan`)
 - ✓ Supporting CLIs: relay discovery, pubkey export, healthcheck — existing (`cmd/discover-relays`, `cmd/pubkeys`, `cmd/healthcheck`)
+- ✓ **Crawler reaches the uncrawled frontier** — stub pubkeys selected via `GetStalePubkeys` frontier-first; coverage grows past seed neighbourhood — shipped v1.0 (Phase 01-02)
+- ✓ **`last_attempt` predicate + attempt tracking** — never-attempted nodes selected first; every queried pubkey stamped via `MarkAttempted`; one-time backfill applied — shipped v1.0 (Phase 01-02)
 
 ### Active
 
-<!-- This milestone: implement the fix in 8pc_crawled.md. -->
+<!-- Milestone v1.1: write-path integrity + hardening. -->
 
-- [ ] **Crawler reaches the uncrawled frontier**: stub pubkeys (followees never fetched) are selected by `GetStalePubkeys` and get their kind-3 fetched, so coverage grows past the original seed neighbourhood (currently stuck at ~8%, 15,226 of 189,201 nodes).
-- [ ] **Selection no longer relies on a missing-value sort or the default 1000-row cap**: a `last_attempt` predicate is added; Phase 1 selects never-attempted nodes (`NOT has(last_attempt)`) with an explicit `first:`, Phase 2 tops up with aged previously-attempted nodes.
-- [ ] **Un-fetchable pubkeys age out**: every queried pubkey is stamped `last_attempt` (via `MarkAttempted`) whether or not an event came back, so the stale frontier converges instead of re-clogging.
-- [ ] **One-time backfill + regression test**: existing crawled nodes seed `last_attempt` from `last_db_update`; an integration test asserts stubs are returned by `GetStalePubkeys`.
+- [ ] **Chunked writes persist all follows**: a `>10k`-follow pubkey's full follow-list is written to Dgraph, not just the first 200-item chunk — the per-chunk `kind3CreatedAt` version guard no longer discards chunks 2…N.
+- [ ] **Chunk loop frees resources per-iteration**: the `defer cancel()` in `processFollowsInChunks` no longer accumulates contexts/timers until function return.
+- [ ] **`RemoveFollower` is injection-safe**: the remove path uses `$`-Vars / `%q` (and/or hex-pubkey validation) instead of raw string concatenation, consistent with the rest of `pkg/dgraph`.
+- [ ] **Regression coverage exists**: unit tests (no live Dgraph) cover the chunk/version-guard logic and fail against the pre-fix behaviour.
 
 ### Out of Scope
 
@@ -57,7 +69,9 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 | Milestone scoped to the 8% crawl fix only | Tightly-specified, isolated change; other CONCERNS.md issues get their own milestones | — Pending |
 | YOLO mode | Fix is fully specified with exact code; low ambiguity | — Pending |
 | Skip per-phase research | `8pc_crawled.md` already contains root-cause evidence and exact code | — Pending |
-| Add `last_attempt` predicate distinct from `last_db_update` | Distinguishes "tried" from "successfully ingested" so un-fetchable pubkeys converge | — Pending |
+| Add `last_attempt` predicate distinct from `last_db_update` | Distinguishes "tried" from "successfully ingested" so un-fetchable pubkeys converge | ✓ Shipped v1.0 |
+| v1.1 scoped to write-path integrity + hardening | Chunk data-drop is high-severity (silent loss undercutting core value); bundled with the adjacent leak, injection, and test-coverage gaps in the same write path | — Pending |
+| Fix `RemoveFollower` despite no callers | Latent injection + inconsistent with the rest of `pkg/dgraph`; cheap defense-in-depth | — Pending |
 
 ## Evolution
 
@@ -77,4 +91,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-09 after initialization*
+*Last updated: 2026-06-09 — milestone v1.1 (Write Integrity & Hardening) started*
