@@ -1,15 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: complete
-last_updated: "2026-06-09T00:00:00.000Z"
+milestone: v1.1
+milestone_name: Write Integrity & Hardening
+status: planning
+last_updated: "2026-06-09T08:30:10.736Z"
+last_activity: 2026-06-09
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State: Web-of-Trust Crawler — Crawl Coverage Fix
@@ -24,16 +25,10 @@ progress:
 
 ## Current Position
 
-Phase: 02 (backfill-live-verification) — COMPLETE
-Plan: 1 of 1 — COMPLETE
-**Phase:** 2 — Backfill + Live Verification
-**Plan:** 02-01 complete (MIG-01 backfill committed; live crawl verified on strfry host)
-**Status:** Milestone v1.0 COMPLETE
-**Progress:** 2/2 phases complete
-
-```
-[==========] 100%
-```
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-09 — Milestone v1.1 started
 
 ## Performance Metrics
 
