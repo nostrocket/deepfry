@@ -57,25 +57,23 @@ Deferred to future milestones (out of this fix; tracked in `.planning/codebase/C
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | TBD | Pending |
-| SEL-01 | TBD | Pending |
-| SEL-02 | TBD | Pending |
-| SEL-03 | TBD | Pending |
-| ATTEMPT-01 | TBD | Pending |
-| ATTEMPT-02 | TBD | Pending |
-| MIG-01 | TBD | Pending |
-| TEST-01 | TBD | Pending |
-| TEST-02 | TBD | Pending |
+| SCHEMA-01 | Phase 1 | Pending |
+| SEL-01 | Phase 1 | Pending |
+| SEL-02 | Phase 1 | Pending |
+| SEL-03 | Phase 1 | Pending |
+| ATTEMPT-01 | Phase 1 | Pending |
+| ATTEMPT-02 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Pending |
+| TEST-02 | Phase 1 | Pending |
+| MIG-01 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 9 total
-- Mapped to phases: 0 (set during roadmap)
-- Unmapped: 9 ⚠️ (resolved by roadmapper)
+- Mapped to phases: 9
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-09*
-*Last updated: 2026-06-09 after initial definition*
+*Last updated: 2026-06-09 — traceability populated by roadmapper*
