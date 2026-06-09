@@ -4,136 +4,75 @@
 
 ## APIs & External Services
 
-**Nostr Relays:**
-- Multiple upstream relays (configurable) - Fetch kind-3 events (contact lists) from live Nostr network
-  - SDK/Client: `github.com/nbd-wtf/go-nostr` v0.52.0
-  - Protocol: NIP-01 WebSocket
-  - Default relays: `wss://relay.damus.io`, `wss://nos.lol`, `wss://relay.nostr.band`, `wss://nostr-pub.wellorder.net`, `wss://relay.primal.net`
-  - Config location: `RelayURLs` in `pkg/config/config.go` (lines 51-57)
+**Nostr Relays (WebSocket, NIP-01):**
+- Public Nostr relays - Source of kind-3 (contact list) events the crawler subscribes to, and an optional forward target it republishes events to.
+  - SDK/Client: `github.com/nbd-wtf/go-nostr` (`nostr.RelayConnect`, `relay.Subscribe`, `relay.Publish`)
+  - Implementation: `pkg/crawler/crawler.go` (connect at lines 86, 120, 215, 241; subscribe at 436; publish/forward at 152)
+  - Default relays (`pkg/config/config.go` lines 51-57): `wss://relay.damus.io`, `wss://nos.lol`, `wss://relay.nostr.band`, `wss://nostr-pub.wellorder.net`, `wss://relay.primal.net`
+  - Auth: none (public read; events are signature-verified, not authenticated connections)
 
-**Forward Relay (Optional):**
-- Forward newly-discovered kind-3 events to a secondary relay (e.g., for backup/replication)
-  - Configured via: `forward_relay_url` in `~/deepfry/web-of-trust.yaml`
-  - Prompt on startup if not configured (`cmd/crawler/main.go` lines 55-68)
-  - Retry logic with exponential backoff (initial: 30s, max: 5 min)
-
-**Nostr.watch API (Relay Discovery):**
-- External API for discovering active Nostr relays (`https://api.nostr.watch/v1/online`)
-  - Used by: `cmd/discover-relays/main.go` (lines 204-235)
-  - Timeout: 15s
-  - Fallback: NIP-65 (kind 10002) relay list discovery from seed relays if API fails (lines 239-314)
-
-**NIP-11 Info Endpoint:**
-- Relay metadata fetch during relay health checks
-  - Library: `github.com/nbd-wtf/go-nostr/nip11`
-  - Timeout: 5s per relay
-  - Used by: `cmd/discover-relays/main.go` (line 383)
+**nostr.watch HTTP API:**
+- Relay discovery directory - Lists online relays to test and rank for inclusion in config.
+  - Endpoint: `https://api.nostr.watch/v1/online` (`cmd/discover-relays/main.go` line 38)
+  - Client: Go stdlib `net/http`
+  - Fallback: NIP-65 relay-list discovery from seed relays when the API is unavailable (`cmd/discover-relays/main.go` lines 45-53, 190-205), using `go-nostr/nip11` for relay metadata/latency probing.
+  - Auth: none
 
 ## Data Storage
 
 **Databases:**
-- Dgraph (gRPC) - Stores pubkey follow-graph (ID-only, no event payloads)
-  - Connection: `DgraphAddr` in config (default: `localhost:9080`)
-  - Client: `github.com/dgraph-io/dgo/v210`
-  - Location: `pkg/dgraph/dgraph.go` (lines 27-46 for client initialization)
-  - Schema: `pubkey` (@id, @upsert), `follows` (uid @reverse), `kind3CreatedAt`, `last_db_update`, `type Profile`
-  - Operations: `AddFollowers()`, `RemoveFollower()`, `GetStalePubkeys()`, `CountPubkeys()`, `GetKind3CreatedAt()` in `pkg/dgraph/dgraph.go`
+- Dgraph - Stores the ID-only pubkey follow-graph (`Profile` nodes with `pubkey`, `follows`, `kind3CreatedAt`, `last_db_update`, `last_attempt`). No event payloads are stored (data-separation rule).
+  - Connection: gRPC at `dgraph_addr` (default `localhost:9080`), set via `~/deepfry/web-of-trust.yaml`
+  - Client: `github.com/dgraph-io/dgo/v210` wrapped by `Client` in `pkg/dgraph/dgraph.go`
+  - Transport tuning: insecure (plaintext) gRPC credentials; `MaxCallRecvMsgSize` raised to 256 MiB to survive large frontier-selection responses (`pkg/dgraph/dgraph.go` lines 39-44)
+  - Schema: declared and applied in-process via `EnsureSchema` (`pkg/dgraph/dgraph.go` lines 60-75) — `pubkey: string @index(exact) @upsert @unique`, `follows: [uid] @reverse`, plus int indexes. Mirrors the repo-root `config/dgraph/schema.graphql` `Profile` type.
+  - Query language: DQL only, executed over the gRPC client (no HTTP/GraphQL path in this subsystem; clusterscan computation stays in DQL per `pkg/dgraph/clusterscan.go`)
+  - Hosted via repo-root `docker-compose.dgraph.yml` (`dgraph/standalone:v25.3.0`, gRPC 9080, HTTP 8080, Ratel UI 8000)
 
 **File Storage:**
-- Local filesystem only
-  - Exports: CSV files written to working directory by `cmd/pubkeys/main.go` (lines 25-27)
-  - Reports: CSV + JSON written by `cmd/clusterscan/main.go` to `--out` directory (or current directory)
+- Local filesystem only - CSV/JSON exports written locally (e.g. pubkeys exporter `cmd/pubkeys/main.go`, clusterscan reports `cmd/clusterscan/main.go`). Config YAML persisted under `~/deepfry/`.
 
 **Caching:**
-- None (queries go directly to Dgraph on each request)
+- None. Relay connection state (alive/dead, backoff timers) is held in-memory only and lost on restart.
 
 ## Authentication & Identity
 
-**Nostr Keypairs:**
-- Static keypairs configured via environment variables (from CLAUDE.md)
-  - `STRFRY_PRIVATE_KEY` - StrFry relay secret key (not used in web-of-trust)
-  - `NOSTR_SYNC_SECKEY_LIVE` - Live forwarder secret key (not used in web-of-trust)
-  - `NOSTR_SYNC_SECKEY_HISTORY` - History forwarder secret key (not used in web-of-trust)
-- Web-of-trust crawler is read-only and does not sign events
-
-**Public Key Extraction:**
-- Nostr events are parsed and verified by `go-nostr` library
-- Pubkeys are 64-char hex strings (Secp256k1) or npub format (Bech32, auto-converted to hex in `pkg/config/config.go` lines 112-114)
+**Auth Provider:**
+- None for service-to-service connections. Relay connections are unauthenticated; Dgraph uses insecure gRPC credentials (no TLS, no auth token).
+- Nostr identity handling: pubkeys are normalized to 64-char hex; npub (NIP-19 bech32) inputs are decoded via `nip19.Decode` (`pkg/config/config.go` lines 112-118, 125-144). Event integrity is enforced via signature checks before processing (per architecture notes; `event.CheckSignature()` in the crawler path).
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None (errors logged to stdout/stderr only)
+- None. Errors are logged with `log.Printf`/`log.Fatalf`; no Sentry/APM integration.
 
 **Logs:**
-- Approach: `log` package (Go stdlib)
-- Patterns:
-  - Connection states: "Connected to relay: X", "Relay X marked dead"
-  - Processing: "Batch complete: queried N pubkeys (M had events)"
-  - Dgraph operations: "DEBUG: AddFollowers completed in Xms for pubkey Y" (when `debug: true`)
-  - Signal handling: "Received signal: SIGTERM, initiating graceful shutdown..."
+- Go standard `log` package to stderr. Connection lifecycle, relay dead/retry events, batch/processing milestones. No structured logging; no raw secrets logged.
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- Standalone service (no Docker/K8s requirement from this module)
-- Runs on same host as Dgraph (or networked if dgraph_addr points elsewhere)
-- One instance recommended per configuration (single crawler per config file)
+- Runs on the StrFry host as a long-running crawler or one-shot CLIs. No managed hosting config in this subsystem.
 
 **CI Pipeline:**
-- None configured in this module (CI/CD likely at parent DeepFry level)
-- Local test: `make test` (unit tests only, short timeout)
-- Linting: `make lint` (golangci-lint optional, warns but doesn't fail build)
+- None in this subsystem. Repo root contains `.github/copilot-instructions.md` only (no Actions workflows observed here). Builds are driven by `Makefile`.
 
 ## Environment Configuration
 
-**Required env vars:**
-- None (all configuration via `~/deepfry/web-of-trust.yaml`)
-- Optional Nostr secrets (for signing): Not used by web-of-trust, reserved for forwarders
+**Required configuration (file-based, not env vars):**
+- `~/deepfry/web-of-trust.yaml` - `relay_urls`, `dgraph_addr`, `pubkey` (seed), `timeout`, `stale_pubkey_threshold`, optional `forward_relay_url`, and clusterscan tuning keys.
+- Auto-created with defaults on first load if missing (`pkg/config/config.go` lines 80-99).
 
 **Secrets location:**
-- Config file: `~/deepfry/web-of-trust.yaml` (YAML, human-readable)
-- No .env file expected by this module
-- No embedded secrets in code
+- No secrets consumed by this subsystem. It performs unauthenticated relay reads and in/secure Dgraph writes. (Repo-root services such as the event-forwarder use `.env`; this crawler does not.)
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None (pure pull model from Nostr relays)
+- None. The crawler has no HTTP server; it is a relay subscriber and Dgraph writer.
 
 **Outgoing:**
-- Forward relay (optional): `cmd/crawler/main.go` line 152 calls `crawler.forwardEvent()`
-  - Publishes kind-3 events (contact lists) to forward relay after discovery
-  - Retry with backoff on failure
-
-## Relay Connection Management
-
-**Retry Logic:**
-- Initial backoff: 30s
-- Max backoff: 5 minutes
-- Max consecutive failures before removal: 5
-- Backoff doubles on each failure
-- Dead relay removed from config after 5 failures (callback `pkg/crawler/crawler.go` line 184)
-
-**Health & Reconnection:**
-- Periodic reconnection attempts in main loop via `crawler.ReconnectRelays(ctx)` (`pkg/crawler/crawler.go` lines 201-249)
-- Exponential backoff respects retry window before attempting reconnect
-- Graceful shutdown: `context.WithCancel()` stops all goroutines on SIGINT/SIGTERM
-
-## Graph Query Operations
-
-**Read-Only (Clusterscan):**
-- `ResolvePubkeysToUIDs()` - Lookup UIDs for seed pubkeys
-- `ExpandTrustedSet()` - Trust propagation via graph shape
-- `GetWeakBridges()` - Identify spam cluster entry points
-- `GetClusterMembers()` - Enumerate accounts in a suspected cluster
-- All operations use `NewReadOnlyTxn()` in `pkg/dgraph/clusterscan.go`
-
-**Write Operations (Crawler):**
-- `AddFollowers()` - Bulk upsert follow edges (kind-3 replaceable event behavior)
-- `RemoveFollower()` - Delete single follow edge
-- `RemovePubKeyIfNoFollowers()` - Garbage collection (delete orphaned nodes)
-- `TouchLastDBUpdate()` - Timestamp updates for stale pubkey tracking
+- Optional event forwarding: when `forward_relay_url` is configured, validated kind-3 events are republished to that relay via `forwardEvent` (`pkg/crawler/crawler.go` lines 148-160). Failures mark the forward relay dead and schedule exponential-backoff retry.
 
 ---
 

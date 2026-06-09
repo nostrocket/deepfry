@@ -2,305 +2,178 @@
 
 **Analysis Date:** 2026-06-09
 
-## Test Status
+## Test Framework
 
-**Current State:** No test files present in this module (`pkg/`, `cmd/`)
+**Runner:**
+- Go's built-in `testing` package (`go test`) — no third-party test runner
+- Config: none (no test config file; behaviour controlled via build tags and `go test` flags)
 
-The codebase contains zero `*_test.go` files. The module is untested.
+**Assertion Library:**
+- None. Tests use plain `if`-condition checks with `t.Fatal`, `t.Fatalf`, and `t.Errorf`. No testify or gomega.
 
-## Test Framework & Configuration
-
-**Framework:** Would use standard `testing` package (Go built-in)
-
-**Makefile Targets (defined but no tests exist):**
+**Run Commands:**
 ```bash
-make test                # go test ./... -short -cover
-make test-integration    # go test -tags=integration ./...
+make test              # go test ./... -short -cover  (unit/short tests)
+make test-integration  # NOT defined in this module's Makefile (see note below)
+go test ./... -short   # run only short tests, skipping integration-tagged files
+go test -tags=integration ./pkg/dgraph/   # build & run integration tests
 ```
 
-**Run Commands (available for future tests):**
-```bash
-# Unit tests (fast, short timeout)
-go test ./... -short -cover
+> **Note:** Project CLAUDE.md references `make test-integration`, but this `web-of-trust` Makefile only defines `test` (`go test ./... -short -cover`). Integration tests are gated by the `//go:build integration` tag and must be run by passing `-tags=integration` to `go test` directly, or via a sibling subsystem's target. There is no `-short` skip guard inside the test itself — the build tag is the gate.
 
-# Integration tests (requires live Dgraph at localhost:9080)
-go test -tags=integration ./...
+## Test File Organization
 
-# Verbose output
-go test -v ./...
+**Location:**
+- Co-located with the code under test, in the same package and directory
+- Example: `pkg/dgraph/dgraph_stale_test.go` sits beside `pkg/dgraph/dgraph.go`
 
-# Cover mode with HTML report
-go test -cover ./...
-go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
-```
+**Naming:**
+- `<subject>_test.go`, with an optional descriptive segment: `dgraph_stale_test.go` (tests the stale-pubkey selection path)
+- Test functions: `Test<Behaviour>` — `TestGetStalePubkeysIncludesFrontier`
 
-**Coverage:** No current coverage requirements enforced
+**Package placement:**
+- Tests live in the same package as the code (white-box): `package dgraph` (not `dgraph_test`), giving access to unexported fields such as `c.dg` (`pkg/dgraph/dgraph_stale_test.go:3`, `:65`)
 
-## Integration Test Gating
+**Current coverage:**
+- Exactly one test file exists: `pkg/dgraph/dgraph_stale_test.go`. No unit-test suite exists for `pkg/crawler`, `pkg/config`, or the `cmd/*` entry points yet.
 
-**Build tag convention:**
-- Tests requiring Dgraph should use `//go:build integration` directive
-- Example pattern (not yet implemented):
-  ```go
-  //go:build integration
-  // +build integration
+## Test Structure
 
-  package dgraph
-
-  func TestAddFollowersIntegration(t *testing.T) {
-      // Requires: Dgraph at localhost:9080
-      // Setup: EnsureSchema() called first
-  }
-  ```
-
-**Dgraph Dependency:**
-- Integration tests connect to gRPC endpoint: `localhost:9080` (default in `pkg/dgraph/dgraph.go`)
-- Schema initialization required: `EnsureSchema(ctx)` must run before data operations
-- Tests must clean up state (delete nodes) or use isolated graph
-
-**Makefile Integration Test Target:**
-```makefile
-test-integration:
-    go test -tags=integration ./...
-```
-
-This flag filters tests to only run those with `//go:build integration` tag, excluding unit tests.
-
-## Recommended Test Structure
-
-### Unit Tests (when added)
-
-**File location:** Co-located with source
-- `pkg/config/config_test.go` - test configuration loading/saving
-- `pkg/dgraph/dgraph_test.go` - test Dgraph client query building
-- `pkg/crawler/crawler_test.go` - test event processing logic (mocked relay)
-
-**Test naming:**
-```go
-func TestFunctionName(t *testing.T) { ... }
-func TestFunctionName_Scenario(t *testing.T) { ... }
-```
-
-**Table-driven tests pattern (Go convention):**
-```go
-func TestNormalizeSeedPubkeys(t *testing.T) {
-    tests := []struct {
-        name     string
-        input    []string
-        expected []string
-    }{
-        {
-            name:     "deduplicates",
-            input:    []string{"abc", "abc"},
-            expected: []string{"abc"},
-        },
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            result := normalizeSeedPubkeys(tt.input)
-            if !reflect.DeepEqual(result, tt.expected) {
-                t.Errorf("got %v, want %v", result, tt.expected)
-            }
-        })
-    }
-}
-```
-
-### Integration Tests
-
-**File location:** Same as unit tests, gated with build tag
-- `pkg/dgraph/dgraph_integration_test.go` or same file with `//go:build integration`
-
-**Test pattern:**
+**Suite Organization:**
 ```go
 //go:build integration
-// +build integration
 
 package dgraph
 
-import (
-    "context"
-    "testing"
-)
-
-func TestAddFollowersIntegration(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping integration test in short mode")
-    }
-
-    // Setup
-    client, err := NewClient("localhost:9080")
-    if err != nil {
-        t.Fatalf("failed to connect: %v", err)
-    }
-    defer client.Close()
-
+func TestGetStalePubkeysIncludesFrontier(t *testing.T) {
     ctx := context.Background()
-    if err := client.EnsureSchema(ctx); err != nil {
-        t.Fatalf("failed to ensure schema: %v", err)
-    }
-
-    // Test
-    pubkey := "test_pubkey_001"
-    follows := map[string]struct{}{"followee1": {}, "followee2": {}}
-    err = client.AddFollowers(ctx, pubkey, 1234567890, follows, false)
+    c, err := NewClient("localhost:9080")
     if err != nil {
-        t.Fatalf("AddFollowers failed: %v", err)
+        t.Fatal(err)
     }
-
-    // Verify
-    count, err := client.CountPubkeys(ctx)
-    if err != nil {
-        t.Fatalf("CountPubkeys failed: %v", err)
+    defer c.Close()
+    if err := c.EnsureSchema(ctx); err != nil {
+        t.Fatal(err)
     }
-    if count < 3 { // test pubkey + 2 followees
-        t.Errorf("expected at least 3 pubkeys, got %d", count)
-    }
-
-    // Cleanup (delete test nodes)
-    // Implementation needed
+    // ... arrange (mutate), act (query), assert ...
 }
 ```
 
-## Setup & Teardown Patterns (for integration tests)
+**Patterns:**
+- **Setup:** Each test opens a live `*Client` via `NewClient("localhost:9080")`, calls `EnsureSchema(ctx)`, and `defer c.Close()`
+- **Arrange:** Insert fixture nodes with raw RDF n-quads through the `mustMutate` helper
+- **Act/Assert:** Call the function under test (`GetStalePubkeys`), then assert on the returned map with `if _, ok := got[stub]; !ok { t.Fatalf(...) }`
+- **Assertion idiom:** `t.Fatalf` for conditions that must hold (test cannot continue), `t.Errorf` for soft checks that allow the test to keep running (`pkg/dgraph/dgraph_stale_test.go:51-57`)
+- **Build-tag gating:** The `//go:build integration` tag at the top of the file excludes it from default `go test` runs, so live-Dgraph tests never run during `make test`
 
-**For tests requiring Dgraph:**
+## Mocking
 
-1. **Setup Phase:**
-   ```go
-   func setupTestClient(t *testing.T) *Client {
-       client, err := NewClient("localhost:9080")
-       if err != nil {
-           t.Fatalf("failed to connect to Dgraph: %v", err)
-       }
-       ctx := context.Background()
-       if err := client.EnsureSchema(ctx); err != nil {
-           t.Fatalf("failed to ensure schema: %v", err)
-       }
-       return client
-   }
-   ```
+**Framework:** None. There are no mock objects, fakes, or interface-based test doubles in the codebase.
 
-2. **Cleanup Phase:**
-   ```go
-   defer func() {
-       // Delete test data
-       // Call client.DeleteNodes(ctx, testUIDs)
-       client.Close()
-   }()
-   ```
+**Approach:**
+- Integration tests run against a **real, live Dgraph instance** at `localhost:9080` rather than mocking the client
+- The Dgraph `Client` is a concrete struct (no interface), so substitution-based mocking is not currently possible without refactoring
 
-3. **Test Isolation:**
-   - Each test should use unique pubkeys (e.g., `test_<testname>_<timestamp>`)
-   - Delete created nodes at end of test
-   - Do NOT assume clean Dgraph state between tests
+**What is exercised live:**
+- gRPC connection, schema alteration, mutations, and read-only queries all hit the real database
 
-## Mocking Patterns (for unit tests)
+**What is NOT mocked:**
+- Dgraph (used live)
+- Nostr relays (not covered by any automated test)
 
-**What to mock:**
-- `*nostr.Relay` - external relay connections (use interface mocking)
-- `*dgo.Dgraph` - internal client can be tested against mock data
-- File I/O in config tests - use temp directories
+## Fixtures and Factories
 
-**What NOT to mock:**
-- Dgraph queries - integration tests better for complex query logic
-- Date/time calculations - use fake time.Time values
-- Error wrapping - test actual fmt.Errorf behavior
-
-**Example mocking approach (not yet in codebase):**
+**Test Data:**
 ```go
-// Mock relay for crawler tests
-type mockRelay struct {
-    events chan *nostr.Event
-}
+// Unique fake pubkeys generated from the current nanosecond timestamp,
+// formatted as 64-hex-char strings to satisfy the pubkey index/format.
+stub    := fmt.Sprintf("%064x", time.Now().UnixNano())
+crawled := fmt.Sprintf("%064x", time.Now().UnixNano()+1)
 
-func (m *mockRelay) QuerySync(ctx context.Context, f nostr.Filter) ([]*nostr.Event, error) {
-    // Return test events
-    return []*nostr.Event{...}, nil
-}
+// Inserted via raw RDF n-quads in a single committed transaction.
+mustMutate(t, c, fmt.Sprintf(`_:s <pubkey> %q .
+_:s <dgraph.type> "Profile" .
+_:c <pubkey> %q .
+_:c <dgraph.type> "Profile" .
+_:c <kind3CreatedAt> "%d" .
+_:c <last_db_update> "%d" .
+_:c <last_attempt> "%d" .
+`, stub, crawled, now, now, now))
 ```
 
-## Test Data & Fixtures
+**Helper functions (test-local, `t.Helper()`-marked):**
+- `mustMutate(t, c, rdf)` — runs RDF n-quads in one committed transaction; fails the test on error (`pkg/dgraph/dgraph_stale_test.go:86-94`)
+- `countFrontier(t, c)` — counts never-attempted (`NOT has(last_attempt)`) nodes via a read-only DQL count query, used to size the query limit dynamically (`pkg/dgraph/dgraph_stale_test.go:62-83`)
 
-**Config fixtures:** None yet, would use temp directories
+**Fixture strategy:**
+- Unique pubkeys are derived from `time.Now().UnixNano()` so each run inserts fresh nodes and does not collide with existing live-graph data
+- Query limits are sized **relative to the live graph** (`countFrontier(t, c) + 1000`) so assertions stay deterministic regardless of how many real stub nodes already exist (`pkg/dgraph/dgraph_stale_test.go:39-44`)
 
-**Example pattern (if added):**
-```go
-func TestLoadConfig_WithYAML(t *testing.T) {
-    // Create temp config directory
-    tmpDir := t.TempDir()
-    
-    // Write test YAML
-    configPath := filepath.Join(tmpDir, "web-of-trust.yaml")
-    testConfig := `relay_urls: ["wss://test.relay"]`
-    if err := os.WriteFile(configPath, []byte(testConfig), 0644); err != nil {
-        t.Fatalf("failed to write test config: %v", err)
-    }
-    
-    // Test loading (would need to inject path)
-    // ...
-}
-```
+**Location:** Fixtures are inline within the test file; there is no separate `testdata/` directory or factory package.
 
-**Pubkey fixtures:** Use deterministic test keys (hex format, lowercase)
-```go
-const (
-    testPubkey1 = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-    testPubkey2 = "f1f2f3f4f5f6f1f2f3f4f5f6f1f2f3f4f5f6f1f2f3f4f5f6f1f2f3f4f5f6f1f2"
-)
-```
+## Coverage
 
-## Coverage Goals
+**Requirements:** None enforced. No coverage threshold or CI gate.
 
-**Recommended targets (not enforced):**
-- `pkg/config` - 80%+ (config parsing logic critical)
-- `pkg/dgraph` - query building tested, integration coverage for mutations
-- `pkg/crawler` - event processing logic, error handling
-
-**Commands (`cmd/*/`) coverage:**
-- Main functions typically not unit tested (integration test at binary level)
-- Focus on library code (`pkg/`)
-
-## Testing Checklist for Future Implementation
-
-- [ ] Create `*_test.go` files in each package
-- [ ] Implement table-driven tests for config normalization
-- [ ] Add unit tests for Dgraph query building (no DB calls)
-- [ ] Add integration tests with `//go:build integration` tag
-- [ ] Create test helper functions in `_test.go` files (not exported)
-- [ ] Run `make test` in CI/CD (short mode, no integration tests)
-- [ ] Run `make test-integration` separately when Dgraph available
-- [ ] Generate coverage reports: `go test -coverprofile=coverage.out ./...`
-- [ ] Test error wrapping with `errors.Is()` and `errors.As()`
-- [ ] Test context cancellation paths (graceful shutdown)
-
-## Running Tests
-
-**Local development:**
+**View Coverage:**
 ```bash
-cd /Users/g/git/deepfry/web-of-trust
-
-# Run unit tests only (short mode, no integration)
-make test
-
-# Run with coverage
-go test ./... -short -cover
-
-# Run integration tests (requires Dgraph at localhost:9080)
-docker-compose -f docker-compose.dgraph.yml up -d
-make test-integration
-
-# Run specific package
-go test -v ./pkg/dgraph -tags=integration
-
-# Run specific test function
-go test -run TestAddFollowers -v ./pkg/dgraph -tags=integration
+make test          # runs with -cover, prints per-package coverage summary
+go test ./... -cover
+go test -tags=integration -coverprofile=cover.out ./pkg/dgraph/
+go tool cover -html=cover.out   # HTML report
 ```
 
-**CI/CD considerations:**
-- Unit tests must run in all environments: `make test`
-- Integration tests optional, require Docker: `make test-integration`
-- Coverage reports saved: `go test -coverprofile=coverage.out ./...`
+> The `-cover` flag is included in `make test`, but because the only test is integration-tagged, the default `make test` run reports 0% / no statements covered for most packages.
+
+## Test Types
+
+**Unit Tests:**
+- None present. No pure in-memory unit tests exist for any package.
+
+**Integration Tests:**
+- Scope: end-to-end behaviour of `pkg/dgraph` query/mutation logic against a real Dgraph
+- Gated by the `//go:build integration` build tag
+- Require a live Dgraph reachable at `localhost:9080` (start via `docker-compose -f docker-compose.dgraph.yml up -d` from the repo root)
+
+**E2E Tests:**
+- Not automated. Full crawler verification (running against live Dgraph + Nostr relays) is a **manual step** performed on the strfry host, per the project spec and `8pc_crawled.md` §6.
+
+## Common Patterns
+
+**Live-resource setup/teardown:**
+```go
+c, err := NewClient("localhost:9080")
+if err != nil {
+    t.Fatal(err)
+}
+defer c.Close()
+```
+
+**Read-only query inside a test helper:**
+```go
+txn := c.dg.NewReadOnlyTxn()
+defer txn.Discard(ctx)
+resp, err := txn.Query(ctx, `{ f(func: has(pubkey)) @filter(NOT has(last_attempt)) { c: count(uid) } }`)
+if err != nil {
+    t.Fatalf("count frontier failed: %v", err)
+}
+```
+
+**Regression-guard assertions:**
+```go
+// Asserts a specific previously-broken behaviour stays fixed.
+if _, ok := got[stub]; !ok {
+    t.Fatalf("frontier stub %s was NOT selected — regression of the orderasc/1000-cap bug", stub)
+}
+```
+The test exists specifically to lock in the fix for the `GetStalePubkeys` frontier-selection bug documented in `pkg/dgraph/dgraph.go:438-442`.
+
+## Recommendations / Gaps
+
+- **No unit tests** for `pkg/config` (viper loading, defaults, relay add/remove), `pkg/crawler` (event validation, chunking, backoff), or `cmd/*`. These would not require a live Dgraph and could run under default `make test`.
+- **Config tests must use a temp `HOME`** — never the live `~/deepfry/web-of-trust.yaml` (per CLAUDE.md and `8pc_crawled.md` §6). Set a temporary directory via `t.Setenv("HOME", t.TempDir())` before exercising `config.LoadConfig`.
+- **`make test-integration` is referenced but not defined** in this Makefile; add the target or run `go test -tags=integration ./pkg/dgraph/` directly.
+- Consider introducing an interface over the Dgraph `Client` if mockable unit tests for `pkg/crawler` become desirable.
 
 ---
 

@@ -4,380 +4,154 @@
 
 ## Tech Debt
 
-### Critical: Stubborn Stubs — The 8% Crawling Bug
+**Mutex held across Dgraph writes in the event loop:**
+- Issue: `dbUpdateMutex` is locked at the top of the `eventsChan` case and held through `event.CheckSignature()`, `forwardEvent()` (a network publish), `TouchLastDBUpdate()` and the full `updateFollowsFromEvent()` → `AddFollowers()` Dgraph transaction. All per-event work is serialized behind a single mutex even though events arrive concurrently from multiple relays.
+- Files: `pkg/crawler/crawler.go:350-402`
+- Impact: The crawler processes events strictly one-at-a-time; a slow Dgraph commit or a slow forward-relay publish stalls processing of every other relay's events. Defeats the concurrent relay fan-in. Signature verification (CPU-bound) also runs under the lock.
+- Fix approach: Narrow the critical section to only the Dgraph mutation, or move signature checks and forwarding outside the lock. Consider a worker pool draining `eventsChan` with per-pubkey serialization instead of one global mutex.
 
-**Issue:** The crawler only ever crawls ~8% of known pubkeys because `GetStalePubkeys` starves stub nodes (nodes created only as followees but never had their own kind-3 ingested).
+**`CountPubkeys` runs twice every loop iteration:**
+- Issue: The main loop calls `CountPubkeys` on every batch (`totalPubkeys`) plus once at start/end. `CountPubkeys` runs `count(func: has(pubkey))` which scans the entire pubkey index.
+- Files: `cmd/crawler/main.go:116-120`, `pkg/dgraph/dgraph.go:540-571`
+- Impact: As the graph grows into hundreds of thousands of nodes, a full count per batch adds avoidable latency to every cycle. The value is only used for a log line and an empty-DB check.
+- Fix approach: Count once before the loop; only re-check for empty-DB on the first iteration. Drop the per-batch count or run it on a timer.
 
-**Files:** `pkg/dgraph/dgraph.go:430-468`, `cmd/crawler/main.go:108-146`
+**Redundant `fmt.Sprintf("%s", strings.Join(...))`:**
+- Issue: `bulkQuery := fmt.Sprintf("{ %s }", fmt.Sprintf("%s", strings.Join(queryParts, "\n")))` wraps a `strings.Join` in a no-op `Sprintf("%s", ...)`.
+- Files: `pkg/dgraph/dgraph.go:226-227`
+- Impact: `go vet` flags this; minor wasted allocation. Cosmetic but indicates the file has not been vet-clean.
+- Fix approach: `bulkQuery := fmt.Sprintf("{ %s }", strings.Join(queryParts, "\n"))`.
 
-**Impact:** Over 173,975 pubkeys (92% of the graph) are stuck as stubs. The web of trust cannot grow past the initial seed neighborhood. The crawler re-crawls the same ~15k already-crawled accounts forever, wasting bandwidth and CPU.
-
-**Root cause:** Two defects combine:
-1. `GetStalePubkeys` uses `orderasc: last_db_update`. Stubs have **no** `last_db_update` predicate, so Dgraph sorts them **last**. All crawled accounts come before any stub.
-2. No explicit `first:` limit. Dgraph caps the sorted result at its default 1000 rows. The query returns 1000 already-crawled accounts and never a single stub.
-
-**Secondary defect — no "attempted" marker:** When a relay returns nothing for a pubkey, that pubkey is left untouched (no timestamp). Even after the primary fix, any pubkey whose kind-3 is not retrievable (~15% of stubs, plus invalid pubkeys) will never get a timestamp, stay in the "never attempted" set, and be re-selected every cycle.
-
-**Fix approach:** See `8pc_crawled.md` in the repository root (fully specified fix with 5 coordinated changes):
-- Add `last_attempt` predicate to schema to distinguish "tried, nothing there" from "never tried"
-- Rewrite `GetStalePubkeys` with Phase 1 selecting never-attempted nodes first (explicit `first:`, no `orderasc`), Phase 2 topping up with aged previously-attempted nodes
-- Call new `MarkAttempted` helper to stamp every queried pubkey, even if no event came back
-- Update crawler main loop to pass batch size to `GetStalePubkeys` and call `MarkAttempted` after fetch
-- One-time backfill to initialize `last_attempt` from `last_db_update` for existing crawled nodes
-
-**Priority:** CRITICAL — This is the root cause of graph stagnation.
-
----
+**Stale stub crawl problem (documented, partially mitigated):**
+- Issue: Per `8pc_crawled.md`, the crawler historically re-refreshed the ~15k known accounts and only crawled ~8% of known pubkeys, never reaching the stub frontier. `GetStalePubkeys` was reworked to a frontier-first query (`NOT has(last_attempt)`), and `MarkAttempted` was added so un-fetchable stubs age out.
+- Files: `pkg/dgraph/dgraph.go:443-537`, `cmd/crawler/main.go:151-159`, `8pc_crawled.md`
+- Impact: The fix is recent and only covered by a single integration test. The `last_attempt` predicate must be backfilled from `last_db_update` for already-crawled nodes (noted in `8pc_crawled.md:344`); if that backfill did not run, the aged-query phase behaves differently than intended on the live graph.
+- Fix approach: Verify the live `last_attempt` backfill completed; add coverage for the Phase-2 aged top-up path, not just the frontier path.
 
 ## Known Bugs
 
-### Relay Connection Stalls Under Timeout Conditions
+**Chunked large follow-lists trip the kind3CreatedAt version guard:**
+- Symptoms: For follow lists >10,000, `processFollowsInChunks` calls `AddFollowers` once per 200-item chunk with the same `createdAt`. The first chunk writes `kind3CreatedAt`; every subsequent chunk hits the `kind3createdAt <= existingKind3CreatedAt` guard (`==` case) and returns early at `pkg/dgraph/dgraph.go:165-168`, so only the first 200 follows are ever persisted.
+- Files: `pkg/crawler/chunks.go:37-75`, `pkg/dgraph/dgraph.go:163-168`
+- Trigger: Any pubkey with more than 10,000 follows.
+- Workaround: None in code. The guard treats equal timestamps as "already have it," which is correct for whole-event replay but wrong for the chunked path that reuses one timestamp across calls.
+- Fix approach: Have `AddFollowers` support an "append additional follows for this same event" mode, or accumulate all chunks into a single replace operation, or pass a flag that bypasses the version guard for continuation chunks.
 
-**Symptoms:** When `FetchAndUpdateFollows` hits the relay timeout (default 30s from `config:Timeout`), the `relayQueryContext` deadline is exceeded but goroutines handling individual relay subscriptions may still hold open WebSocket connections until the main context is cancelled.
-
-**Files:** `pkg/crawler/crawler.go:287-432`, `pkg/crawler/crawler.go:434-495`
-
-**Trigger:** Run crawler with many relays (136 configured) and a large batch of pubkeys (500 per cycle). Some relays are slow to respond to the kind-3 filter. At 30s timeout, the `relayQueryContext` (line 293) times out, triggering `context.DeadlineExceeded` in the event loop (line 333-340). The code logs and continues processing received events, but `queryRelay` goroutines may still be blocked in `<-sub.Events` if they haven't received EOSE or an error.
-
-**Workaround:** The `defer sub.Unsub()` (line 454) will clean up the subscription when the goroutine exits, but only **when the relay or context actually signals**. If a relay is unresponsive, the goroutine may block indefinitely waiting for `sub.Events` or `sub.EndOfStoredEvents`, even after the main context exits.
-
-**Why it matters:** Under the observed git log message "problem: too many open sockets" (commit 3e77e90), this pattern can exhaust file descriptor limits. The symptom was confirmed in quarantine-rescuer (related service), where idle subscriptions accumulated.
-
----
-
-### Large Follow Lists Cause Dgraph Timeouts
-
-**Symptoms:** When a pubkey has > 10,000 follows (e.g. large media accounts), `AddFollowers` times out even with chunk processing.
-
-**Files:** `pkg/crawler/crawler.go:527-539`, `pkg/crawler/chunks.go:14-81`
-
-**Details:** For follow lists > 10,000 follows, the code chunks them into 200-follow batches (line 20 in chunks.go) and processes sequentially. However:
-- Each chunk gets its own `context.WithTimeout(ctx, c.timeout)` (chunks.go:39), inheriting the remaining context timeout from the relay query phase
-- If the relay query timeout already consumed 20s, a chunk may have only 10s left
-- A 200-follow bulk query + mutation against Dgraph can take 5-30s depending on DB load
-- The chunk fails, and the entire follow list update fails
-
-**Fix approach:** Give chunked operations their own independent timeout (not derived from relay context), or implement exponential backoff with retry for Dgraph timeouts specifically.
-
----
-
-### Event Forwarding Loses Errors Silently
-
-**Symptoms:** If the forward relay is down, events fail to forward, but the error is logged and swallowed (not propagated).
-
-**Files:** `pkg/crawler/crawler.go:148-168`
-
-**Details:** `forwardEvent` (line 148) swallows errors. It logs a warning (line 154) and marks the relay dead (lines 156-163), but the caller (`updateFollowsFromEvent`, line 383) doesn't know the event failed to forward. This can silently break assumptions if the caller expects all "processed" events to have been forwarded.
-
-**Impact:** Low for correctness (local Dgraph is still updated), but if forward relay is critical (e.g. for propagation to StrFry), events disappear from the relay without audit trail.
-
----
-
-### No Connection Pooling for Dgraph
-
-**Symptoms:** The crawler creates two separate Dgraph gRPC connections: one in `New()` (`pkg/crawler/crawler.go:69`) and another in `cmd/crawler/main.go:48`. Each time `GetStalePubkeys` or `AddFollowers` is called, a new transaction and read-only transaction is created. On heavy load, this can cause connection exhaustion.
-
-**Files:** `pkg/crawler/crawler.go:69`, `cmd/crawler/main.go:48`, `pkg/dgraph/dgraph.go:91-92, 443-444, 479-480`
-
-**Details:** Go-grpc does implement connection pooling internally, but each `NewClient` creates a new gRPC connection. The multiple connections + transaction churn can accumulate if Dgraph is slow to respond.
-
-**Fix approach:** Use a single shared Dgraph client (already done locally in the crawler, but the duplicate client in main.go should be removed or reused).
-
----
-
-## Fragile Areas
-
-### Transaction Semantics in `AddFollowers` Are Implicit
-
-**Files:** `pkg/dgraph/dgraph.go:72-313`
-
-**Why fragile:** The function does not commit the transaction until the very end (line 301). It performs ~5-6 separate `Mutate` calls on the same transaction, all with `CommitNow: false`. If any intermediate mutation fails (e.g., at line 180 or 265), the entire transaction is rolled back when `Discard` is called in the `defer` (line 92). However:
-- The code does not explicitly check error returns from most mutations (lines 148, 180, 195, 263, 294).
-- If a mutation fails mid-way (e.g., Step 3 bulk query at line 221), subsequent mutations are attempted anyway, potentially on inconsistent state.
-- The final commit (line 301) can still fail (e.g., network timeout), and the error is returned, leaving the caller uncertain whether any mutations took effect.
-
-**Safe modification:** Wrap the transaction in a helper that either commits or aborts cleanly, with explicit error checking at each mutation stage. Consider breaking `AddFollowers` into smaller, single-purpose functions (upsert follower, delete old edges, add new edges) each with their own transaction.
-
-**Test coverage:** The function is exercised in the crawler's main loop, but no unit test explicitly verifies transaction atomicity or rollback behavior.
-
----
-
-### Relay Reconnection Logic Does Not Track All Failure Modes
-
-**Files:** `pkg/crawler/crawler.go:170-230`
-
-**Why fragile:** The `markRelayDead` function (line 170) removes relays after 5 consecutive failures (line 183). However:
-- The failure counter (`rs.failures`) is only incremented in `markRelayDead` (line 182), and only decremented when a reconnect succeeds (line 226).
-- If a relay fails during a `FetchAndUpdateFollows` call, the error is logged but may not trigger `markRelayDead` if it's categorized as a "subscription error" rather than a "transport error" (line 422-429).
-- Dead relays are removed from the slice in-place (line 171-198), but the config file is only updated if `onConnectFail` is called and succeeds. If the config write fails, a restarted crawler may re-attempt dead relays.
-
-**Safe modification:** Ensure all failure paths that warrant relay death feed into `markRelayDead`. Add logging whenever a relay is permanently removed vs. temporarily backed off.
-
----
-
-### Batch Processing Loop Is Not Stateless
-
-**Files:** `cmd/crawler/main.go:97-165`
-
-**Why fragile:** The main loop (lines 98-165) fetches stale pubkeys, processes them, logs progress, then repeats. But:
-- If `FetchAndUpdateFollows` fails (line 152-160), the code breaks the loop entirely (line 159).
-- The `pubkeys` map from `GetStalePubkeys` is not persisted or checkpointed. If the crawler crashes after processing some pubkeys but before the next batch, those pubkeys may be re-selected (since `last_db_update` was only set if a follow list was actually ingested).
-- The "stale remaining" count (line 162) is computed but not validated — it assumes the batch map was fully consumed, but if `FetchAndUpdateFollows` returns early on error, the count is misleading.
-
-**Safe modification:** Implement transactional batch checkpointing or at least log exactly which pubkeys were processed before a crash. Consider making `FetchAndUpdateFollows` non-fatal (continue the loop on error) and just log/skip.
-
----
-
-### Dgraph Schema Evolution Is Coupled to Startup
-
-**Files:** `pkg/crawler/crawler.go:76`, `pkg/dgraph/dgraph.go:54-66`
-
-**Why fragile:** `EnsureSchema` is called once at startup (line 76 in crawler.go). If the schema needs to change (e.g., the pending fix to add `last_attempt`), the production Dgraph must be updated by running the new schema, which:
-- Assumes the crawler can reach Dgraph at startup
-- Blocks startup if the schema call fails
-- Does not verify what the current schema is before applying changes (though Dgraph's `Alter` is idempotent)
-- Any schema change to an existing cluster requires downtime or coordination
-
-**Fix approach:** Move schema validation/migration to a separate CLI tool (e.g., `cmd/schema-migrate/`) that can be run before the crawler. This is already partially documented in the fix guide (Fix E backfill).
-
----
+**`defer cancel()` accumulates inside the chunk loop:**
+- Symptoms: In `processFollowsInChunks` each iteration does `chunkCtx, cancel := context.WithTimeout(...)` followed by `defer cancel()`. The deferred cancels do not fire until the whole function returns, so for an N-chunk list, N contexts (and their timers) stay live until completion.
+- Files: `pkg/crawler/chunks.go:38-40`
+- Trigger: Large follow lists processed in many chunks.
+- Workaround: None.
+- Fix approach: Call `cancel()` explicitly at the end of each loop iteration instead of deferring, or wrap the body in a closure.
 
 ## Security Considerations
 
-### No Validation of Relay Configuration
+**DQL queries built by string concatenation / `fmt.Sprintf`:**
+- Risk: Pubkeys and other values are interpolated directly into DQL query strings throughout the Dgraph layer rather than always using `Vars`. `AddFollowers` uses `%q` (Go-quoted) which escapes quotes, and `RemoveFollower` concatenates `signerPubkey`/`followee` straight into the query with `+`.
+- Files: `pkg/dgraph/dgraph.go:104-114` (`%q`), `pkg/dgraph/dgraph.go:344-358` (`RemoveFollower`, raw concatenation), `pkg/dgraph/clusterscan.go:57-63` (`strconv.Quote`)
+- Current mitigation: Pubkeys are validated as 64-char hex via `nostr.GetPublicKey` before reaching most write paths (`pkg/crawler/crawler.go:266`, `:507`); `%q` and `strconv.Quote` escape embedded quotes.
+- Recommendations: `RemoveFollower` does NOT validate its inputs and uses raw `+` concatenation — route it through `Vars` or validate inputs like the other paths. Standardize on parameterized `Vars` for all value-bearing queries to remove the injection surface entirely.
 
-**Risk:** The `relay_urls` in config are trusted and connected to without validation.
-
-**Files:** `pkg/config/config.go:51-57`, `pkg/crawler/crawler.go:85-100`
-
-**Current mitigation:** Relays are public WebSocket endpoints; no authentication is used. The config is read from the local filesystem (`~/deepfry/web-of-trust.yaml`).
-
-**Recommendation:** If config is ever exposed to network input (e.g., via HTTP endpoint), validate relay URLs (scheme=wss:// or ws://, no embedded credentials). Currently low risk since config is local.
-
----
-
-### Event Signature Validation Is Performed but Results Are Not Persisted
-
-**Risk:** Invalid events are rejected and logged, but there is no audit trail or rate-limiting per relay.
-
-**Files:** `pkg/crawler/crawler.go:375-381`
-
-**Current approach:** Events are validated (line 375). If invalid, a warning is logged (line 376) and a metric is recorded (line 377). The event is skipped (line 379).
-
-**Recommendation:** If a relay is forwarding many invalid signatures, consider marking it as suspect or degraded. Currently no such logic exists.
-
----
-
-### Pubkey Validation Is Minimal
-
-**Risk:** Invalid or zero-value pubkeys could be created as nodes in Dgraph.
-
-**Files:** `pkg/crawler/crawler.go:266-271`, `pkg/dgraph/dgraph.go:240-254`
-
-**Current mitigation:** Pubkeys are validated using `nostr.GetPublicKey()` before querying relays (line 266-271). In `AddFollowers`, followees are assumed to be already-valid (no re-validation on insert).
-
-**Recommendation:** Add a validation helper and apply it consistently in `AddFollowers` when creating new followee stubs (line 245-253).
-
----
+**No authentication on Dgraph or relay connections:**
+- Risk: Dgraph gRPC uses `insecure.NewCredentials()` (no TLS, no auth) and relays connect over plain WebSocket. Anyone with network access to `localhost:9080` can read/write the graph.
+- Files: `pkg/dgraph/dgraph.go:40-44`
+- Current mitigation: Relies on the service binding to localhost / private network only (per `CLAUDE.md` infra notes).
+- Recommendations: Acceptable for a localhost sidecar, but document the trust boundary explicitly; if Dgraph is ever exposed beyond localhost, TLS + ACL become mandatory.
 
 ## Performance Bottlenecks
 
-### Relay Subscription Filter Is Unbounded Per Batch
+**Frontier selection can load hundreds of thousands of stubs into one response:**
+- Problem: `GetStalePubkeys` runs `frontier(func: has(pubkey), first: limit) @filter(NOT has(last_attempt))` and the gRPC client raises `MaxCallRecvMsgSize` to 256 MiB specifically because this response "can return well over gRPC's default 4MB cap."
+- Files: `pkg/dgraph/dgraph.go:34-44`, `:451-457`
+- Cause: An unindexed-style filter over the whole pubkey set with a large `first:` materializes a huge result. The 256 MiB cap is a band-aid that lets large batches succeed but also masks unbounded memory growth.
+- Improvement path: Keep `limit` small (the main loop uses `batchSize = 500`, which is fine), but the cap suggests other callers pass large limits. Audit all `GetStalePubkeys` callers; consider an index/order strategy so the frontier query is bounded and cheap.
 
-**Problem:** Each batch of 500 pubkeys generates a filter with `Authors: [500 pubkeys]` (line 276-279 in crawler.go). Large filters can cause relays to timeout or return slow results.
+**Trust-propagation and weak-bridge queries scan the entire graph:**
+- Problem: `ExpandTrustedSet` and `GetWeakBridges` both use `cand as var(func: has(pubkey)) @filter(NOT uid(trusted))` — a full scan of every pubkey node, with a `count(~follows ...)` evaluated per node, on every propagation round.
+- Files: `pkg/dgraph/clusterscan.go:102-111` (`ExpandTrustedSet`), `:151-168` (`GetWeakBridges`)
+- Cause: No pagination and no narrowing; trust closure loops until no new nodes, re-scanning the whole graph each round.
+- Improvement path: This is acceptable for an offline read-only CLI but will not scale to multi-million-node graphs. Consider expanding only from the newly-added frontier each round (nodes followed by the round's new members) rather than re-scanning all candidates.
 
-**Files:** `pkg/crawler/crawler.go:276-280`
+**`GetPubkeysWithMinFollowers` (non-paginated) materializes all matches:**
+- Problem: The non-paginated variant returns every matching pubkey in one query with no `first:`.
+- Files: `pkg/dgraph/dgraph.go:618-653`
+- Cause: No batching; superseded by `GetPubkeysWithMinFollowersPaginated` but still exported.
+- Improvement path: Deprecate/remove the non-paginated version or document that it is unsafe for large graphs.
 
-**Current approach:** The filter is sent as-is to each relay. No sub-batching or pagination is done on the relay side.
+## Fragile Areas
 
-**Improvement path:** Split large batches into smaller queries (e.g., 50 pubkeys per relay subscription) to reduce filter complexity and latency. This would increase relay round-trips but improve timeout resilience.
+**Manual upsert in `AddFollowers` races against `@unique` schema:**
+- Files: `pkg/dgraph/dgraph.go:80-321`, schema at `:60-74`, cleanup tool at `cmd/healthcheck/main.go`
+- Why fragile: Stub followees are created with a query-then-create pattern (`bulkQuery` to find existing, then `_:new_followee_N` blank nodes for missing ones) inside one transaction. Two transactions creating the same stub pubkey concurrently can both observe "not present" and both insert it. The existence of `healthcheck`'s duplicate-detection-and-purge logic confirms duplicates do occur in practice despite the `@unique` directive.
+- Safe modification: Do not weaken the dedup logic in `healthcheck`. Prefer Dgraph upsert blocks (`uid(var)` with `@upsert`) over query-then-insert for stub creation. Always stop the crawler before running `healthcheck -purge` (the tool warns about this at `cmd/healthcheck/main.go:142`).
+- Test coverage: No test exercises concurrent stub creation or the upsert race.
 
----
+**In-memory relay state lost on restart:**
+- Files: `pkg/crawler/crawler.go:39-46`, `:170-256`
+- Why fragile: Relay liveness, backoff timers, and failure counts live only in the `relayState` slice. On restart all relays start "fresh," so a relay that was being backed off gets hammered again immediately. `markRelayDead` and `ReconnectRelays` mutate `c.relays` in place using the `c.relays[:0]` reuse trick — correct but easy to break.
+- Safe modification: When editing the relay-pruning loops, preserve the slice-reuse invariant; do not hold references to `c.relays` across these calls. Relay state is not persisted by design.
+- Test coverage: No tests for `markRelayDead` / `ReconnectRelays` backoff transitions.
 
-### Bulk Query in `AddFollowers` Is O(n) String Concatenation
-
-**Problem:** The bulk query (line 208-218 in dgraph.go) is built by concatenating query parts in a loop.
-
-**Files:** `pkg/dgraph/dgraph.go:208-218`
-
-**Details:** For a follow list with 5,000 follows, this generates a 5,000-line DQL query. String concatenation is inefficient, but more importantly, Dgraph's query parsing may degrade with very large queries.
-
-**Improvement path:** Use a `strings.Builder` and measure query performance under load. Consider breaking large queries into multiple parallel queries if Dgraph performance degrades.
-
----
-
-### Mutex Contention in `FetchAndUpdateFollows`
-
-**Problem:** The `dbUpdateMutex` (line 54 in crawler.go) serializes all Dgraph writes during the event processing loop.
-
-**Files:** `pkg/crawler/crawler.go:54, 350, 356, 362, 370, 378, 392, 402`
-
-**Details:** Every event received from any relay must acquire the mutex before updating Dgraph. With 136 relays running concurrently, this becomes a bottleneck. The mutex is held for the entire `updateFollowsFromEvent` call (line 397), which can take seconds for large follow lists.
-
-**Improvement path:** Instead of a global mutex, use per-pubkey locking (e.g., sync.Map or a lock per signer) so two threads can update different pubkeys in parallel. Or queue updates asynchronously.
-
----
+**Config mutation via global Viper singleton:**
+- Files: `pkg/config/config.go:146-166`
+- Why fragile: `SaveForwardRelayURL` and `RemoveRelayURL` operate on the package-global Viper instance, which must have been populated by `LoadConfig` first. Calling them out of order, or from a context where Viper was re-initialized (e.g. `discover-relays` also calls `viper.SetConfigName`), can write to the wrong file or lose keys. `discover-relays` deliberately bypasses Viper write and edits YAML by hand (`writeRelayURLsToConfig`) to preserve formatting.
+- Safe modification: Keep config writes going through the same Viper instance that loaded; do not introduce a second loader in the same process. Never edit the live `~/deepfry/web-of-trust.yaml` in tests — use a temp `HOME`.
+- Test coverage: No tests for config save/remove round-trips.
 
 ## Scaling Limits
 
-### Maximum Concurrent Relay Connections
+**Single-process, single-loop crawler:**
+- Current capacity: One crawler process draining one batch of 500 stale pubkeys at a time, with all DB writes serialized behind `dbUpdateMutex`.
+- Limit: Throughput is bounded by sequential Dgraph commit latency. The `8pc_crawled.md` analysis shows the graph has tens of thousands of known accounts and a far larger stub frontier; at one-event-at-a-time write throughput, full frontier coverage is slow.
+- Scaling path: Parallelize Dgraph writes (per-pubkey locking instead of global mutex), and/or shard the frontier across multiple crawler instances keyed by pubkey prefix.
 
-**Current:** The crawler opens one connection per relay at startup (line 86-100 in crawler.go), defaults to ~5-136 relays based on config. Each relay can have one active subscription per query batch.
-
-**Limit:** Go's runtime has no hard limit on goroutines, but the system has a file descriptor limit. Each relay connection uses a WebSocket socket (typically 1 FD). At 136 relays, that's 136 FDs + overhead. On most systems, this is fine (default ulimit -n is 1024 on macOS, 65k on Linux).
-
-**Scaling concern:** If the relay list grows to > 1000 and all are queried concurrently, the system may hit the FD limit. Additionally, the startup phase (line 85-100) connects to all relays sequentially, taking ~4 minutes for 136 relays (noted in `8pc_crawled.md:446`).
-
-**Improvement path:** Implement connection pooling with a max-concurrency limit, or batch relay connections at startup.
-
----
-
-### Dgraph Transaction Throughput
-
-**Current:** The crawler issues one transaction per `FetchAndUpdateFollows` call, containing multiple mutations. At 500 pubkeys per batch, this is ~1 transaction per batch, with internal mutations for each follow list.
-
-**Scaling concern:** Dgraph's transaction throughput is limited by the cluster's commit rate. With large follow lists (10k+), each chunk creates a separate transaction (chunks.go:63). High churn can cause Dgraph to queue or timeout.
-
-**Improvement path:** Batch multiple follow lists into a single transaction where possible, or implement Dgraph connection pooling.
-
----
+**gRPC receive cap as a proxy for unbounded memory:**
+- Current capacity: 256 MiB max receive message (`pkg/dgraph/dgraph.go:39`).
+- Limit: A single query response is held entirely in memory and JSON-unmarshalled; very large frontier/popular queries can approach the cap and the corresponding RAM.
+- Scaling path: Enforce small `first:`/batch sizes on every materializing query; never rely on the 256 MiB headroom.
 
 ## Dependencies at Risk
 
-### nbd-wtf/go-nostr Relay Subscription Lifecycle
+**`github.com/dgraph-io/dgo/v210` pinned to a pre-release pseudo-version:**
+- Risk: Version is `v210.0.0-20230328113526-b66f8ae53a2d` — a commit-pinned pseudo-version from 2023, not a tagged release. Dgraph's Go client has had multiple major reorganizations.
+- Impact: All graph reads/writes flow through this client; an upstream breaking change or an abandoned `v210` line could strand the project.
+- Migration plan: Track Dgraph's current supported Go client line; plan a deliberate upgrade with the integration test as the gate. The DQL queries themselves are the portable part.
 
-**Risk:** The library's subscription semantics are not fully documented. Calling `Unsub()` on a subscription that has already ended may hang or panic.
-
-**Files:** `pkg/crawler/crawler.go:454`
-
-**Current code:** `defer sub.Unsub()` is called unconditionally. If the relay disconnects before `Unsub()` is called, the behavior is undefined.
-
-**Mitigation:** The code does check `sub.Context.Done()` (line 481) and returns early, but `Unsub()` is still called in the defer. This should be safe, but depends on library behavior.
-
-**Recommendation:** Test what happens if `Unsub()` is called on a dead subscription. Add a timeout to the `Unsub()` call if the library doesn't provide one.
-
----
-
-## Test Coverage Gaps
-
-### No Integration Test for the Full Crawl-to-Dgraph Path
-
-**What's not tested:** End-to-end: fetch kind-3 from a relay, parse follows, upsert to Dgraph, verify graph is updated correctly.
-
-**Files:** All of `pkg/crawler/crawler.go`, `pkg/dgraph/dgraph.go`
-
-**Risk:** Bugs in the event -> Dgraph pipeline are only caught in production. The existing tests (if any) are unit-level.
-
-**Priority:** HIGH — The 8% stub bug would have been caught by a simple integration test that verifies stubs are crawled after the fix.
-
----
-
-### No Test for Relay Reconnection Under Fault Conditions
-
-**What's not tested:** Relay goes down mid-query, crawler detects it, marks it dead, and successfully reconnects later.
-
-**Files:** `pkg/crawler/crawler.go:170-230` (markRelayDead, ReconnectRelays)
-
-**Risk:** The reconnection logic is complex and brittle. Changes can silently break it.
-
-**Priority:** MEDIUM — Relay flakiness is common; this should be tested.
-
----
-
-### No Test for Transaction Rollback in `AddFollowers`
-
-**What's not tested:** Mutation fails mid-way (e.g., step 3 fails), transaction is rolled back, Dgraph is left in initial state.
-
-**Files:** `pkg/dgraph/dgraph.go:72-313`
-
-**Risk:** Partial updates could corrupt the graph.
-
-**Priority:** MEDIUM — This is a critical path function.
-
----
-
-### No Test for Stale Pubkey Selection (Regression Test for 8% Bug)
-
-**What's not tested:** The specific regression that triggered the 8% bug: `GetStalePubkeys` returns stubs (nodes with no `last_attempt`).
-
-**Files:** `pkg/dgraph/dgraph.go:430-468`
-
-**Risk:** The fix could be reverted accidentally without being caught.
-
-**Priority:** HIGH — The 8pc_crawled.md document includes a detailed regression test specification (§5).
-
----
+**`go-nostr` is the only relay library and is fast-moving:**
+- Risk: `github.com/nbd-wtf/go-nostr` v0.52.0 — the project relies on internal error-string shapes (`cleanSubscribeError` parses `"couldn't subscribe to"` substrings, and `queryRelay` matches `"not connected"` / `"failed to write"` substrings).
+- Impact: A library change to those error messages silently breaks transport-vs-subscription error classification, which drives the relay dead/reconnect logic.
+- Migration plan: Replace substring matching on error text with typed-error checks if go-nostr exposes them; pin and review go-nostr upgrades carefully.
 
 ## Missing Critical Features
 
-### No Way to Restart Interrupted Crawls from a Checkpoint
+**No automated verification harness:**
+- Problem: Per `CLAUDE.md` and `8pc_crawled.md` §6, verifying crawler behavior requires manually running it against live Dgraph + relays on the strfry host. There is no scripted way to assert "the crawler expands the frontier" in CI.
+- Blocks: Confident regression detection on the core value ("must continuously expand the web of trust"). The recent frontier-first fix is only guarded by one integration test that itself needs a live Dgraph.
 
-**Problem:** If the crawler crashes after processing 100 of 500 pubkeys, the next run will re-query those 100 (wasting bandwidth) or skip them (missing fresh data).
+**No metrics/observability beyond log lines:**
+- Problem: "Metrics" are JSON blobs printed via `log.Printf` (`METRICS:`, `RELAY_ERROR:`, `DEBUG_METRICS:`), several gated behind `c.debug`.
+- Files: `pkg/crawler/crawler.go:555-618`
+- Blocks: No way to track frontier-coverage progress, write throughput, or relay health over time without scraping logs. No counters for the "only 8% crawled" problem to confirm the fix in production.
 
-**Impact:** On long-running crawls or flaky networks, progress is lost.
+## Test Coverage Gaps
 
-**Solution:** Implement batch-level checkpointing (e.g., atomically mark a batch as "in progress", then "complete") so interrupted batches are resumed cleanly.
+**Almost no test suite exists:**
+- What's not tested: There is exactly one test file (`pkg/dgraph/dgraph_stale_test.go`), gated behind `//go:build integration` and requiring a live Dgraph on `localhost:9080`. It covers only the frontier-selection path of `GetStalePubkeys`. `CLAUDE.md` states "No unit-test suite exists yet."
+- Files: `pkg/dgraph/dgraph_stale_test.go` (only test); untested: all of `pkg/crawler/`, `pkg/config/`, `pkg/dgraph/clusterscan.go`, every `cmd/`.
+- Risk: Pure-logic units that are trivially unit-testable without Dgraph are untested and have known defects — e.g. `cleanSubscribeError` (error parsing), `normalizeSeedPubkeys` (dedup/decode), `processFollowsInChunks` chunk math + the version-guard bug, `rankNodes`, `dedupURLs`/`normalizeAndDedup`. The chunked-follow-list bug above would be caught by a unit test of the chunk path.
+- Priority: High — add unit tests for the pure helpers first (no infra needed), then for the AddFollowers version-guard / chunk interaction.
 
----
+**Aged top-up path untested:**
+- What's not tested: Phase 2 of `GetStalePubkeys` (`aged(...) orderasc: last_attempt @filter(lt(last_attempt, ...))`). Only Phase 1 (frontier) is asserted.
+- Files: `pkg/dgraph/dgraph.go:462-475`, `pkg/dgraph/dgraph_stale_test.go`
+- Risk: The re-crawl scheduling that prevents staleness is unverified; a regression here recreates the "only re-refresh known accounts" failure mode from a different angle.
+- Priority: Medium.
 
-### No Metrics Export (Prometheus, Datadog, etc.)
-
-**Problem:** The crawler logs progress but doesn't expose metrics for monitoring.
-
-**Files:** Logs are printed (e.g., line 163 in main.go: "Batch complete: ..."), but no structured metrics.
-
-**Impact:** It's hard to know if the crawler is healthy without parsing logs. Alerting is manual.
-
-**Solution:** Export metrics (batch throughput, relay latency, Dgraph transaction time, error rates) via Prometheus endpoint or similar.
-
----
-
-### No Circuit Breaker for Dgraph
-
-**Problem:** If Dgraph becomes unavailable, the crawler will fail on every write but keep retrying with no backoff.
-
-**Files:** `pkg/crawler/crawler.go:152-160` (error handling logs and breaks the loop)
-
-**Impact:** The crawler exits immediately instead of retrying with exponential backoff.
-
-**Solution:** Implement a circuit breaker for Dgraph: fail fast if too many consecutive write errors occur, and back off before retrying.
-
----
-
-## Configuration Issues
-
-### No Validation of Config Values at Load Time
-
-**Problem:** If config values are invalid (e.g., `timeout: 0`, `stale_pubkey_threshold: -1`), errors only occur at runtime.
-
-**Files:** `pkg/config/config.go:102-120`
-
-**Recommendation:** Add validation after unmarshal: check that timeout > 0, stale threshold >= 0, relay URLs are valid WebSocket URLs, pubkey is 64-char hex, etc.
-
----
-
-### Hardcoded Defaults in Code Are Hard to Override
-
-**Problem:** Defaults like `initialBackoff` (30s), `maxBackoff` (5m), `maxConsecutiveFailures` (5) are constants, not config values.
-
-**Files:** `pkg/crawler/crawler.go:33-37`
-
-**Impact:** Tuning retry behavior requires code changes and rebuilds.
-
-**Recommendation:** Move these to config (`web-of-trust.yaml`).
-
----
-
-# Summary
-
-| Category | Severity | Count | Top Issues |
-|----------|----------|-------|-----------|
-| **Tech Debt** | CRITICAL | 1 | 8% crawling bug (stubborn stubs) |
-| **Known Bugs** | HIGH | 3 | Relay timeout stalls, large follow lists, event forwarding errors |
-| **Fragile Areas** | MEDIUM | 4 | Transaction semantics, relay reconnection, batch state, schema coupling |
-| **Gaps** | MEDIUM | 3 | Integration tests, relay faults, transaction rollback tests |
-
-**Immediate action:** Apply the fix from `8pc_crawled.md` (coordinated changes to GetStalePubkeys, schema, and crawler main loop). This unblocks graph growth and will take ~2-4 hours to implement and verify.
+**Concurrent write / upsert race untested:**
+- What's not tested: Concurrent `AddFollowers` calls creating the same stub followee (the duplicate source `healthcheck` cleans up).
+- Files: `pkg/dgraph/dgraph.go:208-305`
+- Risk: Silent duplicate-node growth.
+- Priority: Medium.
 
 ---
 

@@ -5,273 +5,216 @@
 
 ## System Overview
 
-The web-of-trust module is a modular Nostr crawler that subscribes to kind-3 (contact list) events from multiple relays and stores the ID-only pubkey follow-graph in Dgraph. It never stores event payloads—all event data lives in StrFry LMDB; only the follow graph (pubkey relationships) is stored in Dgraph.
-
 ```text
-┌────────────────────────────────────────────────────────────────┐
-│                      Entry Points                              │
-├─────────────────────┬──────────────────┬──────────────────────┤
-│  Crawler (main)     │  Clusterscan     │  Utilities           │
-│  `cmd/crawler`      │  `cmd/clusterscan│  (pubkeys, health-   │
-│                     │  `cmd/discover   │   check, discover)   │
-└─────────────────────┴──────────────────┴──────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────────────┐
-│                 Core Crawler Loop                              │
-│         `pkg/crawler` (FetchAndUpdateFollows)                  │
-│  • Relay management (connect, reconnect, backoff)              │
-│  • Kind 3 event subscriptions from multiple relays             │
-│  • Event validation (signature, pubkey format)                 │
-│  • Follow-list chunking for large lists (>10k)                │
-└────────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────────────┐
-│              Dgraph Abstraction Layer                          │
-│            `pkg/dgraph` (Client)                              │
-│  • Upsert-based pubkey nodes with @unique @index(exact)        │
-│  • Follow edge mutations (add, remove, replace)                │
-│  • Stale pubkey queries (for crawler feed)                     │
-│  • Graph traversal queries (clusterscan: trust, bridges)       │
-└────────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────────────┐
-│              Dgraph (gRPC gw + DQL queries)                    │
-│          localhost:9080 (configurable)                         │
-│  • Schema: Profile type with pubkey, follows, timestamps       │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       CLI Entry Points (cmd/)                │
+├──────────────┬──────────────┬──────────────┬────────────────┤
+│   crawler    │ clusterscan  │   pubkeys    │  healthcheck   │
+│ `cmd/crawler`│`cmd/cluster..`│ `cmd/pubkeys`│`cmd/healthc..` │
+│              │              │              │ discover-relays│
+└──────┬───────┴──────┬───────┴──────┬───────┴───────┬────────┘
+       │              │              │               │
+       ▼              ▼              ▼               ▼
+┌──────────────────┐  ┌──────────────────────────────────────┐
+│  crawler package │  │            config package            │
+│ `pkg/crawler/`   │  │ `pkg/config/config.go`               │
+│ relay pool,      │  │ viper YAML @ ~/deepfry/web-of-trust   │
+│ kind-3 subscribe │  └──────────────────────────────────────┘
+└────────┬─────────┘
+         │ (all entry points use the dgraph client)
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   dgraph package (data layer)               │
+│  `pkg/dgraph/dgraph.go`      — crawler writes + stale reads  │
+│  `pkg/dgraph/clusterscan.go` — read-only graph analysis      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ gRPC (dgo/v210)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Dgraph (localhost:9080)   — ID-only Profile follow-graph    │
+└─────────────────────────────────────────────────────────────┘
+         ▲                                          │
+         │ kind-3 events (NIP-01 WebSocket)         │ optional forward
+         │                                          ▼
+┌──────────────────┐                     ┌──────────────────────┐
+│  Nostr Relays    │                     │  Forward Relay        │
+│  (wss://...)     │                     │  (e.g. StrFry 7777)   │
+└──────────────────┘                     └──────────────────────┘
 ```
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| **Crawler** | Main event loop; fetches stale pubkeys; orchestrates relay queries; forwards events | `cmd/crawler/main.go` |
-| **Crawler (pkg)** | Relay connection pool; kind 3 subscription; event validation; chunked Dgraph writes | `pkg/crawler/crawler.go` |
-| **Chunks** | Splits large follow-lists into batches to prevent timeouts | `pkg/crawler/chunks.go` |
-| **Dgraph Client** | Upsert pubkeys; query/mutate follows edges; timestamp management | `pkg/dgraph/dgraph.go` |
-| **Clusterscan (pkg)** | Trust propagation; weak-bridge detection; cluster sizing queries | `pkg/dgraph/clusterscan.go` |
-| **Clusterscan (cmd)** | Main CLI; reads trust roots; ranks spam clusters; CSV/JSON reports | `cmd/clusterscan/main.go` |
-| **Config** | Load YAML from `~/deepfry/web-of-trust.yaml`; relay URLs; cluster settings | `pkg/config/config.go` |
-| **Discover Relays** | NIP-65 relay discovery; relay latency testing; config update | `cmd/discover-relays/main.go` |
-| **Pubkeys Exporter** | Export all pubkeys with 1+ followers to CSV | `cmd/pubkeys/main.go` |
-| **Healthcheck** | Scan for invalid/duplicate pubkeys; optional purge | `cmd/healthcheck/main.go` |
+| Crawler main | Main loop: get stale pubkeys, fetch follows, mark attempted, report stats | `cmd/crawler/main.go` |
+| Crawler package | Relay pool, kind-3 subscription, event validation, event forwarding, chunked writes | `pkg/crawler/crawler.go` |
+| Chunks | Splits follow-lists >10k into 200-item batches | `pkg/crawler/chunks.go` |
+| Dgraph client | Upsert pubkeys, follows edges, stale-frontier selection, timestamp management | `pkg/dgraph/dgraph.go` |
+| Clusterscan queries | Trust propagation, weak-bridge detection, cluster sizing (read-only DQL) | `pkg/dgraph/clusterscan.go` |
+| Clusterscan CLI | Build trusted set, rank spam clusters, write CSV/JSON | `cmd/clusterscan/main.go` |
+| Config | Load/persist `~/deepfry/web-of-trust.yaml`, npub→hex normalization | `pkg/config/config.go` |
+| Discover relays | nostr.watch API + NIP-65 discovery, latency testing, config update | `cmd/discover-relays/main.go` |
+| Pubkeys exporter | Export pubkeys with ≥1 follower to timestamped CSV | `cmd/pubkeys/main.go` |
+| Healthcheck | Scan for invalid/duplicate pubkey nodes, optional `-purge` | `cmd/healthcheck/main.go` |
 
 ## Pattern Overview
 
-**Overall:** Event-driven fan-out with request batching. Multiple relay sources feed a single crawler loop that processes kind-3 events sequentially per pubkey (but concurrently across relays). Follow updates are batched and upser-ted into Dgraph for idempotent deduplication.
+**Overall:** Layered Go module — thin CLI mains over two shared packages (`crawler`, `dgraph`) and a leaf `config` package. Single binary per command, each its own `main` under `cmd/`.
 
 **Key Characteristics:**
-- **Upsert-based dedup:** Pubkey uniqueness enforced via Dgraph @unique + @upsert schema
-- **Stale-feed:** Crawler queries `last_db_update` timestamp to identify outdated pubkeys; restarts from seed if empty
-- **Graceful relay degradation:** Failed relays removed from config; dead relays retry with exponential backoff
-- **Large-list handling:** Follow lists >10k split into 200-item chunks to avoid gRPC message size limits
-- **Read-only graph analysis:** Clusterscan uses read-only queries; no mutations during analysis phase
+- **Stale-frontier crawl model:** the crawler never re-walks the whole graph; it asks Dgraph for the uncrawled frontier, then tops up with aged-out pubkeys (`GetStalePubkeys`, `pkg/dgraph/dgraph.go:443`).
+- **Upsert-based dedup:** pubkey uniqueness enforced via Dgraph `@unique @upsert` schema; all writes are idempotent (`EnsureSchema`, `pkg/dgraph/dgraph.go:60`).
+- **ID-only graph:** Dgraph stores pubkey relationships only; event payloads stay in StrFry. No event bodies persisted.
+- **Concurrent fan-out, serialized write:** relays queried concurrently; Dgraph writes serialized under `dbUpdateMutex` (`pkg/crawler/crawler.go:350`).
+- **Read-only analysis:** clusterscan uses only read-only txns; all graph math (counts, `uid()` sets, `math()`, `@recurse`) stays inside DQL.
 
 ## Layers
 
-**Entry Point (CLI):**
-- Purpose: Spawn crawler loop; handle signals; manage initialization
-- Location: `cmd/crawler/main.go`, `cmd/clusterscan/main.go`, `cmd/pubkeys/main.go`, etc.
-- Contains: Main loop, config loading, signal handlers, final reporting
-- Depends on: `pkg/config`, `pkg/crawler`, `pkg/dgraph`
-- Used by: User (binary execution)
+**CLI / Entry layer:**
+- Purpose: Parse flags, load config, wire and drive a package; signal handling and final reporting.
+- Location: `cmd/crawler/`, `cmd/clusterscan/`, `cmd/pubkeys/`, `cmd/healthcheck/`, `cmd/discover-relays/`
+- Contains: `main()`, flag parsing, batch loops, CSV/JSON report writers.
+- Depends on: `pkg/config`, `pkg/crawler`, `pkg/dgraph`.
+- Used by: User (binary execution from `bin/`).
 
-**Crawler Layer:**
-- Purpose: Subscribe to kind 3 events from multiple Nostr relays; validate and parse follow-lists; coordinate writes to Dgraph
+**Crawler layer:**
+- Purpose: Manage relay connection pool; subscribe to kind-3 events; validate signatures; forward events; coordinate writes.
 - Location: `pkg/crawler/`
-- Contains: `Crawler` struct, relay state machines, event subscriptions, chunked writes
-- Depends on: `pkg/dgraph`, `go-nostr` (relay subscribe/publish)
-- Used by: `cmd/crawler/main.go`
+- Contains: `Crawler` struct, `relayState` machines, `FetchAndUpdateFollows`, `queryRelay`, `processFollowsInChunks`.
+- Depends on: `pkg/dgraph`, `github.com/nbd-wtf/go-nostr`.
+- Used by: `cmd/crawler/main.go`.
 
-**Dgraph Abstraction Layer:**
-- Purpose: Encapsulate all Dgraph mutations and queries; ensure pubkey uniqueness via upsert; provide both crawler writes and read-only queries for analysis
+**Data layer:**
+- Purpose: Encapsulate all Dgraph mutations and queries; enforce pubkey uniqueness; provide crawler writes and read-only analysis queries.
 - Location: `pkg/dgraph/`
-- Contains: `Client` struct with methods for AddFollowers, GetStalePubkeys, ResolvePubkeysToUIDs, ExpandTrustedSet, GetWeakBridges, ClusterBeneath
-- Depends on: `dgo/v210` (Dgraph gRPC client)
-- Used by: Crawler, Clusterscan, Pubkeys exporter, Healthcheck
+- Contains: `Client` struct; `dgraph.go` (writes + stale selection) and `clusterscan.go` (read-only analysis).
+- Depends on: `github.com/dgraph-io/dgo/v210`, `google.golang.org/grpc`.
+- Used by: Crawler and every CLI entry point.
 
-**Config Layer:**
-- Purpose: Load YAML config from `~/deepfry/web-of-trust.yaml`; supply defaults; manage runtime config mutations (relay updates)
+**Config layer (leaf):**
+- Purpose: Load YAML config with defaults; persist runtime mutations (relay add/remove, forward relay).
 - Location: `pkg/config/config.go`
-- Contains: `Config` struct, LoadConfig, SaveForwardRelayURL, RemoveRelayURL
-- Depends on: `spf13/viper` (YAML parser)
-- Used by: All entry points
+- Contains: `Config` struct, `LoadConfig`, `SaveForwardRelayURL`, `RemoveRelayURL`, `normalizeSeedPubkeys`.
+- Depends on: `github.com/spf13/viper`, `go-nostr/nip19`.
+- Used by: All entry points (no dependency on crawler/dgraph; leaf).
 
 ## Data Flow
 
 ### Primary Request Path (Crawler Loop)
 
-1. **Initialization** (`cmd/crawler/main.go:20-89`)
-   - LoadConfig from `~/deepfry/web-of-trust.yaml`
-   - Create Dgraph client; call EnsureSchema
-   - Create Crawler (connects to all relay URLs)
-
-2. **Main Loop** (`cmd/crawler/main.go:98-165`)
-   - Query GetStalePubkeys from Dgraph, ordered by staleness
-   - If DB is empty, seed with configured seed pubkey
-   - Batch limit to 500 pubkeys per iteration
-   - Call FetchAndUpdateFollows
-
-3. **Relay Query** (`pkg/crawler/crawler.go:260-432`)
-   - Launch concurrent goroutines (one per alive relay)
-   - Each relay: Create Filter{Kinds:[3], Authors:pubkeys}, subscribe
-   - Collect kind 3 events from all relays; de-dup by event ID
-   - Validate signature; skip if older than DB version
-   - Forward to forward relay if configured
-
-4. **Event Processing** (`pkg/crawler/crawler.go:497-553`)
-   - Extract p-tags from kind 3 event
-   - De-dup p-tags in-memory
-   - If >10k follows: call processFollowsInChunks (200-item batches)
-   - Otherwise: call dgClient.AddFollowers once
-
-5. **Dgraph Update** (`pkg/dgraph/dgraph.go:72-313`)
-   - Upsert follower node (pubkey signer)
-   - Query existing follows for replacement (kind 3 is replaceable)
-   - Bulk-query all followees (single DQL query with all pubkeys)
-   - Create missing followees as stub nodes
-   - Delete old follows; create new follows edges; commit transaction
-
-6. **Completion**
-   - Return count of pubkeys with events
-   - Update final stats; log final report
-
-**State Management:**
-- Dgraph is source-of-truth for all pubkeys and follows
-- `last_db_update` (unix timestamp) tracks when each pubkey's follow-list was last queried
-- `kind3CreatedAt` stores the event's created_at time for version checking
-- Relay connection state (alive, failures, backoff timers) held in-memory; lost on restart
+1. Load config from `~/deepfry/web-of-trust.yaml`; create Dgraph client (`cmd/crawler/main.go:42`).
+2. `EnsureSchema` and connect relays in `crawler.New` (`pkg/crawler/crawler.go:67`).
+3. `GetStalePubkeys(ctx, now-threshold, 500)` selects the uncrawled frontier, then aged-out pubkeys (`cmd/crawler/main.go:110` → `pkg/dgraph/dgraph.go:443`).
+4. If DB empty, inject seed pubkey (`cmd/crawler/main.go:123`).
+5. `ReconnectRelays` revives dead relays past their backoff (`pkg/crawler/crawler.go:201`).
+6. `FetchAndUpdateFollows` fans out a kind-3 filter to all alive relays concurrently, collects events on a channel (`pkg/crawler/crawler.go:260`).
+7. Per event: dedup by ID, `CheckSignature`, forward to forward-relay, skip if `created_at` ≤ stored `kind3CreatedAt` (else `TouchLastDBUpdate`), parse `p` tags (`pkg/crawler/crawler.go:349`).
+8. `updateFollowsFromEvent` → `AddFollowers` (or chunked for >10k) replaces the follow list under txn (`pkg/crawler/crawler.go:497` → `pkg/dgraph/dgraph.go:80`).
+9. `MarkAttempted` stamps `last_attempt` on the whole batch so un-fetchable pubkeys age out (`cmd/crawler/main.go:157` → `pkg/dgraph/dgraph.go:512`).
+10. Loop until `ctx` cancelled (SIGINT/SIGTERM) or no stale pubkeys remain; print final report (`cmd/crawler/main.go:178`).
 
 ### Clusterscan Path (Spam Detection)
 
-1. **Load Config** (`cmd/clusterscan/main.go:40-73`)
-   - Read seed pubkeys from config
-   - Dgraph client creation
+1. Resolve configured seed pubkeys to UIDs (`cmd/clusterscan/main.go:64` → `ResolvePubkeysToUIDs`).
+2. Trust closure: loop `ExpandTrustedSet` (node joins when ≥K trusted accounts follow it) until no new nodes (`cmd/clusterscan/main.go:83`).
+3. `GetWeakBridges` finds non-trusted nodes with 1..maxWeight edges crossing into trusted (`pkg/dgraph/clusterscan.go:141`).
+4. `ClusterBeneath` walks `follows` up to `depth` hops per bridge; non-trusted members counted (`pkg/dgraph/clusterscan.go:237`).
+5. Rank by `clusterSize / weight`; write timestamped CSV + JSON (`cmd/clusterscan/main.go:156`).
 
-2. **Phase 0: Resolve Seeds** (`pkg/dgraph/clusterscan.go:45-88`)
-   - Call ResolvePubkeysToUIDs for all seed pubkeys (trusted roots)
-   - Fail if none exist in graph
-
-3. **Phase 1: Trust Propagation** (`cmd/clusterscan/main.go:82-99`)
-   - Loop ExpandTrustedSet until no new nodes added (k-step closure)
-   - Each round: find nodes with ≥K trusted followers; add to trusted set
-
-4. **Phase 2: Weak Bridges** (`cmd/clusterscan/main.go:109-117`)
-   - Call GetWeakBridges: find non-trusted nodes with 1..maxWeight edges to trusted
-   - Sort by weight; truncate at limit if needed
-
-5. **Phase 3: Cluster Sizing** (`cmd/clusterscan/main.go:119-153`)
-   - For each bridge: call ClusterBeneath to walk follows tree up to depth
-   - Filter members: keep only non-trusted
-   - Score = cluster_size / weight; rank by score
-
-6. **Output**
-   - Write timestamped CSV (rank, pubkey, metrics)
-   - Write timestamped JSON (same + optional member lists)
+**State Management:**
+- Dgraph is source-of-truth for all pubkeys and follows.
+- `kind3CreatedAt` stores the event's `created_at` for version checking (newer-wins).
+- `last_attempt` tracks crawl attempts (drives stale-frontier aging); `last_db_update` records the last write.
+- Relay connection state (alive, failures, backoff, retryAt) is in-memory only; lost on restart.
 
 ## Key Abstractions
 
-**Crawler:**
-- Purpose: Manages relay pool and coordinates follow-list fetches from multiple sources
-- Examples: `cmd/crawler/main.go` uses `crawler.FetchAndUpdateFollows()`
-- Pattern: Relay state machine with exponential backoff; subscription-based event collection; concurrent execution across relays; sequential writing to Dgraph (mutex-protected)
+**Crawler (`pkg/crawler.Crawler`):**
+- Purpose: Owns the relay pool and coordinates follow-list fetches.
+- Examples: `cmd/crawler/main.go` calls `FetchAndUpdateFollows`, `ReconnectRelays`.
+- Pattern: Per-relay state machine with exponential backoff; subscription-based event collection; concurrent reads, mutex-serialized writes.
 
-**Dgraph Client:**
-- Purpose: Single access point for all graph queries and mutations
-- Examples: All entry points use `dgraph.NewClient(addr)` and call methods on the returned `*Client`
-- Pattern: Upsert-based writes (idempotent); transaction-wrapped mutations; read-only queries for analysis; pagination helpers for large result sets
+**Dgraph Client (`pkg/dgraph.Client`):**
+- Purpose: Single access point for all graph queries and mutations.
+- Examples: Every entry point calls `dgraph.NewClient(addr)` then methods on `*Client`.
+- Pattern: Upsert writes wrapped in txns; read-only txns for selection/analysis; pagination helpers (`GetAllPubkeysPaginated`, `GetPubkeysWithMinFollowersPaginated`) for large result sets.
 
-**Config:**
-- Purpose: Centralize all environment configuration; support runtime persistence
-- Examples: YAML from `~/deepfry/web-of-trust.yaml` loaded into `Config` struct; RemoveRelayURL updates config file on relay failures
-- Pattern: Viper-backed; defaults for relays and cluster-scan parameters; support for both hex and npub pubkey formats
+**Config (`pkg/config.Config`):**
+- Purpose: Centralize environment config; persist runtime relay changes.
+- Examples: `LoadConfig` reads YAML; `RemoveRelayURL` rewrites it on relay failure.
+- Pattern: Viper-backed with `SetDefault`; supports hex and npub via `nip19.Decode`.
 
 ## Entry Points
 
 **Crawler:**
 - Location: `cmd/crawler/main.go`
-- Triggers: User runs `./bin/crawler`; signal SIGINT/SIGTERM for graceful shutdown
-- Responsibilities: Load config, connect to relays, loop GetStalePubkeys → FetchAndUpdateFollows, report stats
+- Triggers: `./bin/crawler`; SIGINT/SIGTERM for graceful shutdown.
+- Responsibilities: Loop `GetStalePubkeys` → `FetchAndUpdateFollows` → `MarkAttempted`; report stats.
 
 **Clusterscan:**
 - Location: `cmd/clusterscan/main.go`
-- Triggers: User runs `./bin/clusterscan [flags]`
-- Responsibilities: Resolve seeds, propagate trust, find weak bridges, size clusters, write CSV/JSON
+- Triggers: `./bin/clusterscan [flags]` (`-k`, `-depth`, `-max-bridge-weight`, `-min-cluster-size`, `-stats`, `-members`).
+- Responsibilities: Build trusted set, find weak bridges, size clusters, write CSV/JSON.
 
 **Discover Relays:**
 - Location: `cmd/discover-relays/main.go`
-- Triggers: User runs `./bin/discover-relays [flags]`
-- Responsibilities: Poll nostr.watch API or NIP-65 relays for relay URLs, test latency, update config
+- Triggers: `./bin/discover-relays [flags]` (`-count`, `-max-test`, `-replace`, `-dry-run`).
+- Responsibilities: Pull relays from nostr.watch API / NIP-65, latency-test, update config.
 
 **Pubkeys Exporter:**
 - Location: `cmd/pubkeys/main.go`
-- Triggers: User runs `./bin/pubkeys`
-- Responsibilities: Query all pubkeys with ≥1 follower, write to timestamped CSV
+- Triggers: `./bin/pubkeys`.
+- Responsibilities: Export pubkeys with ≥1 follower to timestamped CSV.
 
 **Healthcheck:**
 - Location: `cmd/healthcheck/main.go`
-- Triggers: User runs `./bin/healthcheck [-purge]`
-- Responsibilities: Scan for invalid pubkey format and duplicate nodes, optionally delete
+- Triggers: `./bin/healthcheck [-purge] [-v] [-dgraph-addr]`.
+- Responsibilities: Scan for invalid-format and duplicate pubkey nodes; optionally delete.
 
 ## Architectural Constraints
 
-- **Threading:** Single-threaded event loop in crawler main; concurrent relay subscriptions in FetchAndUpdateFollows; mutex-protected Dgraph writes (dbUpdateMutex)
-- **Global state:** Relay connection state (alive/dead, backoff timers) stored in relayState slice; Crawler holds exclusive reference to dgClient
-- **Circular imports:** None detected; pkg/crawler depends on pkg/dgraph; pkg/config is leaf
-- **Dgraph schema uniqueness:** Pubkey field marked @unique and @upsert; guarantees at most one node per pubkey across all writes
-- **Message size limits:** Large follow-lists (>10k) chunked into 200-item batches to stay under gRPC limit (~4MB)
-- **Stale-feed model:** Crawler depends on last_db_update timestamps being monotonically increasing; kind3CreatedAt version check prevents older events from overwriting newer ones
+- **Threading:** Single-threaded main loop in crawler; concurrent per-relay subscription goroutines in `FetchAndUpdateFollows`; all Dgraph writes serialized under `dbUpdateMutex` (`pkg/crawler/crawler.go:54`).
+- **Global state:** Relay pool (`Crawler.relays`) held in-memory and mutated in place during reconnect/dead-marking; `viper` holds global config state used by `SaveForwardRelayURL`/`RemoveRelayURL`.
+- **Circular imports:** None. `cmd/*` → `pkg/crawler`, `pkg/dgraph`, `pkg/config`; `pkg/crawler` → `pkg/dgraph`; `pkg/config` is a leaf.
+- **Dgraph uniqueness:** `pubkey` marked `@unique @upsert`; at most one node per pubkey across all writes (`pkg/dgraph/dgraph.go:61`).
+- **Message size limits:** gRPC `MaxCallRecvMsgSize` raised to 256 MiB for large frontier reads (`pkg/dgraph/dgraph.go:39`); follow-lists >10k chunked into 200-item batches (`pkg/crawler/chunks.go:20`).
+- **Stale-feed invariants:** never-attempted nodes selected via explicit `NOT has(last_attempt)` with explicit `first:` — never via `orderasc: last_attempt` (which caps at 1000 and starves stubs). Documented at `pkg/dgraph/dgraph.go:438`.
 
 ## Anti-Patterns
 
-### Large Follow-Lists Causing Timeouts
+### Sorting the stale frontier by `last_attempt`
 
-**What happens:** If a pubkey follows >10k accounts, a single Dgraph mutation with all edges hits gRPC message size or execution timeout limits.
+**What happens:** Using `orderasc: last_attempt` to surface never-crawled stubs.
+**Why it's wrong:** Missing-value nodes sort last and Dgraph caps an unbounded sorted query at 1000 rows, so the crawler returns only already-crawled accounts and never expands the web of trust.
+**Do this instead:** Select the frontier with an explicit `@filter(NOT has(last_attempt))` block and explicit `first:`, then top up with aged nodes (`GetStalePubkeys`, `pkg/dgraph/dgraph.go:443`).
 
-**Why it's wrong:** Mutation fails; follow-list update is lost; pubkey marked stale again on next loop.
+### Large follow-lists in a single mutation
 
-**Do this instead:** `pkg/crawler/chunks.go` splits follow-lists into 200-item chunks. FetchAndUpdateFollows checks list size and routes to processFollowsInChunks if needed. Each chunk gets its own timeout context.
+**What happens:** Writing a >10k-entry follow list in one `AddFollowers` call.
+**Why it's wrong:** A single bulk query/mutation can exceed gRPC limits and time out.
+**Do this instead:** Route lists >10k through `processFollowsInChunks` (200-item batches) — `pkg/crawler/crawler.go:533`.
 
-### Event Deduplication Race with Multiple Relays
+### Treating relay errors as fatal
 
-**What happens:** Two relays deliver the same kind 3 event (same event.ID) concurrently; both goroutines process it.
-
-**Why it's wrong:** Duplicate pubkey nodes created; follow edges added twice (idempotent in Dgraph, but wasteful).
-
-**Do this instead:** `pkg/crawler/crawler.go:321-372` maintains processedEventIDs map (within dbUpdateMutex) and skips already-processed events. Mutex ensures visibility across relay goroutines.
-
-### Relay Dead-Lock Without Automatic Removal
-
-**What happens:** A relay consistently fails; crawler keeps retrying it every 5 minutes, filling logs with warnings.
-
-**Why it's wrong:** Wastes bandwidth and CPU; doesn't signal the user.
-
-**Do this instead:** `pkg/crawler/crawler.go:170-199` marks relay dead after maxConsecutiveFailures (5); calls onConnectFail callback. Crawler main registers callback that removes URL from config file. Next restart won't try the dead relay.
+**What happens:** Aborting the crawl when a relay subscription or transport fails.
+**Why it's wrong:** Relays are flaky; one dead relay should not stop the whole crawl.
+**Do this instead:** Mark the relay dead with backoff and continue with the rest; remove after `maxConsecutiveFailures` (`markRelayDead`, `pkg/crawler/crawler.go:170`).
 
 ## Error Handling
 
-**Strategy:** Log all errors; continue processing. No panic. Network errors are expected and gracefully degraded. Missing/stale data is a normal condition.
+**Strategy:** Wrap-and-propagate with `%w`; relay-level failures degrade gracefully while DB/config failures are fatal at the entry point.
 
 **Patterns:**
-- Relay errors (subscribe, transport): Mark relay dead and log; continue with remaining relays
-- Dgraph errors (query, mutation): Log with context; propagate up to main loop; break and restart
-- Config load errors: Fatal (no recovery)
-- Invalid pubkeys in event: Log and skip; continue processing other pubkeys
-- Large follow-lists: Chunk and retry with smaller batches
+- Relay errors classified as `subscriptionError` vs `transportError`; transport failures mark the relay dead (`pkg/crawler/crawler.go:419`).
+- Dgraph errors wrapped with operation context and propagated to the main loop, which logs and breaks.
+- Config load errors are fatal (`log.Fatalf`); invalid pubkeys in events are logged and skipped.
+- Relay-timeout (`context.DeadlineExceeded`) is non-fatal — already-received events are still processed (`pkg/crawler/crawler.go:333`).
 
 ## Cross-Cutting Concerns
 
-**Logging:** All components use `log` package. Metrics logged as JSON-structured logs (e.g., `METRICS: {...}`) for external parsing. Debug flag enables verbose relay/query logs.
-
-**Validation:** 
-- Pubkey format: `nostr.GetPublicKey()` used everywhere (hex, 64 chars)
-- Event signature: `event.CheckSignature()` required before processing
-- Follow-list integrity: P-tags parsed and de-duped; invalid pubkeys skipped
-
-**Authentication:** Crawler publishes events to forward relay; uses configured signing key for event creation (via event-forwarder flow, not in crawler itself; crawler only forwards events it receives).
+**Logging:** Standard `log` package. Levels by prefix (`WARN:`, `DEBUG:`), structured `METRICS:`/`RELAY_ERROR:` JSON lines; debug output guarded by `c.debug`. No raw secrets logged.
+**Validation:** Pubkeys validated with `nostr.GetPublicKey` (hex, 64 chars); events verified with `event.CheckSignature()` before processing; `p`-tags de-duped.
+**Authentication:** None within this module — relays are public WebSocket endpoints; trust is derived from the follow-graph, not from auth.
 
 ---
 
