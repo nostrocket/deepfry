@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-06-09T05:08:31.923Z"
+status: complete
+last_updated: "2026-06-09T00:00:00.000Z"
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 2
-  completed_plans: 1
-  percent: 50
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State: Web-of-Trust Crawler — Crawl Coverage Fix
@@ -20,26 +20,26 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 02 — backfill-live-verification (planned, ready to execute)
+**Current focus:** Milestone complete — 8% crawl fix shipped and verified live
 
 ## Current Position
 
-Phase: 02 (backfill-live-verification) — PLANNED
-Plan: 02-01-PLAN.md written and plan-checker verified (PASS)
+Phase: 02 (backfill-live-verification) — COMPLETE
+Plan: 1 of 1 — COMPLETE
 **Phase:** 2 — Backfill + Live Verification
-**Plan:** 02-01 ready to execute (operational; runs on the strfry host)
-**Status:** Phase 2 planned — run `/gsd-execute-phase 02` on the strfry host
-**Progress:** 1/2 phases complete
+**Plan:** 02-01 complete (MIG-01 backfill committed; live crawl verified on strfry host)
+**Status:** Milestone v1.0 COMPLETE
+**Progress:** 2/2 phases complete
 
 ```
-[=====     ] 50%
+[==========] 100%
 ```
 
 ## Performance Metrics
 
-- Phases complete: 1 / 2
-- Requirements delivered: 8 / 9
-- Plans complete: 1 / 1 (Phase 1)
+- Phases complete: 2 / 2
+- Requirements delivered: 9 / 9
+- Plans complete: 2 / 2
 
 ## Accumulated Context
 
@@ -68,8 +68,8 @@ Plan: 02-01-PLAN.md written and plan-checker verified (PASS)
 - [x] Add regression test to `pkg/dgraph/dgraph_stale_test.go` (`180645c`)
 - [x] Run `make build-crawler` to confirm build (clean)
 - [x] Run `make test-integration` to confirm regression test passes (green vs live Dgraph)
-- [ ] Run Fix E backfill on strfry host after deploy (Phase 2)
-- [ ] Verify live crawler per spec §6 (Phase 2)
+- [x] Run Fix E backfill on strfry host after deploy (Phase 2) — committed; 0 nodes missing `last_attempt`
+- [x] Verify live crawler per spec §6 (Phase 2) — graph grew +16,813 pubkeys / crawled +2,992 in 5-min run
 
 ### Blockers
 
