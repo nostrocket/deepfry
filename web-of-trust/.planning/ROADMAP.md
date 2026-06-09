@@ -32,11 +32,12 @@
   1. The Fix E DQL upsert backfill completes without error: all nodes with `last_db_update` now also have `last_attempt` set, so already-crawled accounts are not re-prioritised as frontier
   2. `grep -c 'New pubkey added to graph (signer)' /tmp/crawler.log` is greater than 0 in a 5-minute live run (was 0 before the fix per spec §3.2)
   3. The stub count (nodes with no `kind3CreatedAt`) decreases materially compared to the baseline snapshot taken before the crawl run
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 02-01-PLAN.md — Fix E backfill (seed `last_attempt` from `last_db_update`) + live verification runbook on the strfry host (baseline snapshot, 5-min crawl, §6 progress asserts)
 
 ## Progress Table
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Code Changes + Regression Test | 1/1 | Complete | 2026-06-09 |
-| 2. Backfill + Live Verification | 0/0 | Not started | - |
+| 2. Backfill + Live Verification | 0/1 | Planned | - |
