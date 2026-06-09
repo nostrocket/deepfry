@@ -7,7 +7,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Code Changes + Regression Test** - Add `last_attempt` schema predicate, rewrite `GetStalePubkeys` with frontier-first selection, add `MarkAttempted`, wire the crawler loop, confirm build, and add the integration regression test
+- [x] **Phase 1: Code Changes + Regression Test** - Add `last_attempt` schema predicate, rewrite `GetStalePubkeys` with frontier-first selection, add `MarkAttempted`, wire the crawler loop, confirm build, and add the integration regression test
 - [ ] **Phase 2: Backfill + Live Verification** - Run the one-time DQL backfill to seed `last_attempt` from `last_db_update` on existing crawled nodes, then verify the crawler reaches the uncrawled frontier in a live run on the strfry host
 
 ## Phase Details
@@ -22,7 +22,7 @@
   3. The Dgraph schema exposed by `EnsureSchema` includes `last_attempt: int @index(int)` listed on the `Profile` type
   4. Every pubkey batch queried by the crawler loop is immediately stamped with `last_attempt` via `MarkAttempted`, whether or not a kind-3 event came back
 **Plans**: 1 plan
-- [ ] 01-01-PLAN.md — Fixes A-D + regression test: last_attempt schema, frontier-first GetStalePubkeys, MarkAttempted, crawler wiring, build + integration test
+- [x] 01-01-PLAN.md — Fixes A-D + regression test: last_attempt schema, frontier-first GetStalePubkeys, MarkAttempted, crawler wiring, build + integration test
 
 ### Phase 2: Backfill + Live Verification
 **Goal**: The running crawler on the strfry host begins converting stub nodes to crawled nodes, demonstrating that the fix unblocks graph growth
@@ -38,5 +38,5 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Code Changes + Regression Test | 0/1 | Not started | - |
+| 1. Code Changes + Regression Test | 1/1 | Complete | 2026-06-09 |
 | 2. Backfill + Live Verification | 0/0 | Not started | - |
