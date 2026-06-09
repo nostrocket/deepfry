@@ -106,7 +106,8 @@ mainLoop:
 		}
 
 		// Get stale pubkeys to process
-		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold)
+		const batchSize = 500
+		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, batchSize)
 		if err != nil {
 			log.Printf("Error getting stale pubkeys: %v", err)
 			break
@@ -130,20 +131,8 @@ mainLoop:
 			break
 		}
 
-		// Limit batch size to avoid overload
+		// The stale-pubkey query now bounds the batch itself (batchSize).
 		totalStale := len(pubkeys)
-		if totalStale > 500 {
-			limitedPubkeys := make(map[string]int64)
-			count := 0
-			for pk, timestamp := range pubkeys {
-				if count >= 500 {
-					break
-				}
-				limitedPubkeys[pk] = timestamp
-				count++
-			}
-			pubkeys = limitedPubkeys
-		}
 
 		// Reconnect any dead relays before processing
 		crawler.ReconnectRelays(ctx)
@@ -157,6 +146,16 @@ mainLoop:
 			}
 			log.Printf("Failed to fetch and update follows: %v", err)
 			break
+		}
+
+		// Mark every queried pubkey as attempted so un-fetchable ones age out of the
+		// frontier instead of being re-selected every cycle.
+		batchKeys := make([]string, 0, len(pubkeys))
+		for pk := range pubkeys {
+			batchKeys = append(batchKeys, pk)
+		}
+		if err := dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix()); err != nil {
+			log.Printf("Warning: failed to mark batch attempted: %v", err)
 		}
 
 		staleRemaining := totalStale - len(pubkeys)
