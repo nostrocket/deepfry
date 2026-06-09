@@ -60,19 +60,19 @@ Deferred to future milestones (tracked in `.planning/codebase/CONCERNS.md`).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CHUNK-01 | TBD | Pending |
-| CHUNK-02 | TBD | Pending |
-| LEAK-01 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| SEC-02 | TBD | Pending |
-| TEST-03 | TBD | Pending |
-| TEST-04 | TBD | Pending |
+| CHUNK-01 | Phase 3 | Pending |
+| CHUNK-02 | Phase 3 | Pending |
+| LEAK-01 | Phase 3 | Pending |
+| TEST-03 | Phase 3 | Pending |
+| TEST-04 | Phase 3 | Pending |
+| SEC-01 | Phase 4 | Pending |
+| SEC-02 | Phase 4 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 7 total
-- Mapped to phases: 0 (roadmapper to populate)
-- Unmapped: 7
+- Mapped to phases: 7 (Phase 3: CHUNK-01, CHUNK-02, LEAK-01, TEST-03, TEST-04 — Phase 4: SEC-01, SEC-02)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-09*
-*Last updated: 2026-06-09 — awaiting roadmap traceability*
+*Last updated: 2026-06-09 — roadmap traceability populated (Phases 3–4)*
