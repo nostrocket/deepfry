@@ -1,39 +1,34 @@
-# Requirements: Web-of-Trust Crawler — Crawl Coverage Fix
+# Requirements: Web-of-Trust Crawler — v1.1 Write Integrity & Hardening
 
 **Defined:** 2026-06-09
 **Core Value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-## v1 Requirements
+## v1.1 Requirements
 
-Requirements for this milestone (implementing `8pc_crawled.md`). Each maps to roadmap phases.
+Correctness + hardening pass on the crawler's Dgraph write path. Each maps to roadmap phases.
 
-### Schema
+### Write Integrity
 
-- [ ] **SCHEMA-01**: The Dgraph schema includes an indexed `last_attempt: int @index(int)` predicate, and `last_attempt` is listed on the `Profile` type. (`EnsureSchema`, `pkg/dgraph/dgraph.go`)
+- [ ] **CHUNK-01**: A pubkey whose follow-list exceeds the chunk size (chunking triggers above 500 follows; chunks of 200) has its **complete** follow-list persisted to Dgraph — every chunk's follows are written, not just the first. The per-event `kind3CreatedAt` version guard in `AddFollowers` (`pkg/dgraph/dgraph.go:165`) no longer discards chunks 2…N, which all carry the same `createdAt`.
+- [ ] **CHUNK-02**: The version guard's intended behaviour is preserved for genuine duplicates — a re-crawl of an already-fully-ingested pubkey at the same or older `kind3CreatedAt` still short-circuits without redundant rewrites. The fix distinguishes "same event, subsequent chunk" from "same event, already complete."
 
-### Selection
+### Resource Hygiene
 
-- [ ] **SEL-01**: `GetStalePubkeys` selects never-attempted nodes (the uncrawled frontier) via an explicit `NOT has(last_attempt)` query with an explicit `first:` limit — never via `orderasc` on a missing-value predicate, and never relying on Dgraph's default 1000-row cap.
-- [ ] **SEL-02**: `GetStalePubkeys` accepts a `limit int` parameter and, after filling from the frontier, tops up the batch with previously-attempted nodes whose `last_attempt` is older than the threshold (ordered by `last_attempt`, bounded by an explicit `first:`).
-- [ ] **SEL-03**: A `collectStale` helper runs a named-block stale query and merges `{pubkey -> kind3CreatedAt}` rows into the result map.
+- [ ] **LEAK-01**: `processFollowsInChunks` releases each chunk's context/`cancel` before the next iteration begins — no `defer cancel()` accumulation across the loop. Processing an N-chunk follow-list holds at most one live chunk context at a time.
 
-### Attempt Tracking
+### Injection Hardening
 
-- [ ] **ATTEMPT-01**: A `MarkAttempted(ctx, pubkeys, ts)` method stamps `last_attempt = ts` on every given pubkey (resolving UIDs via the existing `ResolvePubkeysToUIDs`), so un-fetchable pubkeys age out of the frontier instead of being re-selected every cycle.
-- [ ] **ATTEMPT-02**: The crawler loop passes a `batchSize` limit to `GetStalePubkeys` (removing the manual 500-cap block) and calls `MarkAttempted` for the whole queried batch immediately after `FetchAndUpdateFollows`. (`cmd/crawler/main.go`)
-
-### Migration
-
-- [ ] **MIG-01**: A one-time backfill seeds `last_attempt` from `last_db_update` for existing crawled nodes (run after the schema change), so already-crawled accounts are not re-prioritised as frontier.
+- [ ] **SEC-01**: `RemoveFollower` builds its DQL query and mutations using parameterised variables (`$`-Vars) and/or `%q`-quoted nquads instead of raw string concatenation of `signerPubkey`/`followee` — consistent with the `RemovePubKeyIfNoFollowers` pattern in the same file.
+- [ ] **SEC-02**: `RemoveFollower` rejects malformed pubkey inputs (validates 64-char hex) before issuing any mutation, returning an error. Defense-in-depth — the function currently has no callers, so this also guards future use.
 
 ### Verification
 
-- [ ] **TEST-01**: An integration regression test (`//go:build integration`, run via `make test-integration`) asserts that a pure stub (no `last_attempt`) IS returned by `GetStalePubkeys` and that a freshly-attempted node is NOT returned as stale.
-- [ ] **TEST-02**: The build passes (`make build-crawler`) and the single caller at `cmd/crawler/main.go:109` is updated for the new `GetStalePubkeys` signature.
+- [ ] **TEST-03**: An automated regression test reproduces the chunk data-drop on pre-fix code and passes post-fix — asserting that a follow-list larger than the chunk size results in the full follow set persisted. Integration test acceptable (`//go:build integration`, `make test-integration`).
+- [ ] **TEST-04**: Unit-testable coverage (no live Dgraph, runs under `make test` / `-short`) exists for the parts that don't require Dgraph: the chunk-splitting boundary logic in `processFollowsInChunks`, and `RemoveFollower`'s input validation/escaping (malformed pubkeys rejected; special characters cannot alter query structure).
 
-## v2 Requirements
+## Future Requirements
 
-Deferred to future milestones (out of this fix; tracked in `.planning/codebase/CONCERNS.md`).
+Deferred to future milestones (tracked in `.planning/codebase/CONCERNS.md`).
 
 ### Reliability
 
@@ -44,7 +39,11 @@ Deferred to future milestones (out of this fix; tracked in `.planning/codebase/C
 
 ### Tuning
 
-- **TUNE-01**: Raise `stale_pubkey_threshold` toward the `86400` code default to spend more budget expanding the graph vs re-refreshing known accounts (optional; config at `~/deepfry/web-of-trust.yaml`).
+- **TUNE-01**: Raise `stale_pubkey_threshold` toward the `86400` code default to spend more budget expanding the graph vs re-refreshing known accounts.
+
+### Coverage
+
+- **TEST-05**: Broaden the unit/integration suite beyond the write path (relay state machine, config load, clusterscan) — out of this milestone's hardening scope.
 
 ## Out of Scope
 
@@ -53,27 +52,27 @@ Deferred to future milestones (out of this fix; tracked in `.planning/codebase/C
 | Modifying StrFry | Protocol rule: StrFry stays unmodified — extend only via plugins/external services |
 | Editing `~/deepfry/web-of-trust.yaml` for testing | Live config must not change; use a temp `HOME` per spec §6 |
 | Storing event payloads in Dgraph | Data-separation rule: Dgraph holds the ID-only graph; payloads live in StrFry LMDB |
-| Open-socket / whitelist / quarantine / cache fixes | Separate concerns; their own future milestones (see v2) |
+| Changing the chunk size / chunking threshold | Tuning, not a correctness fix; current 200/500 values stay unless a fix requires otherwise |
+| Open-socket / whitelist / quarantine / cache fixes | Separate concerns; their own future milestones (see Future) |
+| `GSD-BUG-plan-phase-false-negative-agent-check.md` | GSD tooling note in repo root, not a crawler defect |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | Phase 1 | Pending |
-| SEL-01 | Phase 1 | Pending |
-| SEL-02 | Phase 1 | Pending |
-| SEL-03 | Phase 1 | Pending |
-| ATTEMPT-01 | Phase 1 | Pending |
-| ATTEMPT-02 | Phase 1 | Pending |
-| TEST-01 | Phase 1 | Pending |
-| TEST-02 | Phase 1 | Pending |
-| MIG-01 | Phase 2 | Pending |
+| CHUNK-01 | TBD | Pending |
+| CHUNK-02 | TBD | Pending |
+| LEAK-01 | TBD | Pending |
+| SEC-01 | TBD | Pending |
+| SEC-02 | TBD | Pending |
+| TEST-03 | TBD | Pending |
+| TEST-04 | TBD | Pending |
 
 **Coverage:**
-- v1 requirements: 9 total
-- Mapped to phases: 9
-- Unmapped: 0
+- v1.1 requirements: 7 total
+- Mapped to phases: 0 (roadmapper to populate)
+- Unmapped: 7
 
 ---
 *Requirements defined: 2026-06-09*
-*Last updated: 2026-06-09 — traceability populated by roadmapper*
+*Last updated: 2026-06-09 — awaiting roadmap traceability*
