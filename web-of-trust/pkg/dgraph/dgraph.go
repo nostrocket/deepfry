@@ -32,9 +32,15 @@ type Client struct {
 // NewClient creates a new Client connected to the given dgraph gRPC address
 // (eg "localhost:9080").
 func NewClient(addr string) (*Client, error) {
+	// A frontier-first GetStalePubkeys query with a large `first:` can return a
+	// response well over gRPC's default 4MB receive cap when the graph holds
+	// hundreds of thousands of stub nodes. Raise the max receive size so large
+	// selection batches do not fail with ResourceExhausted.
+	const maxRecvMsgSize = 256 << 20 // 256 MiB
 	conn, err := grpc.NewClient(
 		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize)),
 	)
 	if err != nil {
 		return nil, err
