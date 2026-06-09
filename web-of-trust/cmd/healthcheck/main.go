@@ -7,14 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
 	"web-of-trust/pkg/dgraph"
 )
-
-var validPubkey = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func main() {
 	dgraphAddr := flag.String("dgraph-addr", "localhost:9080", "Dgraph gRPC address")
@@ -46,7 +43,7 @@ func main() {
 
 	err = client.GetAllPubkeysPaginated(ctx, 5000, func(batch []dgraph.PubkeyNode) error {
 		for _, node := range batch {
-			if !validPubkey.MatchString(node.Pubkey) {
+			if dgraph.ValidatePubkey(node.Pubkey) != nil {
 				invalidNodes = append(invalidNodes, node)
 			}
 			seen[node.Pubkey] = append(seen[node.Pubkey], node)
