@@ -23,7 +23,9 @@
   3. Processing an N-chunk follow-list holds at most one live chunk context/`cancel` at a time — the `defer cancel()` accumulation at `pkg/crawler/chunks.go:39-40` is gone and each chunk's context is released before the next iteration begins.
   4. An integration test (`//go:build integration`, runs under `make test-integration`) asserts that a follow-list larger than the chunk size results in the full follow set persisted; it fails against pre-fix code and passes post-fix.
   5. Unit tests (no live Dgraph, run under `make test` / `-short`) cover the chunk-splitting boundary logic in `processFollowsInChunks` and would catch a regression in chunk count / chunk membership.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 03-01-PLAN.md — Unify AddFollowers to one batched full-set write (CHUNK-01/02, LEAK-01); shared pubkey validator; delete chunks.go
+- [ ] 03-02-PLAN.md — Regression tests: chunkSlice unit test (TEST-04) + large-kind3 integration test (TEST-03)
 
 ### Phase 4: Remove-Path Injection Hardening
 **Goal**: `RemoveFollower` can no longer be injected through `signerPubkey`/`followee` and refuses malformed input, bringing the dead-but-latent remove path in line with the safe query patterns used elsewhere in `pkg/dgraph`.
@@ -39,5 +41,5 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 3. Write-Path Correctness + Regression Coverage | 0/0 | Not started | - |
+| 3. Write-Path Correctness + Regression Coverage | 0/2 | Not started | - |
 | 4. Remove-Path Injection Hardening | 0/0 | Not started | - |
