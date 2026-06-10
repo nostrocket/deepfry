@@ -29,7 +29,7 @@
 **Plans**: 2 plansPlans:
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — Validator swap (VALID-01), MarkAttempted recover-or-purge (VALID-03/02), validator unit tests
+- [x] 05-01-PLAN.md — Validator swap (VALID-01), MarkAttempted recover-or-purge (VALID-03/02), validator unit tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -80,7 +80,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 5. Pubkey Validation Hardening | 0/2 | Planned | - |
+| 5. Pubkey Validation Hardening | 1/2 | In Progress|  |
 | 6. Filter Size & Per-Relay Cap Detection | 0/0 | Not started | - |
 | 7. Relay Health Management | 0/0 | Not started | - |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
