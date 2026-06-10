@@ -1,12 +1,14 @@
-# deepfry — Queryable Endpoint over strfry's LMDB
+# LMDB2GraphQL — Queryable GraphQL Adapter over strfry's LMDB
+
+> **Naming:** This project is **LMDB2GraphQL**, a component of the **DeepFry** stack. "LMDB2GraphQL" always refers to this adapter; "DeepFry" / "deepfry" always refers to the parent project. Do not conflate the two.
 
 ## What This Is
 
-deepfry is a read-only middleware service that exposes a [strfry](https://github.com/hoytech/strfry) Nostr relay's LMDB database as a standard, directly queryable GraphQL endpoint. It lets consumers run rich queries the Nostr `REQ` protocol cannot express — e.g. *"latest 20 kind-1 events per pubkey"* — without going through the strfry relay process. It is built for operators of the DeepFry/Humble Horse stack who run strfry and want analytic/feed queries over its event data.
+LMDB2GraphQL is a read-only adapter that exposes a [strfry](https://github.com/hoytech/strfry) Nostr relay's LMDB database as a standard, directly queryable GraphQL endpoint. It lets consumers run rich queries the Nostr `REQ` protocol cannot express — e.g. *"latest 20 kind-1 events per pubkey"* — without going through the strfry relay process. It is a **query lens over strfry's live data, not a copy of it**: LMDB2GraphQL reads strfry's existing on-disk indexes directly and never replicates event data into a separate store. It ships as one component of the DeepFry stack.
 
 ## Core Value
 
-Serve correct, rich queries over strfry's events **without ever depending on strfry's in-memory custom LMDB comparators or writing to strfry's database** — by reading only the well-defined `EventPayload` sub-DB and maintaining an independent derived index.
+Serve correct, rich queries over strfry's events by reading strfry's **live** on-disk state directly — never copying event data or indexes out of strfry (honoring the DeepFry stack's data-separation rule: *no event payloads outside StrFry*), while never writing to strfry's database.
 
 ## Requirements
 
@@ -16,55 +18,66 @@ Serve correct, rich queries over strfry's events **without ever depending on str
 
 ### Active
 
-- [ ] Read-only decoder library: open strfry env `MDB_RDONLY`, decode `EventPayload` (`0x00` raw + `0x01` zstd-dictionary), gate on `Meta.dbVersion == 3`, assert endianness matches host
-- [ ] Full importer: windowed `levId` scan of `EventPayload` → derived SQLite store (short read txns per window)
-- [ ] Incremental tailer: `MDB_SET_RANGE` from `lastLevId+1` to catch new inserts
-- [ ] On-demand / periodic full reconciler: diff derived `lev_id` set against `EventPayload` to drop deleted events; change probe via `negentropyModificationCounter` + filesystem watch
-- [ ] Replaceable & parameterized-replaceable collapse + expiration filtering in the derived store (match relay semantics)
+- [ ] Read-only LMDB access to strfry's environment (`MDB_RDONLY`), never opening a write transaction
+- [ ] Startup gates: refuse to run (loudly) if `Meta.dbVersion != 3` or `Meta.endianness` ≠ host
+- [ ] Reimplement strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) in Rust and register them via `mdb_set_compare` on the index sub-DBs LMDB2GraphQL scans
+- [ ] Comparator self-check at startup against a pinned fixture; **fail-closed** if our scan order disagrees with strfry's
+- [ ] Decode `EventPayload` (`0x00` raw + `0x01` zstd-dictionary) to return full event JSON
+- [ ] Query engine that resolves filters by scanning strfry's `Event__*` indexes (`Event__id`, `Event__pubkey`, `Event__kind`, `Event__pubkeyKind`, `Event__created_at`, `Event__tag`) and hydrating JSON via `EventPayload[levId]` point-lookups
+- [ ] `latestPerAuthor` via `Event__pubkeyKind` prefix scans (the query REQ cannot express)
+- [ ] NIP-40 expiration filtering at query time (expired-but-unswept events linger physically)
 - [ ] GraphQL API: `events()`, `latestPerAuthor()`, `stats`, with pagination and hard limit ceilings
-- [ ] Version/endianness hard gate that refuses to run (loudly) on mismatch
 - [ ] Docker subsystem + docker-compose integration, co-located with strfry, read-only mount of `strfry-db`
 
 ### Out of Scope
 
-- Approach B (embed strfry/golpe code) — too tightly version-locked; only revisit if exact live replaceable/deletion semantics are required
-- Approach C (shell out to `strfry scan`/`export`) — prototype-only, not the production path
-- Reading/range-scanning any `Event__*` index sub-DB — relies on golpe's in-memory comparators; silently wrong from a foreign reader
+- **Approach A (derived store / index replication)** — rejected: duplicates data and violates the "no event payloads outside StrFry" data-separation rule. LMDB2GraphQL reads strfry's live state instead.
+- **Approach C (shell out to `strfry scan`/`export`)** — prototype-only, not the production path
 - Any write transaction against strfry's environment — strfry is the sole writer; a second writer corrupts the env
+- A separate sync engine (full import / incremental tailer / reconciler) — unnecessary under Approach B; LMDB2GraphQL reads live, so there is no staleness window for deletions or replaceable-supersession
+- Replaceable / parameterized-replaceable collapse logic — strfry already enforces this at write time, so its physical index set is already collapsed; LMDB2GraphQL inherits it for free
 - Live subscriptions / push — request/response only for v1
-- Mutations / acting as a relay — deepfry is a query surface, not a relay
-- Cross-architecture / big-endian support — deepfry assumed co-located with strfry on the same little-endian arch (assert, don't byte-swap) for v1
+- Mutations / acting as a relay — LMDB2GraphQL is a query surface, not a relay
+- Cross-architecture / big-endian support — assumed co-located with strfry on the same little-endian arch (assert, don't byte-swap) for v1
 - Re-verifying event signatures on the hot path — strfry already validated on ingest
+- Generalization to non-strfry LMDB schemas — v1 targets strfry's golpe schema specifically (despite the generic name)
 
 ## Context
 
-- Part of the **DeepFry** modular backend stack for Humble Horse (surrounds a stock, unmodified strfry relay with sidecar services). deepfry follows the same "never fork strfry" principle: it reads strfry's LMDB directly but treats the on-disk format as a private API.
-- Target strfry DB version: **3** (`src/constants.h: CURR_DB_VERSION = 3`). Format is strfry-internal and may change between releases with no compatibility guarantee — must pin and CI-test against a specific strfry commit with a fixture DB.
-- Full spec with verified on-disk encodings, required LMDB operations, and caveats lives in `spec.md` (source of truth for implementation details).
-- The broader deepfry stack is written in Go; **deepfry (this service) is intentionally Rust** — a deliberate divergence chosen for this subsystem.
-- Existing infrastructure: strfry at `ws://localhost:7777` with LMDB at `./strfry-db/` (default), 10 TiB sparse `mapsize`. Config convention: per-subsystem config under `~/deepfry/`.
+- LMDB2GraphQL is one component of the **DeepFry** modular backend stack for Humble Horse (which surrounds a stock, unmodified strfry relay with sidecar services). It follows DeepFry's "never fork strfry" principle and the stack's hard **data-separation rule**: canonical events live only in StrFry's LMDB; **no event payloads outside StrFry**. Approach B honors this literally — LMDB2GraphQL copies nothing.
+- **Dependency is on strfry's files, not its process.** LMDB2GraphQL opens the `strfry-db/` LMDB directory (`data.mdb` + `lock.mdb`) directly; it never connects to strfry over WebSocket/NIP-01. So strfry need not be running — if stopped, LMDB2GraphQL reads the last committed on-disk state. When strfry IS running, LMDB's MVCC lets read-only transactions coexist with strfry's single writer and reflect live writes with no sync lag. (CI exercises this by reading a static fixture DB with no strfry process.) The one unsafe overlap is a strfry compaction/upgrade running concurrently with reads — guarded by the `dbVersion` gate + comparator self-check on next open.
+- Target strfry DB version: **3** (`src/constants.h: CURR_DB_VERSION = 3`). The on-disk format AND the index key layouts/comparator semantics are strfry-internal and may change between releases with no compatibility guarantee — must pin and CI-test against a specific strfry commit with a fixture DB.
+- **Version-pin risk (must coordinate with parent):** the parent DeepFry stack builds strfry from `dockurr/strfry:**latest**` (`Dockerfile.strfry:15`) — an **unpinned** tag. Its strfry version, and therefore the on-disk `dbVersion`/migration schema, can shift silently on any rebuild. LMDB2GraphQL must (a) pin the exact strfry version/digest the parent deploys as a shared contract, (b) generate its CI fixture + comparators from that version, and (c) verify the detected `dbVersion` matches the pin at startup, failing closed otherwise. Recommend the parent pin `dockurr/strfry` to a digest so the schema cannot move under either project. As a read-only consumer, LMDB2GraphQL never triggers a migration; it only refuses to serve against an unexpected schema.
+- Approach B reads strfry's secondary indexes directly. This is viable only because the custom comparators (declared in `golpe.yaml`) are small and reimplementable; correctness depends on them being **byte-exact**. The subtlety: trailing native-endian integers (`created_at`, `kind`) do not sort under `memcmp` on little-endian — that is exactly why strfry uses a custom comparator, and exactly what LMDB2GraphQL must reproduce.
+- Full spec with verified on-disk encodings, required LMDB operations, and caveats lives in `spec.md`. NOTE: `spec.md` recommends Approach A; this project deliberately chose **Approach B** (listed in spec §2 as the higher-correctness, higher-coupling option).
+- The broader DeepFry stack is written in Go; **LMDB2GraphQL is intentionally Rust** — a deliberate divergence chosen for this component.
+- Existing infrastructure: strfry at `ws://localhost:7777` with LMDB at `./strfry-db/` (default), 10 TiB sparse `mapsize`. DeepFry config convention: per-component config under `~/deepfry/`.
 
 ## Constraints
 
-- **Tech stack**: Rust — needs LMDB read bindings, zstd (dictionary decompression), SQLite, and a GraphQL server. Diverges from the Go stack by deliberate choice.
-- **Correctness**: MUST NOT open or range-scan any `Event__*` sub-DB (custom comparators not present in a foreign process). Read only `EventPayload` (required) and optionally `Meta`/`Event`/`CompressionDictionary`.
-- **Safety**: read-only LMDB access only (`MDB_RDONLY`); never open a write txn. Keep read txns short (scan in bounded `levId` windows) so strfry can reclaim pages and the DB file doesn't grow unbounded.
+- **Tech stack**: Rust — needs LMDB read bindings with **custom comparator support** (`mdb_set_compare`), zstd (dictionary decompression for payload hydration), and a GraphQL server. No SQLite / no derived store. Diverges from the Go stack by deliberate choice.
+- **Correctness (the crux)**: LMDB2GraphQL's reimplemented comparators must be byte-identical to strfry's, or range scans return silently-wrong data. Mitigate with a pinned-fixture self-check that fails closed at startup.
+- **Coupling**: Approach B depends on strfry's internal index key formats AND comparator semantics (broader surface than the payload format alone). Pin a strfry version; treat as a private API.
+- **Safety**: read-only LMDB access only (`MDB_RDONLY`); never open a write txn. Keep read txns short (per-query, bounded by limit) so strfry can reclaim pages and `data.mdb` doesn't grow unbounded.
 - **Compatibility**: hard version gate — refuse to run if `Meta.dbVersion != 3`. Assert `Meta.endianness` matches host; refuse on mismatch (co-located assumption).
-- **Deployment**: packaged as its own Docker subsystem with a docker-compose service, co-located with strfry, mounting `strfry-db` read-only.
+- **Deployment**: packaged as its own Docker subsystem within the DeepFry stack, with a docker-compose service, co-located with strfry, mounting `strfry-db` read-only.
 - **Compression**: must handle `0x01` zstd-dictionary payloads (appears after strfry offline compaction) even though default deployments are `0x00` uncompressed.
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Approach A (derived store; read only `EventPayload`) | Avoids strfry's in-memory custom comparators entirely; never writes to / corrupts strfry; survives restarts & compactions | — Pending |
-| Derived store = SQLite | Single-node, simplest; fits the windowed-query workload; spec's v1 default | — Pending |
+| Name = LMDB2GraphQL (a DeepFry component, distinct from the parent) | Avoid conflating this adapter with the parent DeepFry project | — Pending |
+| Approach B (query strfry's live indexes; zero replication) | Honors "no payloads outside StrFry"; always fresh (deletions/supersession reflected instantly); eliminates the entire sync/reconcile/staleness subsystem | — Pending |
+| Reimplement golpe comparators in Rust + register via `mdb_set_compare` | Required to range-scan `Event__*` correctly from a foreign process; comparators are small and documented in `golpe.yaml` | — Pending |
+| Pinned-fixture comparator self-check, fail-closed | Concentrated correctness risk lives in ~3 comparators; verify scan order matches strfry before serving | — Pending |
+| Pin strfry version to the parent's deployed version (shared contract) | Parent uses `dockurr/strfry:latest` (unpinned); schema/dbVersion could shift silently. Pin + verify at startup + flag parent to pin to a digest | — Pending |
+| No derived store, no SQLite, no sync engine | Direct consequence of Approach B; nothing to import, tail, or reconcile | — Pending |
 | Query API = GraphQL | Self-documenting, flexible filtering; expresses `latestPerAuthor` cleanly | — Pending |
-| Request/response only (no subscriptions) for v1 | Keeps v1 simple; derived store is eventually-consistent | — Pending |
+| Request/response only (no subscriptions) for v1 | Keeps v1 simple | — Pending |
 | Co-located, same arch (assert endianness) | Avoids byte-swap/cross-arch complexity; matches deployment reality | — Pending |
-| Language = Rust | Deliberate divergence from the Go stack for this subsystem | — Pending |
-| Deletion reconcile cadence = hours / on-demand | Deletions are rare; tolerant staleness window keeps scan load on strfry low | — Pending |
-| Packaged as Docker subsystem + compose, read-only `strfry-db` mount | Matches existing deepfry infra conventions | — Pending |
+| Language = Rust | Deliberate divergence from the Go DeepFry stack for this component | — Pending |
+| Packaged as Docker subsystem + compose, read-only `strfry-db` mount | Matches existing DeepFry infra conventions | — Pending |
 
 ## Evolution
 
@@ -84,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-09 after initialization*
+*Last updated: 2026-06-10 after initialization (Approach B; named LMDB2GraphQL)*
