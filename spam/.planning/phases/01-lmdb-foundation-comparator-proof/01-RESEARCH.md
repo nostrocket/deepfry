@@ -144,6 +144,8 @@ cc = "1"
 | `anyhow` | crates.io | ~5 yrs | Extreme | github.com/dtolnay/anyhow | [ASSUMED] | Approved |
 | `serde` | crates.io | ~9 yrs | Extreme | github.com/serde-rs/serde | [ASSUMED] | Approved |
 | `tempfile` | crates.io | ~7 yrs | High | github.com/Stebalien/tempfile | [ASSUMED] | Approved |
+| `dirs` | crates.io | ~7 yrs | High | github.com/dirs-dev/directories-rs | [ASSUMED] | Approved — resolves `~/deepfry/` home dir; gate via plan 02 Task 1 checkpoint |
+| `serde_yaml_ng` | crates.io | ~1 yr | Moderate (maintained fork of dtolnay's deprecated `serde_yaml`) | github.com/acatton/serde-yaml-ng | [ASSUMED] | Approved — maintained replacement for deprecated `serde_yaml`; gate via plan 02 Task 1 checkpoint |
 
 **Packages removed due to slopcheck [SLOP] verdict:** none
 **Packages flagged as suspicious [SUS]:** none
@@ -789,27 +791,29 @@ impl heed::Comparator for StringUint64Cmp {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Meta struct exact field offsets**
+> Each question below is **resolved-by-delegation**: it is not left open, but explicitly tracked and assigned to a specific plan-time spike task (with a documented fallback). The planner verified there is a concrete owner and escape hatch for each before finalizing the Phase 1 plans. None of these are forgotten or unscoped.
+
+1. **Meta struct exact field offsets** — RESOLVED (delegated to SPIKE A3, plan 01-03 Task 1)
    - What we know: `dbVersion` and `endianness` exist in `Meta` record id=1; both are uint32/uint64 in native byte order.
    - What's unclear: Exact byte offsets in the golpe-generated struct. The struct likely has fields in YAML order with natural alignment, but alignment padding could shift offsets.
-   - Recommendation: Read `build/golpe.h` from the pinned strfry source (or run `strfry` and extract via REPL/debug). Include as a spike task at the start of Phase 1.
+   - **Resolution:** Plan 01-03 Task 1 runs SPIKE A3 *first*: confirm the offsets from the pinned strfry build's generated `build/golpe.h` (reachable via the commit pinned in PROVENANCE.md) and record the confirmed offsets in a code comment citing the source. **Fallback if the assumed `[0..4]`/`[4..8]` layout is wrong:** use the offsets actually observed in `golpe.h` (the spike adjusts the parser before the gate is trusted); the fixture's known `dbVersion==3` provides a positive control that catches a wrong offset immediately.
 
-2. **`mdb_cmp_memn` availability**
+2. **`mdb_cmp_memn` availability** — RESOLVED (delegated to SPIKE A7, plan 01-01 Task 2)
    - What we know: Used in `lmdb_comparator__StringUint64` to compare the string prefix. Declared in LMDB's internal headers.
    - What's unclear: Whether `mdb_cmp_memn` is in the public `lmdb.h` (exposed by `lmdb-sys`) or only in LMDB's private `midl.h`.
-   - Recommendation: Check `lmdb-sys` vendored `lmdb.h` for `mdb_cmp_memn`. If absent, inline the implementation (it's just a `memcmp`-like with `mv_size` comparison): `if (a->mv_size != b->mv_size) return a->mv_size < b->mv_size ? -1 : 1; return memcmp(a->mv_data, b->mv_data, a->mv_size);`
+   - **Resolution:** Plan 01-01 Task 2 runs SPIKE A7 during the comparator vendoring: check the `lmdb-sys` vendored `lmdb.h` for `mdb_cmp_memn`. **Fallback if absent:** inline the equivalent implementation (`if (a->mv_size != b->mv_size) return a->mv_size < b->mv_size ? -1 : 1; return memcmp(a->mv_data, b->mv_data, a->mv_size);`) directly in the vendored C++ so the build does not depend on a private symbol.
 
-3. **Exact dockurr/strfry:1.1.0 digest and strfry git commit**
+3. **Exact dockurr/strfry:1.1.0 digest and strfry git commit** — RESOLVED (delegated to plan 01-02 `checkpoint:human-action`)
    - What we know: Tag 1.1.0 exists, AMD64 partial digest `083d8941253a`, published ~2026-04-26.
    - What's unclear: Full 64-character sha256 digest; exact hoytech/strfry commit.
-   - Recommendation: First Phase 1 task must be `docker pull dockurr/strfry:1.1.0` + inspect on a machine with Docker.
+   - **Resolution:** Plan 01-02 Task 2 is a `checkpoint:human-action` that resolves the full digest + version string + git commit + `dbVersion==3` confirmation on a Docker-capable host (Docker is unavailable on the dev machine). The resolved values are then recorded across PROVENANCE.md, the parent Dockerfile, and config (plan 01-02 Task 3). **Fallback:** if 1.1.0 reports a `dbVersion != 3`, A1 escalates — the Phase 1 gate logic assumptions are revisited before the fixture is committed.
 
-4. **`strfry import` determinism**
+4. **`strfry import` determinism** — RESOLVED (delegated to SPIKE A5, plan 01-02 fixture task 01-02 Task 5)
    - What we know: strfry assigns `levId` monotonically and writes events sequentially.
    - What's unclear: Whether page layout, B-tree node split decisions, or checkpoint writes produce byte-identical `data.mdb` across independent `import` runs.
-   - Recommendation: Test empirically before committing to the CI assertion approach. If not byte-identical, compare semantically (all expected events present, correct scan order) rather than byte-exact.
+   - **Resolution:** Plan 01-02 Task 5 (fixture generation, on the Docker host) runs SPIKE A5: import twice and compare `sha256sum data.mdb`. **Fallback if NOT byte-identical:** record in PROVENANCE.md that CI must compare *semantically* (all expected events present + correct scan order) rather than byte-exact, and flag this for plan 01-03's self-check. Either way the committed fixture is the single pinned artifact the golden vectors and self-check bind to (via `seed_commit` sha256).
 
 ---
 
