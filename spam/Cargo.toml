@@ -27,6 +27,8 @@ serde_yaml_ng = "0.10"
 # dirs: resolves ~/deepfry/ home directory path
 # [APPROVED] plan 02 Task 1 package legitimacy checkpoint
 dirs = "5.0.1"
+# serde_json: JSON deserialization for golden vector files in self-check
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
