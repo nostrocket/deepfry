@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier
+- [x] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier (completed 2026-06-10)
 - [ ] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns
 - [ ] **Phase 7: Relay Health Management** - Persist and decay failure counters across reconnects, classify failure reasons into buckets, and auto-eject relays that exceed configurable per-class thresholds
 - [ ] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric
@@ -33,7 +33,7 @@
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-02-PLAN.md — Integration tests: MarkAttempted recover/purge (D-07) and end-to-end no-garbage write (D-08)
+- [x] 05-02-PLAN.md — Integration tests: MarkAttempted recover/purge (D-07) and end-to-end no-garbage write (D-08)
 
 ### Phase 6: Filter Size & Per-Relay Cap Detection
 
@@ -80,7 +80,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 5. Pubkey Validation Hardening | 1/2 | In Progress|  |
+| 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 0/0 | Not started | - |
 | 7. Relay Health Management | 0/0 | Not started | - |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
