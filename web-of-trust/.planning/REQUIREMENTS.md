@@ -84,24 +84,24 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VALID-01 | TBD | Pending |
-| VALID-02 | TBD | Pending |
-| VALID-03 | TBD | Pending |
-| FILTER-01 | TBD | Pending |
-| FILTER-02 | TBD | Pending |
-| PERF-01 | TBD | Pending |
-| PERF-02 | TBD | Pending |
-| RELAY-01 | TBD | Pending |
-| RELAY-02 | TBD | Pending |
-| TIMEOUT-01 | TBD | Pending |
-| TIMEOUT-02 | TBD | Pending |
-| METRIC-01 | TBD | Pending |
+| VALID-01 | Phase 5 | Pending |
+| VALID-02 | Phase 5 | Pending |
+| VALID-03 | Phase 5 | Pending |
+| FILTER-01 | Phase 6 | Pending |
+| FILTER-02 | Phase 6 | Pending |
+| PERF-01 | Phase 8 | Pending |
+| PERF-02 | Phase 8 | Pending |
+| RELAY-01 | Phase 7 | Pending |
+| RELAY-02 | Phase 7 | Pending |
+| TIMEOUT-01 | Phase 8 | Pending |
+| TIMEOUT-02 | Phase 8 | Pending |
+| METRIC-01 | Phase 8 | Pending |
 
 **Coverage:**
 
 - v1.2 requirements: 12 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 12
+- Mapped to phases: 12
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-10*

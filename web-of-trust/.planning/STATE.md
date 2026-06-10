@@ -3,38 +3,38 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Crawler Reliability & Efficiency
 status: planning
-last_updated: "2026-06-10T07:19:43.956Z"
+last_updated: "2026-06-10T00:00:00.000Z"
 last_activity: 2026-06-10
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
   percent: 0
 ---
 
-# Project State: Web-of-Trust Crawler — v1.1 Write Integrity & Hardening
+# Project State: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-10
 
 ## Project Reference
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 03 — write-path-correctness-regression-coverage
+**Current focus:** Roadmap defined — ready to plan Phase 5
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-10 — Milestone v1.2 started
+Status: Roadmap created; awaiting phase planning
+Last activity: 2026-06-10 — Milestone v1.2 roadmap written (4 phases, 12 requirements)
 
 ## Performance Metrics
 
-- Phases complete (v1.1): 0 / 2
-- Requirements delivered (v1.1): 0 / 7
-- Plans complete (v1.1): 0 / 0
+- Phases complete (v1.2): 0 / 4
+- Requirements delivered (v1.2): 0 / 12
+- Plans complete (v1.2): 0 / 0
 
 ## Accumulated Context
 
@@ -42,24 +42,31 @@ Last activity: 2026-06-10 — Milestone v1.2 started
 
 | Decision | Rationale |
 |----------|-----------|
-| Continue numbering from Phase 3 | DEFAULT numbering mode; v1.0 ended at Phase 2 |
-| 2-phase coarse structure | Tightly-coupled, localized fixes in two files (`pkg/crawler/chunks.go`, `pkg/dgraph/dgraph.go`) plus tests; favour few cohesive phases per YOLO + COARSE config |
-| Phase 3 = write-path correctness + all regression coverage | CHUNK-01/02 + LEAK-01 are one interlocking change in the write path; TEST-03 (integration) and TEST-04 (unit) prove it and ship together |
-| Phase 4 = remove-path hardening | SEC-01/02 touch `RemoveFollower` only (dead code, no callers); isolated defense-in-depth, lowest risk, sequenced last |
+| Continue numbering from Phase 5 | v1.1 ended at Phase 4; sequential numbering per config |
+| 4-phase coarse structure | Natural coupling clusters: VALID (3), FILTER (2), RELAY (2), PERF+TIMEOUT+METRIC (5); coarse granularity compresses into minimum viable boundaries |
+| Phase 5 = pubkey validation hardening | VALID-01/02/03 are tightly coupled — fixing the validator (01), purging existing garbage (02), and stamping invalid nodes via UID (03) must ship together or the bug re-enters on every batch |
+| Phase 6 = filter size + per-relay cap | FILTER-01 reduces the default; FILTER-02 adds intelligence to detect per-relay limits; must ship together since FILTER-02's filter-rejection class informs Phase 7 |
+| Phase 7 = relay health management | Depends on Phase 6 because FILTER-02 introduces the filter-rejection failure class that RELAY-02 needs to classify; RELAY-01/02 are coupled (persistence + classification) |
+| Phase 8 = frontier + timeout + observability | PERF-01/02 touch GetStalePubkeys/MarkAttempted; TIMEOUT-01/02 and METRIC-01 all touch cmd/crawler or pkg/crawler event loop; all independent of relay health, can run in parallel with Phase 7 but grouped for coarse granularity; depends on Phase 5 for valid MarkAttempted UID stamps |
 
 ### Important Facts
 
-- CHUNK-01 root cause: `processFollowsInChunks` reuses one `kind3CreatedAt` across chunks, tripping the guard at `pkg/dgraph/dgraph.go:165` (`kind3createdAt <= existingKind3CreatedAt -> return nil`); chunks 2…N silently dropped for pubkeys with >500 follows.
-- CHUNK-02: the fix must still short-circuit genuine duplicates (same/older event, already complete) — distinguish "subsequent chunk of same event" from "already fully ingested."
-- LEAK-01: `defer cancel()` sits inside the chunk `for` loop at `chunks.go:39-40`, accumulating until function return.
-- SEC-01/02: `RemoveFollower` at `dgraph.go:344-355` builds DQL via raw string concatenation; `RemovePubKeyIfNoFollowers` (same file, ~line 379) is the `$`-Vars reference pattern. No callers today.
-- TEST-03 needs a live Dgraph (`//go:build integration`, `make test-integration` already exists). TEST-04 is unit-only, no live Dgraph (`make test` / `-short`).
-- Live config at `~/deepfry/web-of-trust.yaml` must not be edited for testing; use a temp `HOME` per spec §6.
+- v1.2 motivated by 40-batch production run: 172 relays, 38s avg batch time, 789 pubkeys/min, 0.76% event hit rate, 43 new nodes added.
+- VALID root cause: `nostr.GetPublicKey` is a private-key→public-key derivation function, not a validator; used as a validator it silently accepts garbage pubkeys (uppercase hex, relay URL blobs, truncated values). 19 garbage nodes already in DB re-enter every batch.
+- FILTER root cause: batchSize 500 exceeds relay limits; 40% of relays reject or crash on every batch REQ.
+- PERF root cause: stale frontier ordered by age only, yielding 99.24% wasted cycles (stubs with 0 followers queried as eagerly as high-follower accounts).
+- RELAY root cause: failure counter reset to 0 on reconnect; flapping relays never reach ejection threshold.
+- TIMEOUT: 44% of relays exceed 30s EOSE timeout; EOSE-quorum early exit can reclaim that time.
+- METRIC: staleRemaining always 0 due to off-by-one in cmd/crawler/main.go metric formula.
+- Live config at `~/deepfry/web-of-trust.yaml` must not be edited for testing; use a temp `HOME`.
+- Integration tests gate on live Dgraph via `//go:build integration` / `make test-integration`.
 
 ### Todos
 
-- [ ] Plan Phase 3 (`/gsd-plan-phase 3`)
-- [ ] Plan Phase 4 (`/gsd-plan-phase 4`)
+- [ ] Plan Phase 5 (`/gsd-plan-phase 5`)
+- [ ] Plan Phase 6 (`/gsd-plan-phase 6`)
+- [ ] Plan Phase 7 (`/gsd-plan-phase 7`)
+- [ ] Plan Phase 8 (`/gsd-plan-phase 8`)
 
 ### Blockers
 
@@ -73,4 +80,4 @@ None.
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md` for full context. v1.1 covers the write-path integrity + hardening fixes; the v1.0 8% crawl fix (Phases 1–2) is shipped and verified live.
+**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md` for full context. v1.2 roadmap defines Phases 5–8 covering 12 requirements. Phase 5 (pubkey validation) is the natural first target — it unblocks Phase 8's MarkAttempted UID stamping and cleans the DB before filter and relay health work begins.
