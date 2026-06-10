@@ -9,9 +9,9 @@ Operational reliability and throughput improvements motivated by a 40-batch prod
 
 ### Pubkey Validation
 
-- [ ] **VALID-01**: `updateFollowsFromEvent` validates each p-tag pubkey against `^[0-9a-f]{64}$` before writing to Dgraph — `nostr.GetPublicKey` (a private-key→public-key derivation function) is no longer used as a validator. Malformed pubkeys (uppercase hex, binary blobs, truncated values) are logged and skipped.
-- [ ] **VALID-02**: Existing garbage pubkeys in Dgraph (those whose `pubkey` field does not match `^[0-9a-f]{64}$`) are purged — either via a startup migration in `EnsureSchema` or by running `healthcheck -purge`. After the purge, the stale frontier no longer contains invalid-pubkey nodes.
-- [ ] **VALID-03**: When `MarkAttempted` encounters a pubkey that fails the hex validator, it writes `last_attempt = now` via a UID-based mutation (bypassing the pubkey uniqueness key) so the node ages out of the stale frontier and is not re-queued on every batch.
+- [x] **VALID-01**: `updateFollowsFromEvent` validates each p-tag pubkey against `^[0-9a-f]{64}$` before writing to Dgraph — `nostr.GetPublicKey` (a private-key→public-key derivation function) is no longer used as a validator. Malformed pubkeys (uppercase hex, binary blobs, truncated values) are logged and skipped.
+- [x] **VALID-02**: Existing garbage pubkeys in Dgraph (those whose `pubkey` field does not match `^[0-9a-f]{64}$`) are purged — either via a startup migration in `EnsureSchema` or by running `healthcheck -purge`. After the purge, the stale frontier no longer contains invalid-pubkey nodes.
+- [x] **VALID-03**: When `MarkAttempted` encounters a pubkey that fails the hex validator, it writes `last_attempt = now` via a UID-based mutation (bypassing the pubkey uniqueness key) so the node ages out of the stale frontier and is not re-queued on every batch.
 
 ### Filter Size
 
@@ -84,9 +84,9 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VALID-01 | Phase 5 | Pending |
-| VALID-02 | Phase 5 | Pending |
-| VALID-03 | Phase 5 | Pending |
+| VALID-01 | Phase 5 | Complete |
+| VALID-02 | Phase 5 | Complete |
+| VALID-03 | Phase 5 | Complete |
 | FILTER-01 | Phase 6 | Pending |
 | FILTER-02 | Phase 6 | Pending |
 | PERF-01 | Phase 8 | Pending |

@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: planning
-last_updated: "2026-06-10T10:08:00.497Z"
-last_activity: 2026-06-10 — Milestone v1.2 roadmap written (4 phases, 12 requirements)
+status: executing
+last_updated: "2026-06-10T12:43:11.843Z"
+last_activity: 2026-06-10 -- Phase 05 execution started
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Roadmap defined — ready to plan Phase 5
+**Current focus:** Phase 05 — pubkey-validation-hardening
 
 ## Current Position
 
-Phase: Not started
-Plan: —
-Status: Roadmap created; awaiting phase planning
-Last activity: 2026-06-10 — Milestone v1.2 roadmap written (4 phases, 12 requirements)
+Phase: 05 (pubkey-validation-hardening) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-06-10 -- Phase 05 execution started
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Last activity: 2026-06-10 — Milestone v1.2 roadmap written (4 phases, 12 requi
 | Phase 6 = filter size + per-relay cap | FILTER-01 reduces the default; FILTER-02 adds intelligence to detect per-relay limits; must ship together since FILTER-02's filter-rejection class informs Phase 7 |
 | Phase 7 = relay health management | Depends on Phase 6 because FILTER-02 introduces the filter-rejection failure class that RELAY-02 needs to classify; RELAY-01/02 are coupled (persistence + classification) |
 | Phase 8 = frontier + timeout + observability | PERF-01/02 touch GetStalePubkeys/MarkAttempted; TIMEOUT-01/02 and METRIC-01 all touch cmd/crawler or pkg/crawler event loop; all independent of relay health, can run in parallel with Phase 7 but grouped for coarse granularity; depends on Phase 5 for valid MarkAttempted UID stamps |
+| Phase 05-pubkey-validation-hardening P01 | 1200 | 3 tasks | 3 files |
 
 ### Important Facts
 
@@ -81,3 +82,8 @@ None.
 ## Session Continuity
 
 **To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md` for full context. v1.2 roadmap defines Phases 5–8 covering 12 requirements. Phase 5 (pubkey validation) is the natural first target — it unblocks Phase 8's MarkAttempted UID stamping and cleans the DB before filter and relay health work begins.
+
+## Decisions
+
+- [Phase ?]: Replace nostr.GetPublicKey (key-derivation) with dgraph.ValidatePubkey (hex-regex) at both crawler call sites
+- [Phase ?]: Inline recover-or-purge in MarkAttempted subsumes VALID-02 — no separate startup purge step needed; garbage nodes self-clean on first encounter
