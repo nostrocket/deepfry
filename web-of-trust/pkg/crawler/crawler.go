@@ -262,8 +262,8 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// Extract pubkey strings from the map
 	authors := make([]string, 0, len(pubkeys))
 	for pubkey := range pubkeys {
-		// Validate pubkey format before querying
-		if _, err := nostr.GetPublicKey(pubkey); err != nil {
+		// Validate pubkey format: must be exactly 64 lowercase hex chars.
+		if err := dgraph.ValidatePubkey(pubkey); err != nil {
 			if c.debug {
 				log.Printf("Skipping invalid pubkey: %s, error: %v", pubkey, err)
 			}
@@ -503,8 +503,8 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 		if len(tag) >= 2 && tag[0] == "p" {
 			pubkey := tag[1]
 
-			// Validate pubkey format using nbd-wtf/go-nostr
-			if _, err := nostr.GetPublicKey(pubkey); err != nil {
+			// Validate pubkey format: must be exactly 64 lowercase hex chars.
+			if err := dgraph.ValidatePubkey(pubkey); err != nil {
 				if c.debug {
 					log.Printf("Invalid pubkey in follow list: %s, error: %v", pubkey, err)
 				}
