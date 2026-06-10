@@ -1,156 +1,143 @@
 # Project Research Summary
 
-**Project:** deepfry — Queryable Endpoint over strfry's LMDB
-**Domain:** Read-only derived-index / query layer over an embedded KV event store (Nostr relay-adjacent)
+**Project:** LMDB2GraphQL — Queryable GraphQL Adapter over strfry's LMDB (a DeepFry component)
+**Domain:** Read-only query lens over an embedded KV event store (Nostr relay-adjacent)
 **Researched:** 2026-06-10
-**Confidence:** HIGH
+**Confidence:** HIGH (stack) / MEDIUM (comparator reproduction — needs spike)
+
+> **ARCHITECTURE NOTE:** The project chose **Approach B** (query strfry's live indexes directly; zero replication), not Approach A (derived store). The detailed research files (`STACK.md`, `FEATURES.md`, `ARCHITECTURE.md`, `PITFALLS.md`) were written assuming Approach A and remain useful for the shared parts (Rust stack, LMDB access discipline, payload decoding, pitfalls). Where they describe a derived SQLite store, sync engine, tailer, or reconciler, those are **out of scope** under Approach B. This summary supersedes them for roadmap purposes.
 
 ## Executive Summary
 
-deepfry is a read-only sidecar service that scans strfry's LMDB `EventPayload` sub-database, maintains a derived SQLite index, and serves a GraphQL query surface. The core constraint driving the entire architecture: strfry's `Event__*` index sub-databases use custom runtime-registered LMDB comparators that LMDB never persists to disk — a foreign reader doing range scans on them gets silently wrong results. The canonical approach (Approach A) is to read **only** `EventPayload`, which uses the standard `MDB_INTEGERKEY` comparator on `levId`, and build all query indexes in a derived SQLite store. This sidesteps the comparator trap entirely while never writing to strfry's DB.
+LMDB2GraphQL is a read-only sidecar that exposes strfry's LMDB as a GraphQL query endpoint **without copying any data out of strfry**. Instead of building a derived index, it reads strfry's *own* secondary indexes (`Event__pubkeyKind`, `Event__kind`, `Event__id`, `Event__created_at`, `Event__tag`) live, then hydrates full event JSON via `EventPayload[levId]` point-lookups. This honors the stack's hard data-separation rule ("no event payloads outside StrFry") and means LMDB2GraphQL is always perfectly fresh — deletions and replaceable-supersession are reflected instantly because strfry's physical index already reflects them.
 
-The recommended Rust stack is well-established and version-verified: `heed` 0.22.1 (LMDB, actively maintained by Meilisearch), `rusqlite` 0.40.1 with `bundled`+`window` features, `async-graphql` 7.2.1 + `axum` 0.8.x, and `zstd` 0.13.x for dictionary decompression. The sync engine runs on Tokio's `spawn_blocking` pool throughout — LMDB's synchronous C FFI must never be called from async context.
+The enabling — and risk-bearing — technique is reproducing strfry/golpe's custom LMDB comparators. strfry's index sub-DBs sort by comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) that LMDB never persists to disk; a naive `memcmp` reader gets silently-wrong results. LMDB2GraphQL must reimplement these three comparators in Rust and register them via `mdb_set_compare`. The subtlety: trailing native-endian integers (`created_at`, `kind`) must be compared **numerically**, not by `memcmp` — that is precisely why strfry needs a custom comparator. Correctness depends on these being byte-exact, mitigated by a startup self-check against a pinned fixture that **fails closed**.
 
-The two highest risks produce **silent wrong results, not errors**: (1) opening any `Event__*` sub-DB causes range scans to return wrong subsets due to the absent comparator; (2) shipping the incremental tailer without the reconciler means deleted events are served forever, because `levId` is monotonic and strfry's deletes emit no new levId. Both must be addressed structurally in early phases, not deferred to hardening.
+The recommended Rust stack is well-established and version-verified: `heed` 0.22.1 (LMDB, with custom comparator support), `zstd` 0.13.x (dictionary decompression for payload hydration), `async-graphql` 7.2.1 + `axum` 0.8.x, `serde_json` (no `nostr` crate). There is **no SQLite, no sync engine, no `notify` file-watch** under Approach B — those drop out entirely.
 
 ## Key Findings
 
 ### Recommended Stack
 
-A single-process Rust async service (tokio) with a background sync engine and an axum-hosted GraphQL API. LMDB is accessed synchronously via `heed` inside `spawn_blocking`; the derived store is embedded SQLite in WAL mode. Full detail in [STACK.md](STACK.md).
+Single-process Rust async service (tokio): an axum-hosted GraphQL API whose resolvers run synchronous `heed` LMDB scans inside `spawn_blocking`. Full crate detail in [STACK.md](STACK.md) (ignore its `rusqlite`/`notify`/derived-store sections).
 
 **Core technologies:**
-- `heed` 0.22.1 — read-only LMDB access; only actively-maintained crate; `IntegerComparator` for `MDB_INTEGERKEY` keys; supports unnamed-root dbi enumeration and `open_database` (no `MDB_CREATE`). Does NOT force a comparator on existing DBs.
-- `rusqlite` 0.40.1 (`bundled`, `window`) — embedded SQLite; `bundled` required for Alpine static build; `window` enables `ROW_NUMBER() OVER` for `latestPerAuthor`; run inside `spawn_blocking`.
-- `async-graphql` 7.2.1 + `async-graphql-axum` 7.2.1 — GraphQL with built-in complexity/depth limits and Relay cursor connections; keep both at the same minor version; axum 0.8.x compatible.
-- `zstd` 0.13.x — `Decoder::with_dictionary` for `0x01` payloads; cache decoded dictionaries by `dictId`.
+- `heed` 0.22.1 — read-only LMDB access **with custom key-comparator support** (`mdb_set_compare` / `key_comparator`). This capability is the feasibility crux of Approach B — verify it in the first spike.
+- `zstd` 0.13.x — `Decoder::with_dictionary` for `0x01` payload hydration; cache decoded dictionaries by `dictId`.
+- `async-graphql` 7.2.1 + `async-graphql-axum` 7.2.1 — GraphQL with built-in complexity/depth limits and cursor connections; keep both at the same minor version; axum 0.8.x compatible.
 - `serde_json` only (no `nostr` crate) — local `#[derive(Deserialize)] struct NostrEvent`; sigs are not re-verified.
-- `notify` 8.2.0 + `notify-debouncer-mini` 0.7.0 — file-watch change probe (avoid 9.x RC); bridge to tokio via `spawn_blocking`.
-- Avoid: `lmdb-rkv` (dormant), raw `lmdb` 0.8 (abandoned), `sqlx` SQLite (unnecessary async ceremony), `nostr` crate (pulls secp256k1/bech32).
+- **Dropped vs Approach A:** `rusqlite` (no derived store), `notify` (no change-watch needed — reads are live), `deadpool-sqlite`.
 
 ### Expected Features
 
-Detail in [FEATURES.md](FEATURES.md). `latestPerAuthor()` is the **sole genuine differentiator** — the query REQ cannot express; everything else in `events()` is a translation of existing REQ filters. Eight features are correctness-critical (omission → silently wrong data, not degraded perf).
+Detail in [FEATURES.md](FEATURES.md). `latestPerAuthor()` is the **sole genuine differentiator** (REQ cannot express it); under Approach B it is a `Event__pubkeyKind` prefix scan. Correctness-critical features:
 
 **Must have (table stakes / correctness-critical):**
-- DB-version (`==3`) + endianness hard gate — refuse to run loudly on mismatch
-- Dual-format payload decoder (`0x00` raw + `0x01` zstd-dictionary)
-- Full importer (windowed levId scan, short read txns)
-- Incremental tailer **+** periodic/on-demand full reconciler (deletion catch-up) — ship together
-- Replaceable / parameterized-replaceable collapse + NIP-40 expiration filtering
-- `events()`, `latestPerAuthor()`, `stats` GraphQL queries with hard limit ceiling
-- Read-only safety (never open a write txn; `:ro` mount)
+- DB-version (`==3`) + endianness hard gate
+- Comparator reimplementation (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) + fail-closed startup self-check
+- Dual-format payload decoder (`0x00` raw + `0x01` zstd-dictionary) for hydration
+- Query engine over strfry indexes + `EventPayload[levId]` hydration
+- NIP-40 expiration filtering at query time
+- `events()`, `latestPerAuthor()`, `stats` with hard limit ceiling + read-only safety
 
-**Should have (competitive / operational):**
-- Change probe (`negentropyModificationCounter` poll + filesystem watch) to trigger reconcile cheaply
-- Cursor pagination on `(created_at, lev_id)`; query complexity/depth limits
-- `/health`, `/ready`, Prometheus metrics, staleness reporting
+**Should have (operational):**
+- `/health`, `/ready` (ready gates on comparator self-check), cursor pagination, query complexity/depth limits
 
 **Defer (v2+ / out of scope):**
-- Live subscriptions / push (request-response only for v1)
-- Cross-architecture / big-endian support (co-located, same-arch assumption)
-- Mutations / relay behavior; hot-path sig re-verification
+- Prometheus metrics; live subscriptions/push; REST facade; cross-arch/byte-swap
+- (No longer applicable under B: derived store, sync engine, reconciler, replaceable-collapse logic, deletion-staleness window)
 
 ### Architecture Approach
 
-Five isolated modules with clean ownership and no circular dependencies; one process runs a background sync engine plus the async GraphQL API. Detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+Four modules, one process. Detail in [ARCHITECTURE.md](ARCHITECTURE.md) (ignore its `store/`/`sync/` sections — those are Approach A).
 
 **Major components:**
-1. `lmdb/` — all unsafe LMDB interaction; `MDB_RDONLY`, short `RoTxn`s, windowed levId scans; copies bytes out of the mmap before txn drop; exposes only `EventPayload`/`Meta`/`CompressionDictionary`.
-2. `decoder/` — pure function layer (no I/O); `0x00`/`0x01` payload decode; independently fixture-testable.
-3. `store/` — all SQLite; single write path (sync engine) + pooled read path (GraphQL); WAL mode set at schema creation.
-4. `sync/` — Full Importer → Incremental Tailer → Reconciler + Change Probe, orchestrated as tokio tasks.
-5. `api/` — axum + async-graphql; resolvers call `store/` query layer only; never touch LMDB.
+1. `lmdb/` — all unsafe LMDB interaction; `MDB_RDONLY`; opens `EventPayload`, `Meta`, `CompressionDictionary`, and the `Event__*` indexes **with the reimplemented comparators registered**; short per-query `RoTxn`s; copies bytes out of the mmap before txn drop.
+2. `comparators/` — pure Rust reimplementations of golpe's three comparators + the fixture self-check.
+3. `decoder/` — pure function layer; `0x00`/`0x01` payload decode; fixture-testable.
+4. `query/` — translates GraphQL filters → index selection + scan → ordered `levId`s → `EventPayload` hydration → NIP-40 filter.
+5. `api/` — axum + async-graphql; resolvers call `query/` only.
 
 ### Critical Pitfalls
 
-Top items from [PITFALLS.md](PITFALLS.md) (12 total):
+From [PITFALLS.md](PITFALLS.md), reframed for Approach B:
 
-1. **`Event__*` sub-DB access** — silently wrong range scans (no error). Whitelist allowed dbi names; assert at startup via unnamed-root enumeration; only ever open `EventPayload` (+ `Meta`/`CompressionDictionary`).
-2. **Tailer without reconciler** — deleted events served forever. Treat tailer + reconciler as one correctness unit; ship in the same phase.
-3. **Long LMDB read txn during import** — pins pages, `data.mdb` grows unbounded on the 10 TiB sparse file. Windowed scan, abort txn per window, copy bytes out of mmap before drop.
-4. **`map_size` < strfry's 10 TiB** — env open fails (`MDB_INVALID`). Set map_size ≥ strfry's configured size explicitly.
-5. **Tokio calling synchronous LMDB directly** — executor starvation under load (not a compile error). All LMDB/SQLite cursor work in `spawn_blocking`.
-6. **Missing `0x01` zstd path / SQLite WAL set late** — zero results after compaction; WAL cannot be retrofitted to an existing file. Implement both decode paths in Phase 1; set WAL at schema creation in Phase 2.
+1. **Non-byte-exact comparators** — silently wrong query results (no error). The dominant risk under B. Reimplement carefully; self-check against a pinned fixture; fail closed. Remember: trailing native-endian ints compare numerically, not via `memcmp`.
+2. **`heed` cannot register a custom comparator** — would block Approach B entirely. Verify in the first spike before committing the roadmap.
+3. **`map_size` < strfry's 10 TiB** — env open fails (`MDB_INVALID`). Set explicitly.
+4. **Tokio calling synchronous LMDB directly** — executor starvation; wrap all scans in `spawn_blocking`.
+5. **Long read txn during a large scan** — pins pages, `data.mdb` grows; bound scans by query limit + pagination, copy bytes out before drop.
+6. **Version coupling** — B depends on strfry's index key layouts + comparator semantics, not just the payload format. Pin a strfry commit; the self-check + dbVersion gate guard upgrades.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure (the dependency graph dictates ordering; granularity is **coarse** per config — expect ~5-6 phases collapsible if desired):
+Suggested phase structure (granularity **coarse** per config — ~4-5 phases). Phase 1 is a de-risking spike because Approach B's whole feasibility rests on the comparator technique.
 
-### Phase 1: Decoder Library & LMDB Access Layer
-**Rationale:** Every other component consumes its output; most pitfall-dense phase (addresses 6 of 12). Fully testable against a fixture `strfry-db` with no live strfry.
-**Delivers:** read-only env open (map_size, `READ_ONLY`), dbVersion==3 + endianness gate, dbi whitelist + unnamed-root enumeration, `0x00`/`0x01` payload decoder.
-**Avoids:** comparator trap, write-txn corruption, map_size open failure, missing zstd path.
+### Phase 1: LMDB Foundation & Comparator Proof
+**Rationale:** Everything depends on (a) `heed` supporting a custom comparator and (b) a byte-exact reimplementation. De-risk first.
+**Delivers:** read-only env open (map_size, `READ_ONLY`), dbVersion==3 + endianness gates, the three golpe comparators reimplemented + registered, and a fixture self-check that proves scan order matches strfry's — fail-closed.
+**Avoids:** the silent-wrong-data comparator trap; write-txn corruption; map_size open failure.
 
-### Phase 2: Derived Store Schema & Full Importer
-**Rationale:** The watermark is only meaningful after initial population; WAL and `spawn_blocking` cannot be retrofitted cheaply.
-**Delivers:** SQLite schema (`events` + `event_tags` + indexes per spec §4.3) in WAL mode, windowed scan → upsert loop, levId watermark, `/ready` gating on import completion.
-**Uses:** `rusqlite` (`bundled`,`window`), `heed` cursors. **Implements:** `store/` + first half of `sync/`.
+### Phase 2: Payload Decoding & Index Scan Primitives
+**Rationale:** With trustworthy ordering proven, build the read primitives.
+**Delivers:** `0x00`/`0x01` payload decoder (zstd dict), `EventPayload[levId]` point-lookup hydration, and bounded cursor scans over each `Event__*` index (prefix + range, newest-first).
 
-### Phase 3: Incremental Tailer, Reconciler & Change Probe
-**Rationale:** First phase needing a live strfry; deletion correctness lives here; tailer alone is a correctness anti-pattern.
-**Delivers:** `MDB_SET_RANGE` tail from `lastLevId+1`, periodic/on-demand full reconcile (diff levId sets, delete stale rows), change probe via `negentropyModificationCounter` + `notify` with a guaranteed interval fallback.
+### Phase 3: Query Engine
+**Rationale:** Compose primitives into the actual query semantics.
+**Delivers:** filter → index-selection → ordered levIds for `events()`; `Event__tag` scans; `latestPerAuthor` via `Event__pubkeyKind` prefix scan; NIP-40 expiration filtering; cursor pagination on `(created_at, lev_id)`.
 
-### Phase 4: Replaceable Collapse & Expiration Filtering
-**Rationale:** API correctness depends on a semantically accurate store; serving superseded/expired events is a query-correctness bug.
-**Delivers:** replaceable + parameterized-replaceable collapse (highest `created_at` per `(pubkey,kind)` / `(pubkey,kind,d-tag)`), NIP-40 expiration filtering at query and reconcile time.
+### Phase 4: GraphQL API
+**Rationale:** Expose the query engine.
+**Delivers:** `events()`, `latestPerAuthor()`, `stats` (count via `mdb_stat`); hard limit ceiling + complexity/depth limits; read-only (no mutations); `spawn_blocking` bridge.
 
-### Phase 5: GraphQL API
-**Rationale:** Depends on a correct derived store from Phase 4.
-**Delivers:** `events()`, `latestPerAuthor()`, `stats`; cursor pagination on `(created_at, lev_id)`; hard limit ceiling + complexity/depth limits; read-only (no mutations).
-
-### Phase 6: Hardening, Observability & Docker Packaging
-**Rationale:** Operational coupling and robustness belong after the functional surface exists.
-**Delivers:** `/health`, `/ready`, Prometheus metrics, staleness reporting, `POST /reconcile`, fixture-pinned CI against a strfry commit, `docker-compose.deepfry.yml` with `:ro` strfry-db mount, LMDB page-growth load test.
+### Phase 5: Hardening, Observability & Docker Packaging
+**Rationale:** Operational coupling and robustness after the functional surface exists.
+**Delivers:** `/health`, `/ready`, `docker-compose.lmdb2graphql.yml` with `:ro` strfry-db mount, fixture-pinned CI asserting both payload decode and comparator scan-order correctness, load test for read-txn page growth.
 
 ### Phase Ordering Rationale
-- Decoder-first because every component consumes its output; Phases 1-2 are fixture-only (no live strfry).
-- Full importer before tailer/reconciler because the watermark requires initial population.
-- Replaceable collapse before GraphQL because API correctness depends on store correctness.
-- The reconciler cannot slip past Phase 3 — tailer-without-reconciler ships known-stale deletes.
+- Comparator proof first — if `heed` can't register a custom comparator or the reimplementation can't be made byte-exact, the whole approach must be revisited; find out on day one.
+- Decode + scan primitives before the query engine; query engine before the API.
+- No sync/import/reconcile phases — they don't exist under Approach B.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 3:** `notify` file-watch behavior on Docker overlay2 bind mounts (inotify may be suppressed); confirm `negentropyModificationCounter` poll as the guaranteed trigger (MEDIUM confidence on this interaction).
-- **Phase 4:** strfry's exact tiebreak when two replaceable events share `created_at` — verify against `src/events.cpp:274-350`, don't infer from NIPs alone.
+- **Phase 1:** Confirm `heed`'s custom-comparator API surface and that `mdb_set_compare` semantics hold for read-only handles. Read golpe's actual comparator source (not just `golpe.yaml` names) to get byte-exact semantics (string segment length handling, native-int numeric compare). HIGH-priority spike.
+- **Phase 3:** strfry's tie-break and prefix-boundary handling when scanning `Event__pubkeyKind` (e.g. seeking to the next pubkey); verify against `src/DBQuery.h`.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1:** `heed` API documented (docs.rs + heed cookbook).
-- **Phase 2:** `rusqlite` + WAL + `spawn_blocking` is a standard pattern.
-- **Phase 5:** `async-graphql` macros / complexity limits / axum integration well-documented.
-- **Phase 6:** Docker compose + Prometheus are standard.
+- **Phase 2/4:** `zstd` dictionary decode and `async-graphql`+axum are well-documented.
+- **Phase 5:** Docker compose is standard.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All crate versions verified against crates.io / docs.rs; alternatives' dormancy confirmed |
-| Features | HIGH | Derived from spec §4-§6 with citations; ecosystem gap (no existing windowed query layer) confirmed |
-| Architecture | HIGH | Component boundaries verified via Context7; `RoTxn` drop / `spawn_blocking` semantics confirmed |
-| Pitfalls | HIGH | Primary source spec §6, cross-checked vs LMDB/SQLite/Tokio docs |
+| Stack | HIGH | Crate versions verified; `heed` custom-comparator support indicated but spike-confirm |
+| Features | HIGH | Derived from spec §3-§6; Approach B surface is a subset (no sync) |
+| Architecture | HIGH | Simpler than A — no derived store/sync engine |
+| Comparator reproduction | MEDIUM | The crux risk; must verify `heed` capability + byte-exactness against fixture |
 
-**Overall confidence:** HIGH
+**Overall confidence:** HIGH on stack/architecture; MEDIUM pending the comparator spike.
 
 ### Gaps to Address
-- `notify` + Docker bind-mount inotify propagation: MEDIUM — treat `negentropyModificationCounter` poll as the guaranteed reconcile trigger; validate in CI.
-- `deadpool-sqlite` pool sizing: MEDIUM — start at ~5, tune under load in Phase 6.
-- Replaceable collapse tiebreak at equal `created_at`: verify against strfry source before Phase 4.
-- `EnvFlags::NO_LOCK` vs normal read locking: confirm whether the Docker `:ro` mount grants `lock.mdb` write; prefer `READ_ONLY` without `NO_LOCK` when possible. Validate in Phase 1 env-open helper.
-- heed native-endian u64 key type name + Alpine static-link flags (`LMDB_STATIC` / feature): confirm during Phase 1.
+- `heed` custom-comparator API + read-only `mdb_set_compare` behavior — **spike in Phase 1**.
+- Byte-exact golpe comparator semantics — read strfry/golpe source, validate against fixture scan order.
+- `Event__pubkeyKind` prefix-boundary seeking for `latestPerAuthor` across all pubkeys — verify vs `DBQuery.h`.
+- Alpine static-link flags for `heed`/lmdb-sys (`LMDB_STATIC` / feature) — confirm in Phase 1.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `spec.md` (project) — verified strfry on-disk encodings, required LMDB operations, §6 caveats (source of truth)
-- crates.io / docs.rs — `heed` 0.22.1, `rusqlite` 0.40.1, `async-graphql` 7.2.1, `zstd` 0.13.x, `notify` 8.2.0 version/API verification
-- Context7 — `heed` `RoTxn`/`IntegerComparator`, `rusqlite` WAL + `spawn_blocking`, `async-graphql` cursor connections
-- LMDB / SQLite WAL / Tokio `spawn_blocking` official docs — comparator non-persistence, WAL-before-first-use, blocking-pool requirement
+- `spec.md` (project) — verified strfry on-disk encodings, comparator declarations (§3.1, §6.2), required operations; Approach B is spec §2's higher-correctness/higher-coupling option
+- crates.io / docs.rs — `heed` 0.22.1, `async-graphql` 7.2.1, `zstd` 0.13.x version/API verification
+- Context7 — `heed` `RoTxn`/comparator API, `async-graphql` cursor connections
+- LMDB official docs — comparators are never persisted; `mdb_set_compare` semantics
 
 ### Secondary (MEDIUM confidence)
-- Community practice — `notify` → tokio bridge pattern; `deadpool-sqlite` `interact()` usage
-- Ecosystem scan — nostrdb / nostr-sqlite / Nostrify confirm no existing windowed query layer
+- `golpe.yaml` comparator names — exact byte semantics must be confirmed from golpe source
+- strfry `src/DBQuery.h` — reference for live index scan semantics
 
 ---
-*Research completed: 2026-06-10*
+*Research completed: 2026-06-10 (revised for Approach B pivot)*
 *Ready for roadmap: yes*
