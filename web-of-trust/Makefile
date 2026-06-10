@@ -2,6 +2,7 @@ APP_CRAWLER=crawler
 APP_PUBKEYS=pubkeys
 APP_DISCOVER=discover-relays
 APP_HEALTHCHECK=healthcheck
+APP_CLUSTERSCAN=clusterscan
 PKG=web-of-trust
 
 # Version can be set via environment variable or defaults to dev
@@ -26,13 +27,13 @@ LDFLAGS=-X 'web-of-trust/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-crawler build-pubkeys build-discover-relays build-healthcheck run-crawler run-pubkeys run-discover-relays run-healthcheck test fmt vet tidy clean help lint lint-fix
+.PHONY: all build build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan run-crawler run-pubkeys run-discover-relays run-healthcheck run-clusterscan test fmt vet tidy clean help lint lint-fix
 
 ## Default target: runs tidy, format, vet, tests, and builds all applications
 all: tidy fmt vet test build
 
 ## Build all applications
-build: build-crawler build-pubkeys build-discover-relays build-healthcheck
+build: build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan
 
 ## Build crawler application
 build-crawler:
@@ -50,6 +51,10 @@ build-discover-relays:
 build-healthcheck:
 	go build $(BUILD_FLAGS) -o bin/$(APP_HEALTHCHECK)$(BINARY_EXT) ./cmd/$(APP_HEALTHCHECK)
 
+## Build clusterscan application
+build-clusterscan:
+	go build $(BUILD_FLAGS) -o bin/$(APP_CLUSTERSCAN)$(BINARY_EXT) ./cmd/$(APP_CLUSTERSCAN)
+
 ## Run discover-relays application
 run-discover-relays:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_DISCOVER)
@@ -65,6 +70,10 @@ run-pubkeys:
 ## Run healthcheck application
 run-healthcheck:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_HEALTHCHECK)
+
+## Run clusterscan application
+run-clusterscan:
+	go run $(BUILD_FLAGS) ./cmd/$(APP_CLUSTERSCAN)
 
 ## Run tests
 test:
@@ -103,6 +112,7 @@ help:
 	@echo   build-pubkeys   - Build pubkeys application
 	@echo   build-discover-relays - Build discover-relays application
 	@echo   build-healthcheck - Build healthcheck application
+	@echo   build-clusterscan - Build clusterscan application
 	@echo   run-crawler     - Run crawler application
 	@echo   run-pubkeys     - Run pubkeys application
 	@echo   run-discover-relays - Run discover-relays application
