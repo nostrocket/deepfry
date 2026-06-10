@@ -571,16 +571,84 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 		return nil
 	}
 
-	// Validation gate (D-08/D-09), third pubkey-add site: skip+log malformed
-	// pubkeys before UID resolution so a bad pubkey never reaches a
-	// last_attempt nquad. Valid pubkeys still get stamped.
+	// Validation gate with inline recover-or-purge (VALID-03).
+	// For each invalid pubkey, attempt to recover it (uppercase→lowercase) or
+	// purge it (unrecoverable garbage) so it stops re-entering the stale
+	// frontier. Valid pubkeys are collected into the `valid` slice for the
+	// existing last_attempt stamp path.
 	valid := make([]string, 0, len(pubkeys))
 	for _, pk := range pubkeys {
-		if !isValidHexPubkey(pk) {
-			log.Printf("WARN: skipping invalid pubkey %q in mark-attempted", pk)
+		if isValidHexPubkey(pk) {
+			valid = append(valid, pk)
 			continue
 		}
-		valid = append(valid, pk)
+
+		lower := strings.ToLower(pk)
+		if isValidHexPubkey(lower) {
+			// RECOVERABLE: pk is uppercase/mixed-case 64-char hex.
+			// Resolve the garbage node's UID then either update it in place
+			// (if the lowercase form doesn't already exist) or purge it
+			// (if a separate lowercase node already exists).
+			garbageUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{pk})
+			if err != nil {
+				log.Printf("WARN: recover pubkey %q — UID lookup failed: %v", pk, err)
+				continue
+			}
+			garbageUID, found := garbageUIDs[pk]
+			if !found {
+				// No node in Dgraph for this garbage string — nothing to fix.
+				continue
+			}
+
+			// Check whether the corrected lowercase form already exists.
+			lowerUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{lower})
+			if err != nil {
+				log.Printf("WARN: recover pubkey %q — lowercase UID lookup failed: %v", pk, err)
+				continue
+			}
+			if _, lowerExists := lowerUIDs[lower]; lowerExists {
+				// Duplicate: the canonical lowercase node already exists.
+				// Purge the uppercase garbage node.
+				if err := c.DeleteNodes(ctx, []string{garbageUID}); err != nil {
+					log.Printf("WARN: purge duplicate uppercase node %q (uid %s) failed: %v", pk, garbageUID, err)
+				} else {
+					log.Printf("INFO: purged duplicate uppercase pubkey node %q (uid %s)", pk, garbageUID)
+				}
+			} else {
+				// No lowercase duplicate — update the pubkey field in place.
+				// Do NOT stamp last_attempt: the recovered node must re-enter
+				// the fresh frontier to be crawled with the corrected pubkey.
+				txn := c.dg.NewTxn()
+				mu := &api.Mutation{
+					SetNquads: []byte(fmt.Sprintf("<%s> <pubkey> %q .\n", garbageUID, lower)),
+					CommitNow: true,
+				}
+				if _, err := txn.Mutate(ctx, mu); err != nil {
+					txn.Discard(ctx)
+					log.Printf("WARN: recover uppercase pubkey %q (uid %s) to %q failed: %v", pk, garbageUID, lower, err)
+				} else {
+					log.Printf("INFO: recovered uppercase pubkey %q (uid %s) → %q", pk, garbageUID, lower)
+				}
+			}
+		} else {
+			// UNRECOVERABLE: short hex ("f1", "cbdc", "de"), relay-URL blobs,
+			// or other garbage that is not valid hex even when lowercased.
+			garbageUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{pk})
+			if err != nil {
+				log.Printf("WARN: purge unrecoverable pubkey %q — UID lookup failed: %v", pk, err)
+				continue
+			}
+			uid, found := garbageUIDs[pk]
+			if !found {
+				// Not in Dgraph — nothing to delete.
+				continue
+			}
+			if err := c.DeleteNodes(ctx, []string{uid}); err != nil {
+				log.Printf("WARN: purge unrecoverable pubkey %q (uid %s) failed: %v", pk, uid, err)
+			} else {
+				log.Printf("INFO: purged unrecoverable pubkey %q (uid %s)", pk, uid)
+			}
+		}
 	}
 	if len(valid) == 0 {
 		return nil
