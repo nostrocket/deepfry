@@ -23,11 +23,11 @@ and the adversarial seed design rationale for the comparator self-check oracle.
 
 | Field | Value |
 |-------|-------|
-| `data.mdb` sha256 | `PLACEHOLDER — filled in Task 4/5` |
+| `data.mdb` sha256 | `8b871be80f8acaa507741b8640a25a411ee7763b0c4e61bb9527314d1fcb3cd6` |
 | `lock.mdb` | Committed alongside data.mdb; use `EnvFlags::NO_LOCK` in tests (safe for static fixture) |
 | Seed file | `spam/tests/fixture/seed_events.jsonl` |
 | Golden vectors | `spam/tests/fixture/golden_vectors/*.json` (6 files, one per Event__* index) |
-| A5 determinism result | `PLACEHOLDER — filled in Task 4/5` |
+| A5 determinism result | **BYTE-IDENTICAL** — two independent `strfry import` runs on the same JSONL produced the identical sha256 `8b871be80f8acaa507741b8640a25a411ee7763b0c4e61bb9527314d1fcb3cd6`. CI may use byte-exact sha256 comparison. |
 
 ---
 
