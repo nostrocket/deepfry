@@ -2,7 +2,8 @@
 #
 # Vendored from hoytech/strfry golpe.yaml
 # Upstream: https://github.com/hoytech/strfry/blob/master/golpe.yaml
-# Upstream commit: PENDING plan 02 pin (will be filled with pinned strfry commit SHA)
+# Upstream commit: f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135 (strfry 1.1.0, dockurr/strfry:1.1.0)
+# Resolved in plan 01-02 Task 3 via Docker digest: dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5
 #
 # This file documents the index declarations and comparator assignments for strfry's
 # Event__* sub-DBs. The comparator names map to the C++ functions in golpe_comparators.cpp:

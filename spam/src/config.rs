@@ -1,0 +1,132 @@
+/// Configuration loader for lmdb2graphql.
+///
+/// Reads `~/deepfry/lmdb2graphql.yaml` per the DeepFry convention.
+/// NEVER writes to or deletes `~/deepfry/` — tests must use `tempfile::tempdir()`.
+use anyhow::Context;
+use serde::Deserialize;
+use std::path::PathBuf;
+
+/// Phase 1 minimal config.
+///
+/// Grows in later phases to carry GraphQL server settings, etc.
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    /// Path to the directory containing strfry's `data.mdb` (the LMDB env dir).
+    pub strfry_db_path: PathBuf,
+
+    /// LMDB map_size in bytes — must be >= strfry's configured `dbParams.mapsize`.
+    /// Default: 10 TiB (10_995_116_277_760) matching `../config/strfry/strfry.conf`.
+    #[serde(default = "default_map_size")]
+    pub map_size: usize,
+
+    /// Pinned strfry Docker image reference including full sha256 digest.
+    /// Example: `"dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"`
+    pub pinned_strfry_version: String,
+
+    /// Pinned hoytech/strfry git commit SHA corresponding to the Docker image above.
+    /// Example: `"f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"`
+    pub pinned_strfry_commit: String,
+}
+
+/// Default map_size: 10 TiB — matches `../config/strfry/strfry.conf mapsize = 10995116277760`.
+/// LMDB-04: map_size must be >= strfry's configured mapsize.
+fn default_map_size() -> usize {
+    10_995_116_277_760
+}
+
+/// Load config from `~/deepfry/lmdb2graphql.yaml`.
+///
+/// # Errors
+/// Returns an error if the home directory cannot be determined, the config file
+/// cannot be read, or the YAML cannot be deserialized into [`Config`].
+///
+/// # Safety (CLAUDE.md)
+/// This function NEVER writes to `~/deepfry/`. Tests must use a `tempfile::tempdir()`
+/// and call [`load_from`] with the temp path instead.
+pub fn load() -> anyhow::Result<Config> {
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    let path = home.join("deepfry").join("lmdb2graphql.yaml");
+    load_from(&path)
+}
+
+/// Load config from an explicit path.
+///
+/// Separated from [`load`] to allow tests to use a temp directory without
+/// touching `~/deepfry/`.
+pub fn load_from(path: &std::path::Path) -> anyhow::Result<Config> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read config from {}", path.display()))?;
+    let cfg: Config =
+        serde_yaml_ng::from_str(&text).with_context(|| format!("parse YAML {}", path.display()))?;
+    Ok(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify the map_size default is the 10 TiB value from strfry.conf (LMDB-04).
+    #[test]
+    fn test_map_size_default() {
+        assert_eq!(
+            default_map_size(),
+            10_995_116_277_760,
+            "default map_size must match strfry.conf mapsize (10 TiB)"
+        );
+    }
+
+    /// Load a minimal config from a tempdir; assert map_size default and pin fields parse.
+    /// NEVER touches ~/deepfry/ — uses tempfile::tempdir() per CLAUDE.md.
+    #[test]
+    fn test_load_from_tempdir() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let config_path = dir.path().join("lmdb2graphql.yaml");
+
+        let yaml = r#"
+strfry_db_path: /app/strfry-db
+pinned_strfry_version: "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"
+pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+"#;
+        std::fs::write(&config_path, yaml).expect("write test config");
+
+        let cfg = load_from(&config_path).expect("load config");
+
+        // map_size should default to 10 TiB (not specified in YAML above)
+        assert_eq!(
+            cfg.map_size,
+            10_995_116_277_760,
+            "map_size default must be 10 TiB"
+        );
+        assert_eq!(
+            cfg.strfry_db_path,
+            std::path::PathBuf::from("/app/strfry-db")
+        );
+        assert!(
+            cfg.pinned_strfry_version
+                .contains("sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"),
+            "pinned_strfry_version must contain the full digest"
+        );
+        assert_eq!(
+            cfg.pinned_strfry_commit,
+            "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+        );
+    }
+
+    /// Verify explicit map_size overrides the default.
+    #[test]
+    fn test_explicit_map_size() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let config_path = dir.path().join("lmdb2graphql.yaml");
+
+        let yaml = r#"
+strfry_db_path: /custom/db
+map_size: 21990232555520
+pinned_strfry_version: "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"
+pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+"#;
+        std::fs::write(&config_path, yaml).expect("write test config");
+
+        let cfg = load_from(&config_path).expect("load config");
+        assert_eq!(cfg.map_size, 21_990_232_555_520_usize, "explicit map_size must be honored");
+    }
+}

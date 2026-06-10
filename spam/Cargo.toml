@@ -20,13 +20,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-# serde_yaml: YAML config parsing (DeepFry ~/deepfry/ convention)
-# PLAN: serde_yaml_ng = "0.10" (maintained fork of dtolnay's deprecated serde_yaml)
-# DEVIATION: using serde_yaml = "0.9" (locally cached; same deserialization API)
-# [ASSUMED] per RESEARCH Package Legitimacy Audit — gated by plan 02 Task 1 checkpoint
-serde_yaml = "0.9"
+# serde_yaml_ng: YAML config parsing (DeepFry ~/deepfry/ convention)
+# Maintained fork of dtolnay's deprecated serde_yaml — same API, actively maintained
+# [APPROVED] plan 02 Task 1 package legitimacy checkpoint — confirmed canonical crate
+serde_yaml_ng = "0.10"
 # dirs: resolves ~/deepfry/ home directory path
-# [ASSUMED] per RESEARCH Package Legitimacy Audit — gated by plan 02 Task 1 checkpoint
+# [APPROVED] plan 02 Task 1 package legitimacy checkpoint
 dirs = "5.0.1"
 
 [dev-dependencies]
