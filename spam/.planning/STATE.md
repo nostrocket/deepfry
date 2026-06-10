@@ -81,6 +81,7 @@ Recent decisions affecting current work:
 - RESOLVED: heed 0.22.1 upgrade — completed in Plan 01-01 Task 4 continuation
 - Phase 1: Byte-exact golpe comparator semantics require reading strfry/golpe source (not just `golpe.yaml` names) — addressed by vendored cpp with SPIKE A7 inline fix
 - Ongoing: Parent DeepFry stack uses `dockurr/strfry:latest` (unpinned) — shared version-pin contract needed (Plan 01-02)
+- 2026-06-10: Docker installed in dev env via Colima (brew install colima docker; `colima start`; daemon running, context `colima`, multi-arch arm64+amd64). BUT the Colima VM has NO outbound internet egress (all TCP to Docker Hub/ghcr/cloudflare times out) — `docker pull` impossible here. Fixed stale `~/.docker/config.json` credsStore=desktop (backup saved). To resolve 01-02 Task 2/4: either run on a host with internet, OR side-load the image as a tar (`docker save dockurr/strfry:<tag> -o strfry.tar` on a connected machine → drop here → `docker load < strfry.tar`); once the image is local, `docker run`/`strfry import` work offline.
 
 ## Deferred Items
 
