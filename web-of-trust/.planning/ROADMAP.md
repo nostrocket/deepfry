@@ -21,9 +21,12 @@
 **Requirements**: VALID-01, VALID-02, VALID-03
 **Success Criteria** (what must be TRUE):
   1. A p-tag containing an uppercase hex string, a relay URL blob, or a truncated value is rejected at `updateFollowsFromEvent` — the hex regex `^[0-9a-f]{64}$` rejects it, it is logged, and nothing is written to Dgraph for that value.
-  2. After the startup migration or `healthcheck -purge` run, a DQL query for pubkeys not matching `^[0-9a-f]{64}$` returns zero results — the 19 known garbage nodes and any others are gone.
+  2. After the startup migration or `healthcheck -purge` run, a DQL query for pubkeys not matching `^[0-9a-f]{64}$` returns zero results — the 19 known garbage nodes and any others are gone. (Per phase CONTEXT.md, the explicit migration step VALID-02 is dropped; VALID-03's inline recover/purge in `MarkAttempted` removes/corrects garbage nodes the first time they surface from the frontier.)
   3. When `MarkAttempted` is called for a pubkey that fails the hex validator, the node's `last_attempt` is updated via a UID-based mutation — the node no longer re-enters the stale frontier on every batch.
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 05-01-PLAN.md — Validator swap (VALID-01), MarkAttempted recover-or-purge (VALID-03/02), validator unit tests
+- [ ] 05-02-PLAN.md — Integration tests: MarkAttempted recover/purge (D-07) and end-to-end no-garbage write (D-08)
 
 ### Phase 6: Filter Size & Per-Relay Cap Detection
 **Goal**: No relay rejects or drops a connection due to an oversized filter REQ, and relays with small caps are automatically queried at a safe size going forward
@@ -61,7 +64,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 5. Pubkey Validation Hardening | 0/0 | Not started | - |
+| 5. Pubkey Validation Hardening | 0/2 | Planned | - |
 | 6. Filter Size & Per-Relay Cap Detection | 0/0 | Not started | - |
 | 7. Relay Health Management | 0/0 | Not started | - |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
