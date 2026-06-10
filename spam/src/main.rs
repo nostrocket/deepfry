@@ -1,5 +1,3 @@
-mod lmdb;
-
 fn main() {
     // Initialize tracing: JSON output for Docker, pretty for dev
     // (full startup gate wired in plan 03 — config + meta gates + self-check)
