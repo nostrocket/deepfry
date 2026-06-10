@@ -13,7 +13,7 @@ LMDB2GraphQL is built in five dependency-ordered horizontal layers. Phase 1 is a
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact
+- [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (completed 2026-06-10)
 - [ ] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index
 - [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination)
 - [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
@@ -44,7 +44,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Meta version/endianness gate, open all six Event__* indexes with correct comparators, fail-closed self-check, main startup gate (LMDB-01, LMDB-02, LMDB-03, LMDB-06)
+- [x] 01-03-PLAN.md — Meta version/endianness gate, open all six Event__* indexes with correct comparators, fail-closed self-check, main startup gate (LMDB-01, LMDB-02, LMDB-03, LMDB-06)
 
 ### Phase 2: Payload Decoding & Index Scan Primitives
 
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. LMDB Foundation & Comparator Proof | 2/3 | In progress | - |
+| 1. LMDB Foundation & Comparator Proof | 3/3 | Complete   | 2026-06-10 |
 | 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |

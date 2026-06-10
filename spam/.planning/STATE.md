@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Plan 01-02 complete; Plan 01-03 is next"
-last_updated: "2026-06-10T09:45:00.000Z"
-last_activity: "2026-06-10 -- Plan 01-02 complete; strfry pinned, adversarial fixture + 6 golden vectors committed, config loader written"
+status: completed
+stopped_at: Phase 1 complete; Phase 2 (derived SQLite index) is next
+last_updated: "2026-06-10T09:56:26.593Z"
+last_activity: 2026-06-10
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 13
+  completed_plans: 3
+  percent: 20
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 01 (lmdb-foundation-comparator-proof) — EXECUTING
-Plan: 3 of 3
-Status: Plan 01-02 complete — Plan 01-03 (production-gate) is next
-Last activity: 2026-06-10 -- Plan 01-02 complete; strfry 1.1.0 pinned by digest; adversarial fixture committed; 6 golden vectors; config loader
+Phase: 01 (lmdb-foundation-comparator-proof) — COMPLETE
+Plan: 3 of 3 (ALL COMPLETE)
+Status: Phase 1 complete — all 3 plans executed; ready for phase 2
+Last activity: 2026-06-10
 
-Progress: [██░░░░░░░░] 13%
+Progress: [██████████] 100% (Phase 1 complete)
 
 ## Performance Metrics
 
@@ -70,10 +70,11 @@ Recent decisions affecting current work:
 - Plan 01-02 Task 1 follow-on (APPROVED): serde_yaml 0.9 → serde_yaml_ng 0.10 swap authorized; APPLIED in Task 3 (commit 2f8e2e8)
 - Plan 01-02 COMPLETE (2026-06-10): strfry 1.1.0 pinned by digest sha256:545555da...; A5 BYTE-IDENTICAL; fixture sha256:8b871be8...; 6 golden vectors committed; config loader tested
 - Plan 01-02 key finding: kind=3 is replaceable (Nostr NIP-01) — seed uses kind=2 to keep all 11 events in fixture
+- Plan 01-03 (2026-06-10): Meta FlatBuffer vtable decode required (not raw C struct); dbVersion at abs byte 40, endianness at abs byte 32; STRFRY_LITTLE_ENDIAN_MARKER=1 (not 0); golden vectors corrected from actual fixture scan — levId=1..4 at ts=1700000000, levIds 6,8,11 have tags (not 9,10,11); all 6 self-check tests pass; Phase 1 success criteria met (LMDB-01/02/03/05/06)
 
 ### Pending Todos
 
-- Plan 01-03: implement Meta version/endianness gate, open all 6 Event__* indexes with golpe comparators, fail-closed self-check, main startup gate
+- Phase 2: derived SQLite index (latestPerAuthor, fulltext, paginated queries)
 
 ### Blockers/Concerns
 
@@ -81,7 +82,7 @@ Recent decisions affecting current work:
 - RESOLVED: heed 0.22.1 upgrade — completed in Plan 01-01 Task 4 continuation
 - RESOLVED: Parent DeepFry stack Dockerfile.strfry pinned to digest in Plan 01-02 Task 3 (commit 2f8e2e8)
 - RESOLVED: Docker/Colima no-egress issue — orchestrator pre-pulled dockurr/strfry:1.1.0 image; import ran successfully offline
-- Phase 1 spike A3 (Meta struct field offsets): still pending for Plan 01-03 Task 1
+- RESOLVED: Phase 1 spike A3 (Meta struct field offsets) — FlatBuffer vtable walker implemented; dbVersion at abs byte 40, endianness at abs byte 32; confirmed from onAppStartup.cpp
 
 ## Deferred Items
 
@@ -91,7 +92,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-10 — Plan 01-02 complete
-Stopped at: Plan 01-02 complete; Plan 01-03 (production-gate) is next
-Resume: run /gsd-execute-phase 1 to execute Plan 01-03
-Resume file: .planning/phases/01-lmdb-foundation-comparator-proof/01-03-PLAN.md
+Last session: 2026-06-10T09:56:26.590Z
+Stopped at: Phase 1 complete; Phase 2 (derived SQLite index) is next
+Resume: run /gsd-execute-phase 2 to execute Phase 2
+Resume file: None
