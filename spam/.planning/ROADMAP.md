@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: LMDB Foundation & Comparator Proof
-**Goal**: The three golpe comparators are reimplemented in Rust, registered via `mdb_set_compare`, verified byte-exact against a pinned strfry fixture, and the service refuses to open an incompatible environment
+**Goal**: golpe's three custom comparators are linked via C++ FFI and registered through heed's `Comparator` trait (`mdb_set_compare`, per D-03), their scan order is verified byte-exact against a pinned strfry fixture, and the service refuses to open an incompatible environment
 **Depends on**: Nothing (first phase)
 **Requirements**: LMDB-01, LMDB-02, LMDB-03, LMDB-04, LMDB-05, LMDB-06, LMDB-10
 **Success Criteria** (what must be TRUE):
@@ -30,7 +30,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Comparator self-check passes against the pinned fixture DB: scan order over each `Event__*` index matches strfry's known-correct order
   4. If the self-check fails (scan order mismatch), the service refuses to start (fail-closed, not silently wrong)
   5. The pinned strfry version/digest is recorded in config/docs as a shared contract with the parent DeepFry stack
-**Plans**: TBD
+**Plans**: 3 plans (3 waves)
+- [ ] 01-01-PLAN.md — Crate scaffold, vendor golpe comparators (exception-free), build.rs FFI compile, and the heed comparator-hook go/no-go smoke proof (LMDB-05, LMDB-01)
+- [ ] 01-02-PLAN.md — Pin strfry digest + parent Dockerfile, generate adversarial fixture, hand-compute golden vectors, minimal config (LMDB-10, LMDB-04)
+- [ ] 01-03-PLAN.md — Meta version/endianness gate, open all six Event__* indexes with correct comparators, fail-closed self-check, main startup gate (LMDB-01, LMDB-02, LMDB-03, LMDB-06)
 
 ### Phase 2: Payload Decoding & Index Scan Primitives
 **Goal**: Full event JSON can be hydrated from both `0x00` and `0x01` EventPayload formats, and bounded cursor scans over each `Event__*` index are tested in isolation
@@ -84,7 +87,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. LMDB Foundation & Comparator Proof | 0/TBD | Not started | - |
+| 1. LMDB Foundation & Comparator Proof | 0/3 | Not started | - |
 | 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
