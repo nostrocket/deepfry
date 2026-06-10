@@ -66,10 +66,14 @@ Recent decisions affecting current work:
 - Plan 01-01 Task 3: Go/no-go gate GREEN — heed registers golpe foreign comparator (proven by adversarial smoke test; golpe order ≠ memcmp order)
 - Plan 01-01 Task 4 (GO/PROCEED): Approach B decision confirmed; heed 0.22.1 upgrade completed; comparator proof re-verified on pinned version; plans 01-02 and 01-03 unblocked
 - Plan 01-01: serde_yaml_ng 0.10 deferred; serde_yaml 0.9 used; gated by plan 01-02 Task 1 package legitimacy checkpoint
+- Plan 01-02 Task 1 (APPROVED 2026-06-10): crate-legitimacy human-verify gate — all 10 deps confirmed canonical; Cargo.lock resolves 100% to crates.io registry with no git/path/patch overrides
+- Plan 01-02 Task 1 follow-on (APPROVED): serde_yaml 0.9 → serde_yaml_ng 0.10 swap authorized; apply in Task 3
 
 ### Pending Todos
 
-- Plan 01-02: serde_yaml_ng 0.10 swap (currently serde_yaml 0.9) — deferred from plan 01-01; handle in plan 01-02 package legitimacy gate
+- Plan 01-02 Task 3: apply serde_yaml 0.9 → serde_yaml_ng 0.10 swap (user-approved at Task 1 gate)
+- **Plan 01-02 Task 2 (BLOCKED — human-action, Docker required):** resolve `dockurr/strfry:1.1.0` → full sha256 digest + strfry version string + hoytech/strfry git commit + confirm dbVersion==3. Docker unavailable in dev env; must run on Docker-capable host/CI and report outputs back.
+- **Plan 01-02 Task 4 (BLOCKED — human-action, Docker required):** author adversarial seed_events.jsonl + generate fixture `data.mdb` via pinned strfry `import`; A5 determinism check (import twice, compare sha256); commit data.mdb + lock.mdb.
 
 ### Blockers/Concerns
 
@@ -86,6 +90,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-10T07:00:00.000Z
-Stopped at: Plan 01-01 complete — ready to begin Plan 01-02
+Last session: 2026-06-10 — Plan 01-01 complete; Plan 01-02 started
+Stopped at: Plan 01-02 Task 2 — BLOCKED on human-action Docker gate (resolve strfry digest). Task 1 crate-legitimacy gate APPROVED; serde_yaml_ng swap APPROVED.
+Resume: re-run /gsd-execute-phase 1 after running the Docker commands (Task 2 + Task 4) on a Docker-capable host and pasting the outputs (digest, version, git commit, dbVersion; then committed data.mdb sha256 + A5 result).
 Resume file: .planning/phases/01-lmdb-foundation-comparator-proof/01-02-PLAN.md
