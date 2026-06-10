@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Plan 01-01 Task 4 checkpoint:decision — go/no-go on Approach B"
-last_updated: "2026-06-10T06:00:00.000Z"
-last_activity: "2026-06-10 -- Plan 01-01 Tasks 1-3 complete; awaiting go/no-go decision at Task 4 checkpoint"
+stopped_at: "Plan 01-01 complete; Plan 01-02 is next"
+last_updated: "2026-06-10T07:00:00.000Z"
+last_activity: "2026-06-10 -- Plan 01-01 complete; heed 0.22.1 pinned; comparator proof GREEN; Approach B PROCEED"
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 7
 ---
 
 # Project State
@@ -26,30 +26,30 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 ## Current Position
 
 Phase: 01 (lmdb-foundation-comparator-proof) — EXECUTING
-Plan: 1 of 3
-Status: Paused at Task 4 checkpoint:decision — awaiting go/no-go on Approach B
-Last activity: 2026-06-10 -- Plan 01-01 Tasks 1-3 complete; comparator smoke test PASSED
+Plan: 2 of 3
+Status: Plan 01-01 complete — Plan 01-02 (fixture-pin) is next
+Last activity: 2026-06-10 -- Plan 01-01 complete; heed 0.22.1 pinned; Approach-B go/no-go gate GREEN
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 7%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: N/A
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: ~45 min
+- Total execution time: ~0.75 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01-lmdb-foundation-comparator-proof | 1/3 | ~45 min | ~45 min |
 
 **Recent Trend:**
 
-- Last 5 plans: N/A
-- Trend: N/A
+- Last 5 plans: Plan 01-01 (~45 min, 12 files, 5 commits)
+- Trend: N/A (first completed plan)
 
 *Updated after each plan completion*
 
@@ -64,18 +64,19 @@ Recent decisions affecting current work:
 - Init: Rust stack — `heed` 0.22.1 (custom comparator crux), `async-graphql` 7.2.1, `axum` 0.8.x, `zstd` 0.13.x
 - Init: Phase 1 is a de-risking spike — if `heed` cannot register custom comparators, approach must be revisited before any further build
 - Plan 01-01 Task 3: Go/no-go gate GREEN — heed registers golpe foreign comparator (proven by adversarial smoke test; golpe order ≠ memcmp order)
-- Plan 01-01 DEVIATION: heed 0.20.5 used instead of 0.22.1 (crates.io unavailable during execution); same Comparator API; upgrade needed when network restored
+- Plan 01-01 Task 4 (GO/PROCEED): Approach B decision confirmed; heed 0.22.1 upgrade completed; comparator proof re-verified on pinned version; plans 01-02 and 01-03 unblocked
+- Plan 01-01: serde_yaml_ng 0.10 deferred; serde_yaml 0.9 used; gated by plan 01-02 Task 1 package legitimacy checkpoint
 
 ### Pending Todos
 
-None yet.
+- Plan 01-02: serde_yaml_ng 0.10 swap (currently serde_yaml 0.9) — deferred from plan 01-01; handle in plan 01-02 package legitimacy gate
 
 ### Blockers/Concerns
 
 - RESOLVED: `heed` custom-comparator API confirmed — smoke test PASSED (Plan 01-01 Task 3)
+- RESOLVED: heed 0.22.1 upgrade — completed in Plan 01-01 Task 4 continuation
 - Phase 1: Byte-exact golpe comparator semantics require reading strfry/golpe source (not just `golpe.yaml` names) — addressed by vendored cpp with SPIKE A7 inline fix
 - Ongoing: Parent DeepFry stack uses `dockurr/strfry:latest` (unpinned) — shared version-pin contract needed (Plan 01-02)
-- Plan 01-01: heed pinned to 0.20.5 instead of 0.22.1 — upgrade when network restored
 
 ## Deferred Items
 
@@ -85,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-10T06:00:00.000Z
-Stopped at: Plan 01-01 Task 4 checkpoint:decision — go/no-go on Approach B (awaiting user selection)
-Resume file: .planning/phases/01-lmdb-foundation-comparator-proof/01-01-PLAN.md (Task 4)
+Last session: 2026-06-10T07:00:00.000Z
+Stopped at: Plan 01-01 complete — ready to begin Plan 01-02
+Resume file: .planning/phases/01-lmdb-foundation-comparator-proof/01-02-PLAN.md

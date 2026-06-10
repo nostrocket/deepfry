@@ -10,11 +10,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### LMDB Access & Comparators
 
-- [ ] **LMDB-01**: LMDB2GraphQL opens strfry's LMDB environment read-only (`MDB_RDONLY`), never opening a write transaction
+- [x] **LMDB-01**: LMDB2GraphQL opens strfry's LMDB environment read-only (`MDB_RDONLY`), never opening a write transaction
 - [ ] **LMDB-02**: LMDB2GraphQL reads `Meta` and refuses to run (exits loudly) if `dbVersion != 3`
 - [ ] **LMDB-03**: LMDB2GraphQL reads `Meta.endianness`, compares to host, and refuses to run on mismatch
 - [ ] **LMDB-04**: LMDB2GraphQL sets LMDB `map_size` ≥ strfry's configured size so the environment opens successfully
-- [ ] **LMDB-05**: LMDB2GraphQL reimplements strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) and registers them via `mdb_set_compare` on each `Event__*` sub-DB it scans
+- [x] **LMDB-05**: LMDB2GraphQL reimplements strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) and registers them via `mdb_set_compare` on each `Event__*` sub-DB it scans
 - [ ] **LMDB-06**: LMDB2GraphQL runs a comparator self-check against a pinned fixture DB at startup and **fails closed** if its scan order disagrees with strfry's known-correct order
 - [ ] **LMDB-07**: LMDB2GraphQL decodes `EventPayload` `0x00` (raw JSON) values to full event JSON
 - [ ] **LMDB-08**: LMDB2GraphQL decodes `EventPayload` `0x01` (zstd-dictionary-compressed) values using `CompressionDictionary[dictId]`
@@ -82,11 +82,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LMDB-01 | Phase 1 | Pending |
+| LMDB-01 | Phase 1 | Complete (Plan 01-01) |
 | LMDB-02 | Phase 1 | Pending |
 | LMDB-03 | Phase 1 | Pending |
 | LMDB-04 | Phase 1 | Pending |
-| LMDB-05 | Phase 1 | Pending |
+| LMDB-05 | Phase 1 | Complete (Plan 01-01) |
 | LMDB-06 | Phase 1 | Pending |
 | LMDB-10 | Phase 1 | Pending |
 | LMDB-07 | Phase 2 | Pending |
