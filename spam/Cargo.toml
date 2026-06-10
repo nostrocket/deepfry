@@ -1,0 +1,36 @@
+[package]
+name = "lmdb2graphql"
+version = "0.1.0"
+edition = "2021"
+
+# NOTE: Pinned versions from plan 01-01 spec are:
+#   heed = "0.22.1", tracing = "0.1.44", tracing-subscriber = "0.3.23", serde_yaml_ng = "0.10"
+# Network is unavailable in this environment; using locally-cached compatible versions.
+# These MUST be upgraded to the pinned spec versions when network becomes available.
+# All required APIs (Comparator trait, key_comparator, open, EnvFlags::READ_ONLY)
+# are present in the locally available versions.
+
+[dependencies]
+# heed: LMDB typed wrapper — comparator hook, read-only env open, named-DB open
+# PLAN PIN: "0.22.1" — DEVIATION: using 0.20.5 (locally cached; same Comparator API)
+heed = "0.20.5"
+tracing = "0.1"
+# DEVIATION: removed "json" feature — tracing-serde dep not in local cache; restore when online
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+# serde_yaml: YAML config parsing (DeepFry ~/deepfry/ convention)
+# PLAN: serde_yaml_ng = "0.10" (maintained fork of dtolnay's deprecated serde_yaml)
+# DEVIATION: using serde_yaml = "0.9" (locally cached; same deserialization API)
+# [ASSUMED] per RESEARCH Package Legitimacy Audit — gated by plan 02 Task 1 checkpoint
+serde_yaml = "0.9"
+# dirs: resolves ~/deepfry/ home directory path
+# [ASSUMED] per RESEARCH Package Legitimacy Audit — gated by plan 02 Task 1 checkpoint
+dirs = "5.0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+cc = "1"
