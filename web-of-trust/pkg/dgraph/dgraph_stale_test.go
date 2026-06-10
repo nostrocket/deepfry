@@ -24,7 +24,7 @@ func TestGetStalePubkeysIncludesFrontier(t *testing.T) {
 	}
 
 	// A crawled node (has last_attempt + kind3CreatedAt) and a pure stub (neither).
-	stub := fmt.Sprintf("%064x", time.Now().UnixNano())   // unique fake pubkey
+	stub := fmt.Sprintf("%064x", time.Now().UnixNano()) // unique fake pubkey
 	crawled := fmt.Sprintf("%064x", time.Now().UnixNano()+1)
 	now := time.Now().Unix()
 	mustMutate(t, c, fmt.Sprintf(`_:s <pubkey> %q .
