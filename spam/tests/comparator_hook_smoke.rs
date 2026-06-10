@@ -51,7 +51,7 @@ fn hex_suffix(key: &[u8]) -> String {
 
 /// PRIMARY KILL-SWITCH TEST: StringUint64 comparator hook viability
 ///
-/// Proves heed 0.22.x (running as 0.20.5) registers golpe's foreign comparator on a
+/// Proves heed 0.22.1 registers golpe's foreign comparator on a
 /// sub-DB opened read-only, and LMDB uses it for range-scan ordering.
 ///
 /// Adversarial property:
@@ -217,7 +217,7 @@ fn test_string_uint64_comparator_hook() {
     println!("PASS: StringUint64Cmp hook proven — Approach-B go/no-go gate GREEN");
     println!("  golpe order:  [val=1, val=256] (numeric ascending)");
     println!("  memcmp order: [val=256, val=1] (byte-order ascending — DIFFERENT)");
-    println!("  heed 0.20.5 registers golpe foreign comparator via mdb_set_compare");
+    println!("  heed 0.22.1 registers golpe foreign comparator via mdb_set_compare");
 }
 
 /// SECONDARY SMOKE TEST: Uint64Uint64 comparator
