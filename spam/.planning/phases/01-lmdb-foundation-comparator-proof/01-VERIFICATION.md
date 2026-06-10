@@ -1,17 +1,43 @@
 ---
 phase: 01-lmdb-foundation-comparator-proof
 verified: 2026-06-10T18:30:00Z
-status: passed
-score: 5/5
+status: gaps_found
+score: 3/5
 overrides_applied: 0
+gaps_source: 01-REVIEW.md (CR-01)
 ---
 
 # Phase 01: LMDB Foundation and Comparator Proof — Verification Report
 
 **Phase Goal:** golpe's three custom comparators are linked via C++ FFI and registered through heed's `Comparator` trait (mdb_set_compare, per D-03), their scan order is verified byte-exact against a pinned strfry fixture, and the service refuses to open an incompatible environment.
 **Verified:** 2026-06-10T18:30:00Z
-**Status:** passed
+**Status:** gaps_found (downgraded from passed after code review — see Gaps)
 **Re-verification:** No — initial verification
+
+---
+
+## Gaps (post-review)
+
+The initial goal-backward pass scored 5/5, but the subsequent code review (01-REVIEW.md)
+surfaced a critical defect that invalidates success criteria #3 and #4:
+
+- **CR-01 — comparator self-check is effectively vacuous.** `run_comparator_self_check`
+  collects levIds via a forward `db.iter()`. A forward LMDB B-tree walk returns entries in
+  physically-stored order and never invokes the registered comparator (which only runs for
+  `MDB_SET_RANGE`/positioning and at write time). Because strfry already built the fixture
+  tree with its real comparator, the scan yields the golden order even if our reimplemented
+  comparator is wrong or unregistered. Criterion #3 ("self-check passes against the pinned
+  fixture: scan order matches strfry's known-correct order") therefore does not validate
+  comparator correctness, and criterion #4 (fail-closed on mismatch) cannot trip for a
+  comparator defect. **Remediation:** drive comparator-dependent `range`/`MDB_SET_RANGE`
+  seeks on the adversarial key pairs so the comparator is actually exercised.
+  Note: the 01-01 smoke test (range-seek vs memcmp control) DOES exercise the comparator on
+  representative cases, so Approach B remains proven viable; the gap is specifically in the
+  startup self-check's coverage.
+
+Revised score: 3/5 (criteria #1, #2, #5 fully met; #3, #4 require the CR-01 remediation).
+CR-02 (FFI MDB_val positional init) was already fixed inline (commit 5cfd867).
+Routed to gap closure: `/gsd-plan-phase 1 --gaps`.
 
 ---
 

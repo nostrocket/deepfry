@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 1 complete; Phase 2 (derived SQLite index) is next
-last_updated: "2026-06-10T09:56:26.593Z"
-last_activity: 2026-06-10
+status: executing
+stopped_at: "Phase 1 plans complete; gap closure pending (CR-01) before phase verified"
+last_updated: "2026-06-10T10:30:00.000Z"
+last_activity: "2026-06-10 -- Phase 1 executed (3 plans); code review opened critical CR-01; CR-02 fixed inline; routed to gap closure"
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 0
   total_plans: 3
   completed_plans: 3
-  percent: 20
+  percent: 18
 ---
 
 # Project State
@@ -74,10 +74,14 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Phase 2: derived SQLite index (latestPerAuthor, fulltext, paginated queries)
+- **Phase 1 GAP CLOSURE (CR-01, critical):** self-check uses forward `db.iter()` which never invokes the registered comparator (forward B-tree walk returns physical/stored order). It would pass even with a wrong/unregistered comparator → does NOT validate comparator correctness (criteria #3/#4 unmet). Remediation: drive comparator-dependent `range`/`MDB_SET_RANGE` seeks on the adversarial key pairs. Route: `/gsd-plan-phase 1 --gaps`.
+- Environment (non-blocking, fix before CI): `rust-toolchain.toml` pins `stable-x86_64-apple-darwin` on arm64; stale system `rustdoc 1.71.1` + `/usr/local/bin/clippy-driver` shadow the rustup 1.89 toolchain → bare `cargo test`/`cargo clippy` fail on the doctest/build-script step. Workaround `cargo test --all-targets`. Real fix: correct the toolchain pin / PATH.
+- Code review WR-02/WR-04/WR-05/WR-06 (warnings, see 01-REVIEW.md) — consider folding into the gap-closure plan.
 
 ### Blockers/Concerns
 
+- OPEN (gap closure): CR-01 vacuous comparator self-check — see Pending Todos. Phase 1 plans are complete but the phase GOAL is not fully met until CR-01 is remediated and re-verified.
+- RESOLVED: CR-02 FFI MDB_val positional init — fixed via named-member init + build.rs locate-or-warn (commit 5cfd867)
 - RESOLVED: `heed` custom-comparator API confirmed — smoke test PASSED (Plan 01-01 Task 3)
 - RESOLVED: heed 0.22.1 upgrade — completed in Plan 01-01 Task 4 continuation
 - RESOLVED: Parent DeepFry stack Dockerfile.strfry pinned to digest in Plan 01-02 Task 3 (commit 2f8e2e8)
@@ -92,7 +96,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-10T09:56:26.590Z
-Stopped at: Phase 1 complete; Phase 2 (derived SQLite index) is next
-Resume: run /gsd-execute-phase 2 to execute Phase 2
+Last session: 2026-06-10 — Phase 1 plans complete; code review opened CR-01 (critical)
+Stopped at: Phase 1 plans 01-01/01-02/01-03 complete and committed; phase verification downgraded to gaps_found (CR-01); CR-02 fixed inline
+Resume: run `/gsd-plan-phase 1 --gaps` to author the CR-01 gap-closure plan, then `/gsd-execute-phase 1 --gaps-only`
 Resume file: None
