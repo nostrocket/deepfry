@@ -528,15 +528,10 @@ func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event
 		log.Printf("WARN: Large follow list detected (%d follows) for pubkey %s - this may cause timeouts", uniqueFollowsCount, event.PubKey)
 	}
 
-	// For very large follow lists, we'll use chunked processing to avoid timeouts
+	// Single write path regardless of follow-list size: AddFollowers batches
+	// internally to stay under the gRPC cap (see pkg/dgraph).
 	var err error
-	if uniqueFollowsCount > 10000 {
-		// Process large follow lists in chunks
-		err = c.processFollowsInChunks(ctx, event.PubKey, int64(event.CreatedAt), followsMap)
-	} else {
-		// For smaller follow lists, process all follows in one batch operation
-		err = c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap, c.debug)
-	}
+	err = c.dgClient.AddFollowers(ctx, event.PubKey, int64(event.CreatedAt), followsMap, c.debug)
 
 	if err != nil {
 		return fmt.Errorf("failed to add follows: %w", err)
