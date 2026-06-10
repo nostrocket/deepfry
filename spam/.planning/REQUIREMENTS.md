@@ -82,13 +82,37 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmapper) | — | Pending |
+| LMDB-01 | Phase 1 | Pending |
+| LMDB-02 | Phase 1 | Pending |
+| LMDB-03 | Phase 1 | Pending |
+| LMDB-04 | Phase 1 | Pending |
+| LMDB-05 | Phase 1 | Pending |
+| LMDB-06 | Phase 1 | Pending |
+| LMDB-10 | Phase 1 | Pending |
+| LMDB-07 | Phase 2 | Pending |
+| LMDB-08 | Phase 2 | Pending |
+| LMDB-09 | Phase 2 | Pending |
+| QRY-01 | Phase 3 | Pending |
+| QRY-02 | Phase 3 | Pending |
+| QRY-03 | Phase 3 | Pending |
+| QRY-04 | Phase 3 | Pending |
+| QRY-05 | Phase 3 | Pending |
+| API-01 | Phase 4 | Pending |
+| API-02 | Phase 4 | Pending |
+| API-03 | Phase 4 | Pending |
+| API-04 | Phase 4 | Pending |
+| API-05 | Phase 4 | Pending |
+| API-06 | Phase 4 | Pending |
+| OPS-01 | Phase 5 | Pending |
+| OPS-02 | Phase 5 | Pending |
+| OPS-03 | Phase 5 | Pending |
+| OPS-04 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 25 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 25 ⚠️
+- Mapped to phases: 25
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-10*
-*Last updated: 2026-06-10 after pivot to Approach B*
+*Last updated: 2026-06-10 after roadmap creation*
