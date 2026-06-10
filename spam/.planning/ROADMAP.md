@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Crate scaffold, vendor golpe comparators (exception-free), build.rs FFI compile, and the heed comparator-hook go/no-go smoke proof (LMDB-05, LMDB-01)
+- [x] 01-01-PLAN.md — Crate scaffold, vendor golpe comparators (exception-free), build.rs FFI compile, and the heed comparator-hook go/no-go smoke proof (LMDB-05, LMDB-01) — COMPLETE 2026-06-10
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. LMDB Foundation & Comparator Proof | 0/3 | Not started | - |
+| 1. LMDB Foundation & Comparator Proof | 1/3 | In progress | - |
 | 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
