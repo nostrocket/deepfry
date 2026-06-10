@@ -11,11 +11,11 @@ Requirements for initial release. Each maps to roadmap phases.
 ### LMDB Access & Comparators
 
 - [x] **LMDB-01**: LMDB2GraphQL opens strfry's LMDB environment read-only (`MDB_RDONLY`), never opening a write transaction
-- [ ] **LMDB-02**: LMDB2GraphQL reads `Meta` and refuses to run (exits loudly) if `dbVersion != 3`
-- [ ] **LMDB-03**: LMDB2GraphQL reads `Meta.endianness`, compares to host, and refuses to run on mismatch
+- [x] **LMDB-02**: LMDB2GraphQL reads `Meta` and refuses to run (exits loudly) if `dbVersion != 3`
+- [x] **LMDB-03**: LMDB2GraphQL reads `Meta.endianness`, compares to host, and refuses to run on mismatch
 - [x] **LMDB-04**: LMDB2GraphQL sets LMDB `map_size` ≥ strfry's configured size so the environment opens successfully
 - [x] **LMDB-05**: LMDB2GraphQL reimplements strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) and registers them via `mdb_set_compare` on each `Event__*` sub-DB it scans
-- [ ] **LMDB-06**: LMDB2GraphQL runs a comparator self-check against a pinned fixture DB at startup and **fails closed** if its scan order disagrees with strfry's known-correct order
+- [x] **LMDB-06**: LMDB2GraphQL runs a comparator self-check against a pinned fixture DB at startup and **fails closed** if its scan order disagrees with strfry's known-correct order
 - [ ] **LMDB-07**: LMDB2GraphQL decodes `EventPayload` `0x00` (raw JSON) values to full event JSON
 - [ ] **LMDB-08**: LMDB2GraphQL decodes `EventPayload` `0x01` (zstd-dictionary-compressed) values using `CompressionDictionary[dictId]`
 - [ ] **LMDB-09**: LMDB2GraphQL keeps read transactions short (per-query, bounded by limit) so strfry can reclaim pages
@@ -83,11 +83,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | LMDB-01 | Phase 1 | Complete (Plan 01-01) |
-| LMDB-02 | Phase 1 | Pending |
-| LMDB-03 | Phase 1 | Pending |
+| LMDB-02 | Phase 1 | Complete |
+| LMDB-03 | Phase 1 | Complete |
 | LMDB-04 | Phase 1 | Complete (Plan 01-02) |
 | LMDB-05 | Phase 1 | Complete (Plan 01-01) |
-| LMDB-06 | Phase 1 | Pending |
+| LMDB-06 | Phase 1 | Complete |
 | LMDB-10 | Phase 1 | Complete (Plan 01-02) |
 | LMDB-07 | Phase 2 | Pending |
 | LMDB-08 | Phase 2 | Pending |
@@ -109,6 +109,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-04 | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 25 total
 - Mapped to phases: 25
 - Unmapped: 0
