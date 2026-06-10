@@ -8,50 +8,62 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current Milestone: v1.1 Write Integrity & Hardening
+## Current Milestone: v1.2 Crawler Reliability & Efficiency
 
-**Goal:** Eliminate silent data loss in the crawler's Dgraph write path and harden it — so large follow-lists persist completely, the chunk loop doesn't leak resources, the remove path can't be injected, and tests would catch a regression.
+**Goal:** Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management that ejects bad relays without manual intervention.
 
 **Target fixes:**
-- Chunked follow-lists silently drop data: `processFollowsInChunks` reuses one `kind3CreatedAt` across chunks, so `AddFollowers`' version guard (`pkg/dgraph/dgraph.go:165`) skips every chunk after the first. Pubkeys with >10k follows persist only the first 200 follows — directly undercutting the "expand the web of trust" core value.
-- `defer cancel()` accumulates inside the chunk `for` loop (`pkg/crawler/chunks.go:39-40`) instead of freeing per-iteration.
-- `RemoveFollower` builds DQL via raw string concatenation of unvalidated input (`pkg/dgraph/dgraph.go:344-355`), unlike the `$`-Vars / `%q` paths used elsewhere. Currently dead code (no callers) — latent, fixed for hygiene/defense-in-depth.
-- Thin test coverage: a single integration-gated test exists and nothing would have caught the chunk bug. Add unit tests (no live Dgraph) for the chunk/version-guard logic. (`make test-integration` already exists in the Makefile.)
+- **VALID**: `updateFollowsFromEvent` uses `nostr.GetPublicKey` as a validator (semantically wrong — it's a private-key→public-key derivation); 19 garbage pubkeys already in DB re-enter every batch permanently. Fix validator to hex regex; purge bad nodes; stamp invalid pubkeys in `MarkAttempted` via UID to age them out.
+- **FILTER**: `batchSize` of 500 causes 40% of relays to reject or crash on every batch. Reduce to 100; parse NOTICE "filter item too large" to track per-relay caps; detect connection-drop-on-REQ pattern.
+- **PERF**: `GetStalePubkeys` queries stubs uniformly, yielding 0.76% event hit rate (99% wasted cycles). Reorder frontier by `count(~follows) DESC`; exponentially back off long-miss stubs after N failed attempts.
+- **RELAY-HEALTH**: Failure counter resets to 0 on reconnect, so flapping relays never graduate to "removed". Persist/decay failure count across reconnects; classify failure reasons; auto-eject relays exceeding configurable thresholds per failure class.
+- **TIMEOUT**: 44% of relays exceed the 30s EOSE timeout. Reduce to 15s; add EOSE-quorum early exit (cancel at ≥70% EOSE/errored).
+- **METRIC**: `staleRemaining` is always 0 due to off-by-one in metric formula.
 
 ## Requirements
 
 ### Validated
 
-<!-- Inferred from existing code (codebase map 9be572e). These ship today. -->
-
 - ✓ Subscribes to kind-3 events from many configured relays and writes a pubkey follow-graph to Dgraph — existing (`cmd/crawler`, `pkg/crawler`)
 - ✓ Upsert-based pubkey nodes with `@unique @index(exact)`, follow-edge mutations, schema management — existing (`pkg/dgraph/dgraph.go`)
-- ✓ Selects stale pubkeys to (re)crawl via `GetStalePubkeys` — existing (currently defective, see Active)
+- ✓ Selects stale pubkeys to (re)crawl via `GetStalePubkeys` — existing (`pkg/dgraph`)
 - ✓ Cluster/trust analysis and weak-bridge detection — existing (`pkg/dgraph/clusterscan.go`, `cmd/clusterscan`)
 - ✓ Supporting CLIs: relay discovery, pubkey export, healthcheck — existing (`cmd/discover-relays`, `cmd/pubkeys`, `cmd/healthcheck`)
-- ✓ **Crawler reaches the uncrawled frontier** — stub pubkeys selected via `GetStalePubkeys` frontier-first; coverage grows past seed neighbourhood — shipped v1.0 (Phase 01-02)
+- ✓ **Crawler reaches the uncrawled frontier** — stub pubkeys selected frontier-first; coverage grows past seed neighbourhood — shipped v1.0 (Phase 01-02)
 - ✓ **`last_attempt` predicate + attempt tracking** — never-attempted nodes selected first; every queried pubkey stamped via `MarkAttempted`; one-time backfill applied — shipped v1.0 (Phase 01-02)
+- ✓ **Chunked writes persist all follows** — `>10k`-follow pubkeys fully written; per-chunk `kind3CreatedAt` version guard fixed; `defer cancel()` leak eliminated — shipped v1.1 (Phase 03)
+- ✓ **Regression coverage** — unit + integration tests cover chunk/version-guard logic — shipped v1.1 (Phase 03)
 
 ### Active
 
-<!-- Milestone v1.1: write-path integrity + hardening. -->
+<!-- Milestone v1.2: crawler reliability & efficiency. -->
 
-- [ ] **Chunked writes persist all follows**: a `>10k`-follow pubkey's full follow-list is written to Dgraph, not just the first 200-item chunk — the per-chunk `kind3CreatedAt` version guard no longer discards chunks 2…N.
-- [ ] **Chunk loop frees resources per-iteration**: the `defer cancel()` in `processFollowsInChunks` no longer accumulates contexts/timers until function return.
-- [ ] **`RemoveFollower` is injection-safe**: the remove path uses `$`-Vars / `%q` (and/or hex-pubkey validation) instead of raw string concatenation, consistent with the rest of `pkg/dgraph`.
-- [ ] **Regression coverage exists**: unit tests (no live Dgraph) cover the chunk/version-guard logic and fail against the pre-fix behaviour.
+- [ ] **VALID-01**: `updateFollowsFromEvent` validates pubkeys against `^[0-9a-f]{64}$` regex instead of calling `nostr.GetPublicKey` (wrong function — private-key derivation, not validation).
+- [ ] **VALID-02**: Existing garbage pubkeys (uppercase hex, relay URL blobs, truncated shorts) are purged from Dgraph on crawler startup or via `healthcheck -purge`.
+- [ ] **VALID-03**: `MarkAttempted` stamps invalid pubkeys via UID lookup so they age out of the stale frontier instead of re-entering every batch forever.
+- [ ] **FILTER-01**: `batchSize` reduced from 500 to 100 authors per relay filter REQ.
+- [ ] **FILTER-02**: Crawler parses NOTICE messages for "filter item too large" and tracks a per-relay filter cap; relays that drop the connection on REQ are also detected.
+- [ ] **PERF-01**: `GetStalePubkeys` orders the stale frontier by `count(~follows) DESC` so high-follower stubs (most likely to have kind-3 events) are queried first.
+- [ ] **PERF-02**: Pubkeys that return no event after N consecutive attempts have their `last_attempt` advanced exponentially so they are deprioritised without being permanently abandoned.
+- [ ] **RELAY-01**: Relay failure counter is persisted and decayed across reconnects instead of reset to 0, so relays that repeatedly connect-and-drop eventually exceed `maxConsecutiveFailures`.
+- [ ] **RELAY-02**: Failure reasons are classified (transport error, filter rejection, subscription flap); auto-ejection threshold and policy are configurable per failure class; ejected relays are written to config.
+- [ ] **TIMEOUT-01**: Per-batch relay query timeout reduced from 30s to 15s.
+- [ ] **TIMEOUT-02**: Batch relay context is cancelled once ≥70% of alive relays have sent EOSE or errored (EOSE-quorum early exit).
+- [ ] **METRIC-01**: `staleRemaining` in the crawler's progress log reflects actual remaining stale count in Dgraph, not 0.
 
 ### Out of Scope
 
-- Open-socket / relay-connection-scaling issues — separate concern in CONCERNS.md; deferred to a later milestone to keep this fix isolated.
-- Whitelist-plugin problems, quarantine false-positives, caching — out of this module's fix; deferred to dedicated milestones.
+- Manual relay removal by name — automatic ejection (RELAY-01/02) replaces this.
+- `RemoveFollower` injection hardening (SEC-01/02) — latent dead code; documented as a future idea.
+- Whitelist-plugin problems, quarantine false-positives, caching — out of this module; deferred to dedicated milestones.
 - Any change to StrFry itself — protocol rule: StrFry stays unmodified.
 
 ## Context
 
-- Brownfield module; codebase mapped to `.planning/codebase/` (commit `9be572e`). `CONCERNS.md` already documents the 8% crawl bug as the #1 issue.
-- Root-cause analysis and the full fix are specified in `8pc_crawled.md` at the module root: exact code for the schema change, the `GetStalePubkeys` rewrite (`collectStale` helper), `MarkAttempted`, the crawler-loop wiring, a DQL backfill upsert, and an integration regression test.
-- `GetStalePubkeys`'s only caller is `cmd/crawler/main.go:109` (verified); `ResolvePubkeysToUIDs` already exists in `pkg/dgraph/clusterscan.go:45`.
+- Brownfield module; codebase mapped to `.planning/codebase/` (commit `9be572e`).
+- v1.1 shipped Phase 3 (write-path correctness + regression coverage). Phase 4 (RemoveFollower injection hardening, SEC-01/02) was deferred — documented as a future idea, not part of any active milestone.
+- v1.2 is motivated by a 40-batch production run (20,000 pubkeys queried): 172 relays, 38s avg batch time, 789 pubkeys/min, 0.76% event hit rate, 43 new nodes added. Full analysis in `.planning/research/` or conversation history.
+- Key root causes: `nostr.GetPublicKey` misused as pubkey validator; 500-author filter exceeds most relay limits; stale frontier ordered by age not by graph significance (follower count).
 - Tech: Go 1.24.1+, `go-nostr`, `dgo/v210` Dgraph gRPC client, `viper` for YAML config.
 
 ## Constraints
@@ -66,12 +78,12 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Milestone scoped to the 8% crawl fix only | Tightly-specified, isolated change; other CONCERNS.md issues get their own milestones | — Pending |
-| YOLO mode | Fix is fully specified with exact code; low ambiguity | — Pending |
-| Skip per-phase research | `8pc_crawled.md` already contains root-cause evidence and exact code | — Pending |
 | Add `last_attempt` predicate distinct from `last_db_update` | Distinguishes "tried" from "successfully ingested" so un-fetchable pubkeys converge | ✓ Shipped v1.0 |
-| v1.1 scoped to write-path integrity + hardening | Chunk data-drop is high-severity (silent loss undercutting core value); bundled with the adjacent leak, injection, and test-coverage gaps in the same write path | — Pending |
-| Fix `RemoveFollower` despite no callers | Latent injection + inconsistent with the rest of `pkg/dgraph`; cheap defense-in-depth | — Pending |
+| v1.1 scoped to write-path integrity + hardening | Chunk data-drop is high-severity (silent loss undercutting core value); bundled with the adjacent leak and test-coverage gaps | ✓ Shipped v1.1 |
+| Defer `RemoveFollower` injection hardening (SEC-01/02) | Latent dead code with no callers; low urgency; documented as future idea rather than blocking a milestone | ✓ Deferred v1.1 Phase 4 |
+| v1.2 auto-ejection over manual relay removal | Hard-coded relay blacklists don't scale and require manual ops; classify failure reasons and auto-eject based on configurable thresholds | — Pending |
+| Reduce `batchSize` 500 → 100 | 40% of relay pool rejects 500-author filters; 100 stays within all known relay limits including StrFry default | — Pending |
+| Frontier ordered by follower count | High-follower stubs more likely to have kind-3 events; reduces wasted cycles from 99.24% | — Pending |
 
 ## Evolution
 
@@ -91,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-09 — milestone v1.1 (Write Integrity & Hardening) started*
+*Last updated: 2026-06-10 — milestone v1.2 (Crawler Reliability & Efficiency) started*

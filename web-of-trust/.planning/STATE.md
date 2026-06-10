@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: milestone
-status: verifying
-last_updated: "2026-06-09T09:28:17.013Z"
-last_activity: 2026-06-09 -- Phase 03 execution started
+milestone: v1.2
+milestone_name: Crawler Reliability & Efficiency
+status: planning
+last_updated: "2026-06-10T07:19:43.956Z"
+last_activity: 2026-06-10
 progress:
-  total_phases: 2
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
-  percent: 50
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State: Web-of-Trust Crawler — v1.1 Write Integrity & Hardening
@@ -25,10 +25,10 @@ progress:
 
 ## Current Position
 
-Phase: 03 (write-path-correctness-regression-coverage) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
-Last activity: 2026-06-10 -- Completed quick task 260610-fft: commit current uncommitted web-of-trust changes
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-10 — Milestone v1.2 started
 
 ## Performance Metrics
 
