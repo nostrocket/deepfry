@@ -1,55 +1,67 @@
-# Roadmap: Web-of-Trust Crawler — v1.1 Write Integrity & Hardening
+# Roadmap: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
 
-**Milestone:** v1.1 — Eliminate silent data loss in the Dgraph write path and harden it (chunked writes, resource leak, injection-safe remove path, regression coverage)
-**Created:** 2026-06-09
+**Milestone:** v1.2 — Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management
+**Created:** 2026-06-10
 **Granularity:** Coarse
-**Coverage:** 7/7 v1.1 requirements mapped
-**Numbering:** Continues from v1.0 (last phase was Phase 2) — this milestone starts at Phase 3
+**Coverage:** 12/12 v1.2 requirements mapped
+**Numbering:** Continues from v1.1 (last phase was Phase 4) — this milestone starts at Phase 5
 
 ## Phases
 
-- [x] **Phase 3: Write-Path Correctness + Regression Coverage** - Fix the chunked-write data drop so >chunk-size follow-lists persist completely, preserve the version guard's genuine-duplicate dedup, eliminate the per-iteration `defer cancel()` leak, and add the unit + integration tests that prove it (completed 2026-06-09)
-- [ ] **Phase 4: Remove-Path Injection Hardening** - Rewrite `RemoveFollower` to use parameterised `$`-Vars / `%q`-quoted nquads and reject malformed pubkeys before mutating, consistent with the rest of `pkg/dgraph`
+- [ ] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier
+- [ ] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns
+- [ ] **Phase 7: Relay Health Management** - Persist and decay failure counters across reconnects, classify failure reasons into buckets, and auto-eject relays that exceed configurable per-class thresholds
+- [ ] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric
 
 ## Phase Details
 
-### Phase 3: Write-Path Correctness + Regression Coverage
-
-**Goal**: A pubkey with a follow-list larger than the chunk threshold has its complete follow set persisted to Dgraph in a single crawl, the version guard still short-circuits true duplicates, the chunk loop holds at most one live context at a time, and tests would catch a regression of the data-drop bug.
-**Depends on**: Phase 2 (v1.0 — shipped)
-**Requirements**: CHUNK-01, CHUNK-02, LEAK-01, TEST-03, TEST-04
+### Phase 5: Pubkey Validation Hardening
+**Goal**: Invalid pubkeys never enter Dgraph and existing garbage nodes age out of the stale frontier without manual intervention
+**Depends on**: Phase 4 (v1.1 — shipped)
+**Requirements**: VALID-01, VALID-02, VALID-03
 **Success Criteria** (what must be TRUE):
+  1. A p-tag containing an uppercase hex string, a relay URL blob, or a truncated value is rejected at `updateFollowsFromEvent` — the hex regex `^[0-9a-f]{64}$` rejects it, it is logged, and nothing is written to Dgraph for that value.
+  2. After the startup migration or `healthcheck -purge` run, a DQL query for pubkeys not matching `^[0-9a-f]{64}$` returns zero results — the 19 known garbage nodes and any others are gone.
+  3. When `MarkAttempted` is called for a pubkey that fails the hex validator, the node's `last_attempt` is updated via a UID-based mutation — the node no longer re-enters the stale frontier on every batch.
+**Plans**: TBD
 
-  1. After one crawl of a pubkey with more than the chunking threshold (>500) of follows, every follow across all chunks is present in Dgraph — not just the first 200 — so chunks 2…N are no longer discarded by the `kind3createdAt <= existingKind3CreatedAt` guard at `pkg/dgraph/dgraph.go:165`.
-  2. Re-crawling an already-fully-ingested pubkey at the same or older `kind3CreatedAt` still short-circuits without redundant follow rewrites — the genuine-duplicate dedup behaviour is preserved (the fix distinguishes "same event, subsequent chunk" from "same event, already complete").
-  3. Processing an N-chunk follow-list holds at most one live chunk context/`cancel` at a time — the `defer cancel()` accumulation at `pkg/crawler/chunks.go:39-40` is gone and each chunk's context is released before the next iteration begins.
-  4. An integration test (`//go:build integration`, runs under `make test-integration`) asserts that a follow-list larger than the chunk size results in the full follow set persisted; it fails against pre-fix code and passes post-fix.
-  5. Unit tests (no live Dgraph, run under `make test` / `-short`) cover the chunk-splitting boundary logic in `processFollowsInChunks` and would catch a regression in chunk count / chunk membership.**Plans**: 2 plans
-
-**Wave 1**
-
-- [x] 03-01-PLAN.md — Unify AddFollowers to one batched full-set write (CHUNK-01/02, LEAK-01); shared pubkey validator; delete chunks.go
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 03-02-PLAN.md — Regression tests: chunkSlice unit test (TEST-04) + large-kind3 integration test (TEST-03)
-
-### Phase 4: Remove-Path Injection Hardening
-
-**Goal**: `RemoveFollower` can no longer be injected through `signerPubkey`/`followee` and refuses malformed input, bringing the dead-but-latent remove path in line with the safe query patterns used elsewhere in `pkg/dgraph`.
-**Depends on**: Phase 3
-**Requirements**: SEC-01, SEC-02
+### Phase 6: Filter Size & Per-Relay Cap Detection
+**Goal**: No relay rejects or drops a connection due to an oversized filter REQ, and relays with small caps are automatically queried at a safe size going forward
+**Depends on**: Phase 5
+**Requirements**: FILTER-01, FILTER-02
 **Success Criteria** (what must be TRUE):
+  1. The crawler issues REQ filters with at most 100 authors per request — verified by inspecting outbound messages to any relay; no relay receives a filter with more than 100 `authors` entries by default.
+  2. When a relay sends a NOTICE containing "filter item too large" (or equivalent), `queryRelay` records the per-relay cap and subsequent REQs to that relay use chunked sub-queries at the detected limit — the relay is not discarded, just throttled.
+  3. A relay that responds to a REQ by closing the connection (connection-drop-on-REQ pattern) is classified as having a small filter cap, and future batches to that relay are sized accordingly.
+**Plans**: TBD
 
-  1. `RemoveFollower` builds its DQL query and mutations using parameterised `$`-Vars and/or `%q`-quoted nquads instead of raw string concatenation of `signerPubkey`/`followee` (`pkg/dgraph/dgraph.go:344-355`), matching the `RemovePubKeyIfNoFollowers` pattern in the same file.
-  2. `RemoveFollower` validates that both pubkey arguments are 64-char hex and returns an error for malformed input before issuing any mutation.
-  3. A unit test (no live Dgraph) proves a malformed pubkey is rejected with an error and that special characters in input cannot alter the query/mutation structure.
+### Phase 7: Relay Health Management
+**Goal**: Relays that repeatedly fail are automatically removed from the config without manual intervention, and failure tracking survives reconnects
+**Depends on**: Phase 6
+**Requirements**: RELAY-01, RELAY-02
+**Success Criteria** (what must be TRUE):
+  1. A relay that connects and immediately drops (flapping) accumulates failure counts across reconnect cycles — the counter is decayed on reconnect (e.g. halved) rather than reset to zero, so repeated flapping eventually pushes the count past `maxConsecutiveFailures`.
+  2. Failure events are classified into at least three buckets — transport error, filter rejection (NOTICE or connection-drop on REQ), and subscription flap — and per-class ejection thresholds are readable from config.
+  3. When a relay's failure count for any class exceeds its configured threshold, it is removed from the config file and a log line records which relay was ejected and why.
+**Plans**: TBD
 
+### Phase 8: Frontier Prioritization, Timeout & Observability
+**Goal**: The crawler spends batch capacity on pubkeys most likely to return kind-3 events, exits batches early when enough relays have responded, and reports accurate progress metrics
+**Depends on**: Phase 5
+**Requirements**: PERF-01, PERF-02, TIMEOUT-01, TIMEOUT-02, METRIC-01
+**Success Criteria** (what must be TRUE):
+  1. `GetStalePubkeys` returns results ordered by incoming follower count descending — a pubkey with 1,000 followers appears before a stub with 0 followers when both are equally stale.
+  2. A pubkey that returns no kind-3 event after N consecutive crawl attempts has its `last_attempt` advanced by an increasing interval (e.g. 1h → 4h → 16h) — it is not queried on every cycle but is never permanently abandoned.
+  3. The per-batch relay query timeout fires at 15s — relays that have not sent EOSE within 15s are cancelled and the batch moves on.
+  4. A batch whose alive relays reach ≥70% EOSE or error exits early without waiting for the remaining relays or the full 15s timeout.
+  5. The `staleRemaining` value printed in the crawler's progress log reflects the actual remaining stale count (a `CountStalePubkeys` query result minus the current batch size) — not zero.
 **Plans**: TBD
 
 ## Progress Table
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 3. Write-Path Correctness + Regression Coverage | 2/2 | Complete   | 2026-06-09 |
-| 4. Remove-Path Injection Hardening | 0/0 | Not started | - |
+| 5. Pubkey Validation Hardening | 0/0 | Not started | - |
+| 6. Filter Size & Per-Relay Cap Detection | 0/0 | Not started | - |
+| 7. Relay Health Management | 0/0 | Not started | - |
+| 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
