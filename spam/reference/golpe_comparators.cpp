@@ -130,8 +130,8 @@ extern "C" int lmdb_comparator__StringUint64_safe(
     const uint8_t* a_ptr, size_t a_len,
     const uint8_t* b_ptr, size_t b_len
 ) {
-    MDB_val a = {a_len, (void*)a_ptr};
-    MDB_val b = {b_len, (void*)b_ptr};
+    MDB_val a = {.mv_size = a_len, .mv_data = (void*)a_ptr};
+    MDB_val b = {.mv_size = b_len, .mv_data = (void*)b_ptr};
     return lmdb_comparator__StringUint64(&a, &b);
 }
 
@@ -139,8 +139,8 @@ extern "C" int lmdb_comparator__Uint64Uint64_safe(
     const uint8_t* a_ptr, size_t a_len,
     const uint8_t* b_ptr, size_t b_len
 ) {
-    MDB_val a = {a_len, (void*)a_ptr};
-    MDB_val b = {b_len, (void*)b_ptr};
+    MDB_val a = {.mv_size = a_len, .mv_data = (void*)a_ptr};
+    MDB_val b = {.mv_size = b_len, .mv_data = (void*)b_ptr};
     return lmdb_comparator__Uint64Uint64(&a, &b);
 }
 
@@ -148,7 +148,7 @@ extern "C" int lmdb_comparator__StringUint64Uint64_safe(
     const uint8_t* a_ptr, size_t a_len,
     const uint8_t* b_ptr, size_t b_len
 ) {
-    MDB_val a = {a_len, (void*)a_ptr};
-    MDB_val b = {b_len, (void*)b_ptr};
+    MDB_val a = {.mv_size = a_len, .mv_data = (void*)a_ptr};
+    MDB_val b = {.mv_size = b_len, .mv_data = (void*)b_ptr};
     return lmdb_comparator__StringUint64Uint64(&a, &b);
 }

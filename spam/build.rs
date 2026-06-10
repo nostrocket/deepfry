@@ -51,7 +51,16 @@ fn main() {
         .map(|flags| flags.trim().replace("-I", "").trim().to_string())
         .filter(|s| !s.is_empty());
 
+    // Track whether any probe located a concrete lmdb.h. CR-02: a silently
+    // unresolved header lets cc fall through to an arbitrary default whose
+    // MDB_val layout we cannot vouch for. The safe wrappers now use named-member
+    // init (order-independent), but we still surface an unresolved header loudly.
+    let mut lmdb_h_located = false;
+
     if let Some(include) = pkg_config_include {
+        if std::path::Path::new(&include).join("lmdb.h").exists() {
+            lmdb_h_located = true;
+        }
         build.include(&include);
     }
 
@@ -63,12 +72,26 @@ fn main() {
     ] {
         if std::path::Path::new(homebrew_path).join("lmdb.h").exists() {
             build.include(homebrew_path);
+            lmdb_h_located = true;
             break;
         }
     }
 
     // 4. System default: /usr/include (Linux CI — lmdb.h from lmdb-dev package)
-    // cc crate includes /usr/include by default on Linux; no explicit include needed
+    // cc crate includes /usr/include by default on Linux; no explicit include needed.
+    if std::path::Path::new("/usr/include/lmdb.h").exists() {
+        lmdb_h_located = true;
+    }
+
+    // CR-02 / WR-04: don't compile against an unverifiable header silently.
+    if !lmdb_h_located {
+        println!(
+            "cargo:warning=build.rs could not locate lmdb.h via DEP_LMDB_INCLUDE, pkg-config, \
+             Homebrew, or /usr/include. The cc compile may pick up an unknown lmdb.h whose \
+             MDB_val ABI is unverified. Install lmdb headers (e.g. `brew install lmdb` or \
+             the `lmdb-dev` package) or set DEP_LMDB_INCLUDE."
+        );
+    }
 
     build.compile("golpe_comparators"); // → libgolpe_comparators.a linked into binary
 }
