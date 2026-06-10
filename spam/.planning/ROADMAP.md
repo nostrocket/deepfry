@@ -7,6 +7,7 @@ LMDB2GraphQL is built in five dependency-ordered horizontal layers. Phase 1 is a
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
@@ -21,63 +22,85 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: LMDB Foundation & Comparator Proof
+
 **Goal**: golpe's three custom comparators are linked via C++ FFI and registered through heed's `Comparator` trait (`mdb_set_compare`, per D-03), their scan order is verified byte-exact against a pinned strfry fixture, and the service refuses to open an incompatible environment
 **Depends on**: Nothing (first phase)
 **Requirements**: LMDB-01, LMDB-02, LMDB-03, LMDB-04, LMDB-05, LMDB-06, LMDB-10
 **Success Criteria** (what must be TRUE):
+
   1. The service opens strfry's LMDB environment with `MDB_RDONLY` and the correct `map_size` (no write transactions are ever opened)
   2. The service exits loudly if `Meta.dbVersion != 3` or `Meta.endianness` does not match the host
   3. Comparator self-check passes against the pinned fixture DB: scan order over each `Event__*` index matches strfry's known-correct order
   4. If the self-check fails (scan order mismatch), the service refuses to start (fail-closed, not silently wrong)
-  5. The pinned strfry version/digest is recorded in config/docs as a shared contract with the parent DeepFry stack
-**Plans**: 3 plans (3 waves)
+  5. The pinned strfry version/digest is recorded in config/docs as a shared contract with the parent DeepFry stack**Plans**: 3 plans (3 waves)
+
+**Wave 1**
+
 - [ ] 01-01-PLAN.md — Crate scaffold, vendor golpe comparators (exception-free), build.rs FFI compile, and the heed comparator-hook go/no-go smoke proof (LMDB-05, LMDB-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 01-02-PLAN.md — Pin strfry digest + parent Dockerfile, generate adversarial fixture, hand-compute golden vectors, minimal config (LMDB-10, LMDB-04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 01-03-PLAN.md — Meta version/endianness gate, open all six Event__* indexes with correct comparators, fail-closed self-check, main startup gate (LMDB-01, LMDB-02, LMDB-03, LMDB-06)
 
 ### Phase 2: Payload Decoding & Index Scan Primitives
+
 **Goal**: Full event JSON can be hydrated from both `0x00` and `0x01` EventPayload formats, and bounded cursor scans over each `Event__*` index are tested in isolation
 **Depends on**: Phase 1
 **Requirements**: LMDB-07, LMDB-08, LMDB-09
 **Success Criteria** (what must be TRUE):
+
   1. A `0x00` (raw JSON) EventPayload is decoded to full event JSON
   2. A `0x01` (zstd-dictionary-compressed) EventPayload is decoded using the correct `CompressionDictionary[dictId]`
   3. Read transactions are opened and closed per-query (not held open across queries), so strfry can reclaim free pages without `data.mdb` growth
+
 **Plans**: TBD
 
 ### Phase 3: Query Engine
+
 **Goal**: Queries are resolved against strfry's live indexes with correct filter routing, tag scans, latestPerAuthor semantics, NIP-40 expiration filtering, and cursor pagination
 **Depends on**: Phase 2
 **Requirements**: QRY-01, QRY-02, QRY-03, QRY-04, QRY-05
 **Success Criteria** (what must be TRUE):
+
   1. An `events()` filter (ids, authors, kinds, since/until) selects the most selective applicable index and returns correctly ordered results hydrated to full event JSON
   2. A tag filter (`Event__tag`) returns events matching the given tag name and values
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
+
 **Plans**: TBD
 
 ### Phase 4: GraphQL API
+
 **Goal**: The query engine is exposed as a read-only GraphQL endpoint with all v1 query types, a hard limit ceiling, cursor pagination, and no mutation surface
 **Depends on**: Phase 3
 **Requirements**: API-01, API-02, API-03, API-04, API-05, API-06
 **Success Criteria** (what must be TRUE):
+
   1. A consumer can send a GraphQL query for `events()` filtered by ids, authors, kinds, since, until, and limit and receive matching events
   2. A consumer can query `events()` with a tag filter (name + values) and receive matching events
   3. A consumer can query `latestPerAuthor(kind, perAuthor, authors)` and receive the latest N events per pubkey
   4. A consumer can query `stats` and receive event count, max levId, and dbVersion
   5. Queries exceeding the hard limit ceiling are capped, not rejected; cursor pagination on `(created_at, lev_id)` allows traversal without scanning the full DB
   6. The GraphQL schema exposes no mutations
+
 **Plans**: TBD
 
 ### Phase 5: Hardening & Docker Packaging
+
 **Goal**: The service is operationally safe for DeepFry deployment: health/readiness gates are live, CI asserts correctness against the pinned strfry fixture, and docker-compose brings it up co-located with strfry mounting `strfry-db` read-only
 **Depends on**: Phase 4
 **Requirements**: OPS-01, OPS-02, OPS-03, OPS-04
 **Success Criteria** (what must be TRUE):
+
   1. `/health` responds 200 when the process is alive; `/ready` responds 200 only after the LMDB environment opens and the comparator self-check passes (503 otherwise)
   2. The service runs as a `docker-compose` service in the DeepFry stack, co-located with strfry, with `strfry-db` mounted `:ro`
   3. CI generates a fixture `strfry-db` from the pinned strfry version/digest, asserts both `0x00` and `0x01` payload decoding succeed, and asserts LMDB2GraphQL's comparator scan order matches strfry's
   4. Startup output and `stats` surface the expected (pinned) strfry version alongside the detected on-disk `dbVersion`, so operators can immediately spot drift if the parent's `dockurr/strfry` image moves
+
 **Plans**: TBD
 
 ## Progress
