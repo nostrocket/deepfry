@@ -219,16 +219,27 @@ pub fn build_start_keys(
         }
 
         SelectedIndex::Multi("Event__tag") => {
-            // One start_key per (tag_name_byte ‖ tag_value_bytes) prefix ‖ created_at(8 LE)
+            // One start_key per (tag_name_byte ‖ tag_value_raw_bytes) prefix ‖ created_at(8 LE)
+            //
+            // strfry stores tag values as their raw (hex-decoded) bytes in the Event__tag index.
+            // For `#e` and `#p` tags the value is a 64-char hex string representing a 32-byte
+            // event/pubkey id — strfry decodes it to 32 raw bytes as the key prefix. Similarly
+            // for any 64-char hex tag value. Non-hex values are stored as raw UTF-8.
+            // We attempt hex-decode: if the value decodes successfully, use raw bytes; otherwise
+            // use the raw UTF-8 bytes (for non-hex tag values).
             let tags = filter.tags.as_deref().unwrap_or(&[]);
             let mut keys = Vec::new();
             for tag in tags {
                 let name_byte = tag.name.as_bytes().first().copied().unwrap_or(b'_');
                 for value in &tag.values {
-                    let value_bytes = value.as_bytes();
+                    // Try hex-decode first; fall back to raw UTF-8 bytes on failure.
+                    let value_bytes: Vec<u8> = match decode_hex(value) {
+                        Ok(decoded) => decoded,
+                        Err(_) => value.as_bytes().to_vec(),
+                    };
                     let mut k = Vec::with_capacity(1 + value_bytes.len() + 8);
                     k.push(name_byte);
-                    k.extend_from_slice(value_bytes);
+                    k.extend_from_slice(&value_bytes);
                     k.extend_from_slice(&ts_bytes);
                     keys.push(k);
                 }
