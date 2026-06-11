@@ -1,19 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 05-pubkey-validation-hardening
 source: [05-VERIFICATION.md]
 started: 2026-06-10T13:00:00Z
-updated: 2026-06-10T13:00:00Z
+updated: 2026-06-11T12:32:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: TestMarkAttemptedRecoverOrPurge — Live Dgraph Integration
-expected: |
-  TestMarkAttemptedRecoverOrPurge passes: uppercase node recovered to lowercase
-  (last_attempt unset), short-hex node deleted, relay-blob node deleted
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -26,7 +21,7 @@ expected: |
   Expected: Test passes; log shows uppercase node recovered to lowercase
   (last_attempt=0 confirmed by queryLastAttempt), short-hex garbage node deleted,
   relay-blob garbage node deleted; cleanup of recovered node succeeds
-result: [pending]
+result: pass
 
 ### 2. TestWritePathRejectsGarbage — Live Dgraph Integration
 
@@ -36,14 +31,14 @@ expected: |
   
   Expected: Test passes; uppercase hex, short hex, and relay-blob strings resolve to
   zero nodes after AddFollowers call; valid followee was written; cleanup succeeds
-result: [pending]
+result: pass
 
 ## Summary
 
 total: 2
-passed: 0
+passed: 2
 issues: 0
-pending: 2
+pending: 0
 skipped: 0
 blocked: 0
 
