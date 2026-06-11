@@ -65,7 +65,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Add zstd dep (legitimacy gate), NostrEvent/DecodedEvent types, open EventPayload/CompressionDictionary read-only, 0x00 raw-JSON decode (LMDB-07)
+- [x] 02-01-PLAN.md — Add zstd dep (legitimacy gate), NostrEvent/DecodedEvent types, open EventPayload/CompressionDictionary read-only, 0x00 raw-JSON decode (LMDB-07) — COMPLETE 2026-06-11
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -124,7 +124,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
-| 2. Payload Decoding & Index Scan Primitives | 0/3 | Not started | - |
+| 2. Payload Decoding & Index Scan Primitives | 1/3 | In progress | 2026-06-11 |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
