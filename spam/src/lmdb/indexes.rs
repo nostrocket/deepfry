@@ -28,6 +28,7 @@
 /// in this file uses an explicit comparator type parameter.
 use crate::lmdb::comparators::{StringUint64Cmp, StringUint64Uint64Cmp, Uint64Uint64Cmp};
 use heed::types::Bytes;
+use std::ops::Bound;
 
 // ---------------------------------------------------------------------------
 // Sub-DB name constants (rasgueadb_defaultDb__ prefix, confirmed by fixture probe)
@@ -183,6 +184,106 @@ pub fn scan_lev_ids_for_index(env: &heed::Env, short_name: &str) -> Result<Vec<u
     Ok(lev_ids)
 }
 
+// ---------------------------------------------------------------------------
+// Comparator-exercising range-seek helper (CR-01 — startup comparator gate)
+// ---------------------------------------------------------------------------
+
+/// Seek the first entry with key >= `lower_bound_key` in the named Event__* index and
+/// return its VALUE-side levId (spec §3.1: 8-byte LE u64).
+///
+/// ## Why this exercises the comparator (unlike `db.iter()`)
+///
+/// A forward `db.iter()` walks the B-tree in physically-stored page order — the order
+/// strfry wrote when building the fixture — and never invokes the registered comparator.
+/// `db.range(rtxn, &(lower_bound..))` maps to LMDB's `MDB_SET_RANGE` positioning
+/// operation, which traverses B-tree branch nodes using the registered comparator to
+/// decide which subtree to descend into. If the wrong comparator (or no comparator)
+/// is registered, the cursor lands on the wrong entry — the call provably exercises
+/// the registered comparator. (CR-01 mitigation, closes LMDB-06 gap.)
+///
+/// ## Adversarial key pairs used by the comparator gate
+///
+/// For `Event__kind` (Uint64Uint64Cmp):
+///   lower_bound = (kind=256, ts=0) = `[0x00, 0x01, 0x00×6, 0x00×8]`
+///   Golpe result: kind=255 < kind=256 numerically → cursor skips kind=255 → lands on
+///     (kind=256, ts=1700000000) = levId=2.
+///   Memcmp result (on golpe-built B-tree): kind=255 LE `[0xFF, 0x00, …]` > kind=256 LE
+///     `[0x00, 0x01, …]` under memcmp → kind=255 entry is the FIRST >= lower_bound →
+///     cursor lands on (kind=255, ts=1700000000) = levId=3.  (WRONG — gate trips.)
+///
+/// For `Event__pubkeyKind` (StringUint64Uint64Cmp):
+///   Same logic applied to pubkey=79be… prefix, kind=256, ts=0 as lower bound.
+///
+/// ## Invariants
+///
+/// - Opens a per-call `read_txn()` (short-lived, dropped before return).
+/// - Never opens a write transaction.  (T-04-03 / LMDB-01)
+/// - Returns `Ok(None)` if the range starting at `lower_bound_key` is empty.
+pub fn seek_first_ge_lev_id(
+    env: &heed::Env,
+    short_name: &str,
+    lower_bound_key: &[u8],
+) -> Result<Option<u64>, IndexError> {
+    let rtxn = env.read_txn()?;
+
+    let lev_id = match short_name {
+        "Event__id" | "Event__pubkey" | "Event__tag" => {
+            let db = open_index_string_uint64(env, &rtxn, short_name)?;
+            seek_range_first_lev_id(&db, &rtxn, lower_bound_key)?
+        }
+        "Event__kind" => {
+            let db = open_index_uint64_uint64(env, &rtxn, short_name)?;
+            seek_range_first_lev_id(&db, &rtxn, lower_bound_key)?
+        }
+        "Event__pubkeyKind" => {
+            let db = open_index_string_uint64_uint64(env, &rtxn, short_name)?;
+            seek_range_first_lev_id(&db, &rtxn, lower_bound_key)?
+        }
+        _ => {
+            return Err(IndexError::SubDbNotFound {
+                name: short_name.to_string(),
+            })
+        }
+    };
+
+    Ok(lev_id)
+    // rtxn dropped here — short-lived, bounded to single MDB_SET_RANGE + first-entry read
+}
+
+/// Perform a range seek on any typed database and return the VALUE-side levId of the
+/// first entry with key >= `lower_bound_key`.
+///
+/// The range iterator maps to `MDB_SET_RANGE` — this IS the operation that forces
+/// LMDB to consult the registered comparator for cursor positioning.
+fn seek_range_first_lev_id<C>(
+    db: &heed::Database<Bytes, Bytes, C>,
+    rtxn: &heed::RoTxn<'_>,
+    lower_bound_key: &[u8],
+) -> Result<Option<u64>, IndexError>
+where
+    C: heed::Comparator,
+{
+    // Use (Bound::Included(&[u8]), Bound::Unbounded) — the pattern for Bytes-keyed
+    // databases in heed 0.22 (see heed cookbook "Use Bytes as Cursor Ranges").
+    let range = (Bound::Included(lower_bound_key), Bound::Unbounded);
+    let mut iter = db.range(rtxn, &range)?;
+    match iter.next() {
+        None => Ok(None),
+        Some(result) => {
+            let (_key, value) = result?;
+            if value.len() < 8 {
+                tracing::warn!(
+                    value_len = value.len(),
+                    "seek_range_first_lev_id: VALUE shorter than 8 bytes — expected levId u64"
+                );
+                return Ok(None);
+            }
+            let lev_id = u64::from_le_bytes(value[0..8].try_into().unwrap());
+            Ok(Some(lev_id))
+        }
+    }
+}
+
 /// Collect VALUE-side levIds from a database that may have duplicate VALUES per KEY.
 ///
 /// strfry Event__* indexes use `MDB_DUPSORT` + `MDB_INTEGERDUP` (LMDB duplicate key support).
@@ -290,5 +391,52 @@ mod tests {
             );
             println!("{short_name}: {} entries, first levId={}", lev_ids.len(), lev_ids[0]);
         }
+    }
+
+    /// CR-01 comparator gate: seek_first_ge_lev_id on the Event__kind adversarial pair.
+    ///
+    /// Lower bound: (kind=256, ts=0) — the first valid key that is numerically >= any
+    /// kind=256 entry.  In the committed fixture:
+    ///   - golpe numeric order: kind=255 (levId=3) < kind=256 (levId=2)
+    ///   - A seek with the registered Uint64Uint64Cmp comparator must skip kind=255
+    ///     (because 255 < 256) and land on the kind=256 entry (levId=2).
+    ///   - A memcmp-positioned cursor would NOT skip kind=255 because kind=255 LE bytes
+    ///     [0xFF, 0x00, …] > kind=256 LE bytes [0x00, 0x01, …] under memcmp — kind=255
+    ///     would appear to qualify first and the cursor would land on levId=3 (wrong).
+    ///
+    /// This test proves the golpe Uint64Uint64Cmp comparator is consulted at startup
+    /// (assertion levId=2, not levId=3 — the memcmp neighbor).
+    #[test]
+    fn test_seek_first_ge_lev_id_event_kind_adversarial_pair() {
+        let (env, _tmp) = open_temp_fixture_env();
+
+        // Build lower-bound key: (kind=256, ts=0) as [kind(8 LE) || ts(8 LE)]
+        // kind=256 LE: [0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        // ts=0 LE:     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        let mut lower_bound = Vec::with_capacity(16);
+        lower_bound.extend_from_slice(&256u64.to_le_bytes()); // kind=256
+        lower_bound.extend_from_slice(&0u64.to_le_bytes());   // ts=0 (lower bound)
+
+        let result = seek_first_ge_lev_id(&env, "Event__kind", &lower_bound)
+            .expect("seek_first_ge_lev_id must not error on fixture");
+
+        let lev_id = result.expect("seek must find an entry — kind=256 exists in fixture");
+
+        // Golpe-correct: cursor must land on kind=256 (levId=2), NOT kind=255 (levId=3).
+        // If the comparator is wrong/absent, kind=255 LE bytes [0xFF...] > lower_bound [0x00...]
+        // under memcmp, so kind=255 would be the first "≥ lower_bound" entry → levId=3.
+        assert_eq!(
+            lev_id, 2,
+            "seek_first_ge_lev_id on Event__kind with lower_bound=(kind=256, ts=0) \
+             MUST return levId=2 (kind=256 entry) — got levId={lev_id}. \
+             levId=3 would indicate the comparator is NOT exercising golpe numeric ordering \
+             (memcmp fallback — kind=255 LE bytes [0xFF..] are > kind=256 LE bytes [0x00..] \
+             under memcmp, so memcmp incorrectly places kind=255 as the first ≥ entry)."
+        );
+
+        println!(
+            "CR-01 gate PASS: Event__kind adversarial seek landed on levId={lev_id} \
+             (golpe-correct kind=256 neighbor, not memcmp neighbor kind=255)"
+        );
     }
 }
