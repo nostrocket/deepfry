@@ -313,7 +313,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		wg.Add(1)
 		go func(rs *relayState) {
 			defer wg.Done()
-			err := c.queryRelay(relayQueryContext, rs.conn, rs.url, filter, eventsChan)
+			err := c.queryRelay(relayQueryContext, rs, filter, eventsChan)
 			if err != nil {
 				errorsChan <- relayError{url: rs.url, err: err}
 				return
@@ -443,32 +443,11 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	}
 }
 
-func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL string, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
-	// Create a subscription with the context that can be cancelled from the main thread
-	sub, err := relay.Subscribe(ctx, []nostr.Filter{filter})
-	if err != nil {
-		// Skip logging for context cancellation, as it's expected during graceful shutdown
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
-		cleanErr := cleanSubscribeError(err)
-		// "not connected" / "failed to write" means the underlying websocket died —
-		// treat as transport failure so the relay gets marked dead and queued for reconnection
-		if strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write") {
-			c.logRelayError("connection_lost", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
-			return &transportError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
-		}
-		c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
-		return &subscriptionError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
-	}
-	// Ensure subscription is unsubscribed when this function returns
-	defer sub.Unsub()
-
-	if c.debug {
-		log.Printf("Querying relay %s for %d pubkeys", relayURL, len(filter.Authors))
-	}
-
+// drainSubscription reads events from sub until EOSE, context cancellation, or
+// connection drop. The caller is responsible for calling sub.Unsub() on return.
+// Returns nil on EOSE, ctx.Err() on external cancellation, or &transportError
+// when the subscription context is done (relay connection dropped).
+func (c *Crawler) drainSubscription(ctx context.Context, sub *nostr.Subscription, relayURL string, eventsChan chan<- *nostr.Event) error {
 	for {
 		select {
 		case event := <-sub.Events:
@@ -504,6 +483,72 @@ func (c *Crawler) queryRelay(ctx context.Context, relay *nostr.Relay, relayURL s
 			return ctx.Err()
 		}
 	}
+}
+
+func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
+	relay := rs.conn
+	relayURL := rs.url
+
+	if c.debug {
+		log.Printf("Querying relay %s for %d pubkeys", relayURL, len(filter.Authors))
+	}
+
+	authors := filter.Authors
+	for len(authors) > 0 {
+		cap := rs.filterCap
+		if cap <= 0 {
+			cap = 10 // safety guard
+		}
+
+		chunk := authors
+		if len(authors) > cap {
+			chunk = authors[:cap]
+		}
+		authors = authors[len(chunk):]
+
+		chunkFilter := filter
+		chunkFilter.Authors = chunk
+
+		subscribeStart := time.Now()
+		sub, err := relay.Subscribe(ctx, []nostr.Filter{chunkFilter})
+		if err != nil {
+			// Skip logging for context cancellation, as it's expected during graceful shutdown
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// Connection-drop-on-REQ attribution (D-09): if the drop happened within
+			// 500ms of Subscribe, treat as a filter-rejection and halve the cap.
+			if time.Since(subscribeStart) < 500*time.Millisecond &&
+				(strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write")) {
+				if rs.filterCap > 10 {
+					rs.filterCap = max(rs.filterCap/2, 10)
+					log.Printf("Relay %s: filter rejection drop, halved cap to %d; retrying chunk", relayURL, rs.filterCap)
+					authors = append(chunk, authors...) // re-queue this chunk
+					continue
+				}
+				// filterCap is already at floor=10; mark the relay dead (D-10)
+				log.Printf("Relay %s: filter cap floor reached, marking dead", relayURL)
+				return &transportError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
+			}
+			// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
+			cleanErr := cleanSubscribeError(err)
+			// "not connected" / "failed to write" means the underlying websocket died —
+			// treat as transport failure so the relay gets marked dead and queued for reconnection
+			if strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write") {
+				c.logRelayError("connection_lost", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
+				return &transportError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
+			}
+			c.logRelayError("subscription_failed", fmt.Errorf("relay %s: %s", relayURL, cleanErr))
+			return &subscriptionError{err: fmt.Errorf("relay %s: %s", relayURL, cleanErr)}
+		}
+
+		if err := c.drainSubscription(ctx, sub, relayURL, eventsChan); err != nil {
+			sub.Unsub()
+			return err
+		}
+		sub.Unsub()
+	}
+	return nil
 }
 
 func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event) error {
