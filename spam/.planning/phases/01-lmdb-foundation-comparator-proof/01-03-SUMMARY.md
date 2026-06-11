@@ -35,7 +35,7 @@ decisions:
   - "Meta fields decoded via FlatBuffer vtable walker (not raw C struct offsets) — confirmed by reading onAppStartup.cpp: dbVersion at abs byte 40, endianness at abs byte 32"
   - "STRFRY_LITTLE_ENDIAN_MARKER=1 (not 0) — strfry source writes endianness=1 for little-endian and asserts !=1 on foreign endianness"
   - "Golden vectors corrected via empirical fixture scan (Rule 1 auto-fix) — analytical derivation assumed wrong event-to-levId mapping; actual fixture: levId=1..4 at ts=1700000000, levIds 5,6 have tags e=aaaa..."
-  - "iter() on LMDB B-tree returns physical page order (golpe order, as written by strfry) regardless of registered comparator — comparator only matters for range seeks; full-scan self-check still correctly validates comparator registration"
+  - "iter() on LMDB B-tree returns physical page order (golpe order, as written by strfry) regardless of registered comparator — forward full-scan validates PHYSICAL-ORDER DATA INTEGRITY only (levId sequence matches the oracle), but does NOT exercise the registered comparator. Comparator correctness is validated by MDB_SET_RANGE seek gate added in plan 01-04 (CR-01 closure)."
   - "Probe test (tests/probe_events_test.rs) used for empirical fixture discovery, removed after use"
 metrics:
   duration: "~15 minutes (execution, continuing from previous session context boundary)"
