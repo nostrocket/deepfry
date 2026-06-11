@@ -37,22 +37,24 @@ const (
 )
 
 type relayState struct {
-	url      string
-	conn     *nostr.Relay
-	alive    bool
-	backoff  time.Duration
-	retryAt  time.Time
-	failures atomic.Int32
+	url       string
+	conn      *nostr.Relay
+	alive     bool
+	backoff   time.Duration
+	retryAt   time.Time
+	failures  atomic.Int32
+	filterCap int
 }
 
 type Crawler struct {
-	relays        []*relayState
-	forwardRelay  *relayState
-	dgClient      *dgraph.Client
-	timeout       time.Duration
-	debug         bool
-	dbUpdateMutex sync.Mutex
-	onConnectFail func(url string)
+	relays          []*relayState
+	forwardRelay    *relayState
+	dgClient        *dgraph.Client
+	timeout         time.Duration
+	debug           bool
+	dbUpdateMutex   sync.Mutex
+	onConnectFail   func(url string)
+	filterBatchSize int
 }
 
 type Config struct {
@@ -61,6 +63,7 @@ type Config struct {
 	Timeout         time.Duration
 	Debug           bool
 	ForwardRelayURL string
+	FilterBatchSize int
 	OnConnectFail   func(url string)
 }
 
@@ -83,7 +86,11 @@ func New(cfg Config) (*Crawler, error) {
 	connected := 0
 
 	for _, url := range cfg.RelayURLs {
-		relay, err := nostr.RelayConnect(context.Background(), url)
+		rs := &relayState{url: url, backoff: initialBackoff, filterCap: cfg.FilterBatchSize}
+		noticeHandler := nostr.WithNoticeHandler(func(notice string) {
+			handleFilterNotice(rs, notice, 10)
+		})
+		relay, err := nostr.RelayConnect(context.Background(), url, noticeHandler)
 		if err != nil {
 			log.Printf("WARN: Failed to connect to relay %s, removing from config: %v", url, err)
 			if cfg.OnConnectFail != nil {
@@ -91,7 +98,8 @@ func New(cfg Config) (*Crawler, error) {
 			}
 			continue
 		}
-		rs := &relayState{url: url, backoff: initialBackoff, conn: relay, alive: true}
+		rs.conn = relay
+		rs.alive = true
 		relays = append(relays, rs)
 		connected++
 		if cfg.Debug {
@@ -107,11 +115,12 @@ func New(cfg Config) (*Crawler, error) {
 	log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
 
 	c := &Crawler{
-		relays:        relays,
-		dgClient:      dgClient,
-		timeout:       cfg.Timeout,
-		debug:         cfg.Debug,
-		onConnectFail: cfg.OnConnectFail,
+		relays:          relays,
+		dgClient:        dgClient,
+		timeout:         cfg.Timeout,
+		debug:           cfg.Debug,
+		onConnectFail:   cfg.OnConnectFail,
+		filterBatchSize: cfg.FilterBatchSize,
 	}
 
 	// Connect to forward relay if configured
@@ -212,7 +221,10 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 			kept = append(kept, rs)
 			continue
 		}
-		relay, err := nostr.RelayConnect(ctx, rs.url)
+		noticeHandler := nostr.WithNoticeHandler(func(notice string) {
+			handleFilterNotice(rs, notice, 10)
+		})
+		relay, err := nostr.RelayConnect(ctx, rs.url, noticeHandler)
 		if err != nil {
 			log.Printf("WARN: Reconnect to %s failed, removing from config: %v", rs.url, err)
 			if c.onConnectFail != nil {
@@ -598,6 +610,19 @@ func cleanSubscribeError(err error) string {
 		}
 	}
 	return msg
+}
+
+// handleFilterNotice inspects a relay NOTICE message and halves the relay's
+// filterCap when the notice indicates the filter is too large. The cap is
+// never reduced below minCap (per D-05: floor = 10).
+func handleFilterNotice(rs *relayState, notice string, minCap int) {
+	lower := strings.ToLower(notice)
+	if strings.Contains(lower, "filter") && strings.Contains(lower, "too large") {
+		if rs.filterCap > minCap {
+			rs.filterCap = max(rs.filterCap/2, minCap)
+		}
+		log.Printf("Relay %s NOTICE filter-too-large: halved cap to %d", rs.url, rs.filterCap)
+	}
 }
 
 func (c *Crawler) logRelayError(errorType string, err error) {
