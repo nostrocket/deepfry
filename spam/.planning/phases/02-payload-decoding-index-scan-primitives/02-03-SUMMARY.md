@@ -116,3 +116,63 @@ None — all scan primitives return live data from the fixture LMDB.
 - Commit 482cab6 exists: FOUND
 - Commit 5e326e6 exists: FOUND
 - `cargo test --all-targets`: 53 passed, 0 failed
+
+## Code Review Fixes
+
+### CR-01 — Reverse windowed scan silently dropped levIds at a DUPSORT group boundary (RESOLVED)
+
+**Severity:** BLOCKER (project correctness crux — silently-wrong range scans).
+
+**Empirically proven dup ordering (heed 0.22.1, MDB_DUPSORT + MDB_INTEGERDUP):**
+A new probe (`tests/dupsort_resume_test.rs::test_proven_dup_iteration_order_range_and_rev_range`)
+builds a synthetic `rasgueadb_defaultDb__Event__kind` sub-DB with strfry's real
+`Uint64Uint64Cmp` key comparator and asserts:
+- forward `range` + `move_through_duplicate_values()` → per-key dups **ASCENDING** (`[5,6,7,8,9]`)
+- reverse `rev_range` + `move_through_duplicate_values()` → per-key dups **DESCENDING**
+  (`[9,8,7,6,5]`) — `rev_range` FULLY reverses the forward sequence (KEY traversal AND the
+  within-key dup-cursor order). This refuted the original scan.rs doc comment, which claimed
+  dups stayed ascending under `rev_range`.
+
+**Actual root cause (deeper than the original `>=` hypothesis):** heed resumes a reverse
+boundary key opened with `Bound::Included(key)` by positioning the cursor at the **smallest**
+dup of that key (`move_on_range_end` → `MDB_SET_RANGE`) and immediately stepping to the
+previous KEY. The higher, still-unemitted dups of the boundary key are **never yielded**, so
+no per-levId skip predicate can recover them. The original code therefore either dropped
+levIds (non-first-group layout) or — with the `>=` skip in place — caused a non-terminating
+window loop (observed directly when the old reverse arm was patched back into
+`scan_index_windowed`).
+
+**Corrected predicate / design — key-granular windowing:** A window now never splits a dup
+group. `collect_window` fills up to `window_size` entries, then DRAINS the remaining dups of
+the last key so every window ends exactly on a KEY boundary. The windowing loop resumes with
+`Bound::Excluded(resume_key)` (forward: range START; reverse: `rev_range` END → "largest key
+strictly less than"). This is uniform across both directions and removes the per-levId
+`resume_lev_id` resume state entirely. A window may exceed `window_size` by at most one dup
+group (bounded; dup groups are small).
+
+**New regression tests (`tests/dupsort_resume_test.rs`):**
+- `test_reverse_window_smaller_than_dup_group_no_drop` — reverse `window=2` over a single
+  size-3 dup group `{5,6,7}`; asserts all three returned, no dupes.
+- `test_reverse_window_straddle_non_first_group_no_drop` — reverse `window=2` over
+  `key_hi{10}` + `key_lo{5,6,7}` (the layout the OLD code broke); asserts complete `{5,6,7,10}`.
+- `test_old_code_reverse_drops_levid_nonvacuity` — faithfully reproduces the OLD loop
+  (Included resume + `>=` skip + hard `window_size` break) and asserts it emits `[10,7,5]`,
+  silently DROPPING levId 6. This proves the regression suite is **non-vacuous**. Independent
+  cross-check: patching the OLD reverse arm directly into `scan_index_windowed` makes
+  `test_reverse_window_*` hang (non-termination), a second confirmation the old code is broken.
+
+**Note on the synthetic fixture and the golpe key-width SIGABRT quirk:** all start/bound keys
+handed to the `Uint64Uint64Cmp`-typed DB are full 16-byte composites (`kind_reverse_high_key`
+= `(kind=MAX, ts=MAX)`); the FFI comparator `std::abort()`s on short keys, so no truncated or
+empty key is ever passed.
+
+**Verification:** `cargo test --all-targets` → 55 passed, 0 failed (39 lib + 16 integration,
+including the 4 new CR-01 tests). All previously passing tests still pass.
+
+**Commits:**
+- `1756f3b` test(02-03): prove DUPSORT dup order + reverse windowed-scan resume (CR-01)
+- `3dd819f` fix(02-03): correct reverse windowed-scan DUPSORT resume predicate (CR-01)
+
+**Deferred (out of scope, pre-existing):** `cargo clippy --all-targets` fails on `build.rs`
+(`check-cfg` toolchain flag) and `tests/scan_test.rs` has a pre-existing unused-helper
+warning. Logged in `deferred-items.md`.
