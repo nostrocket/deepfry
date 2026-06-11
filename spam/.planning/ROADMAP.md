@@ -84,7 +84,24 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
 
-**Plans**: TBD
+**Plans**: 4 plans (4 waves)
+
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Query module skeleton + NostrFilter/TagFilter/PageCursor/QueryError contract types + cursor encode/decode (QRY-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Index selection (D-02 priority) + per-prefix start_key construction (D-03) + k-way merge over reverse scans on (created_at, levId) DESC (QRY-01, QRY-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-03-PLAN.md — hydrate_lev_ids: post-merge EventPayload point-lookup + decode with skip-warn-count (QRY-04)
+
+**Wave 4** *(blocked on Waves 2-3 completion)*
+
+- [ ] 03-04-PLAN.md — engine: execute_query (route+merge+over-fetch+NIP-40+cursor) and latest_per_author grouped buckets (QRY-01, QRY-02, QRY-03, QRY-05)
+
 
 ### Phase 4: GraphQL API
 
@@ -125,6 +142,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 0/TBD | Not started | - |
+| 3. Query Engine | 0/4 | Planned     | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
