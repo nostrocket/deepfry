@@ -49,7 +49,7 @@
 **Plans**: 2 plans
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — Config field relay_filter_batch_size (FILTER-01, D-01/D-02), filterCap on relayState (D-03), handleFilterNotice helper (D-04/D-05), WithNoticeHandler wiring at New() and ReconnectRelays() (D-08)
+- [x] 06-01-PLAN.md — Config field relay_filter_batch_size (FILTER-01, D-01/D-02), filterCap on relayState (D-03), handleFilterNotice helper (D-04/D-05), WithNoticeHandler wiring at New() and ReconnectRelays() (D-08)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -88,6 +88,6 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
-| 6. Filter Size & Per-Relay Cap Detection | 0/2 | Not started | - |
+| 6. Filter Size & Per-Relay Cap Detection | 1/2 | In progress | - |
 | 7. Relay Health Management | 0/0 | Not started | - |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
