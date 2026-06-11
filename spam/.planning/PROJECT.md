@@ -14,14 +14,13 @@ Serve correct, rich queries over strfry's events by reading strfry's **live** on
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] Read-only LMDB access to strfry's environment (`MDB_RDONLY`), never opening a write transaction — *Validated in Phase 1: LMDB Foundation & Comparator Proof*
+- [x] Startup gates: refuse to run (loudly) if `Meta.dbVersion != 3` or `Meta.endianness` ≠ host — *Validated in Phase 1*
+- [x] Reimplement strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) in Rust and register them via `mdb_set_compare` on the index sub-DBs LMDB2GraphQL scans — *Validated in Phase 1 (C++ FFI link to golpe comparators; registered via heed's `Comparator` trait)*
+- [x] Comparator self-check at startup against a pinned fixture; **fail-closed** if our scan order disagrees with strfry's — *Validated in Phase 1 (forward-scan physical-order integrity + MDB_SET_RANGE comparator seek gate on adversarial pairs; CR-01 closed in plan 01-04)*
 
 ### Active
 
-- [ ] Read-only LMDB access to strfry's environment (`MDB_RDONLY`), never opening a write transaction
-- [ ] Startup gates: refuse to run (loudly) if `Meta.dbVersion != 3` or `Meta.endianness` ≠ host
-- [ ] Reimplement strfry/golpe's custom comparators (`StringUint64`, `Uint64Uint64`, `StringUint64Uint64`) in Rust and register them via `mdb_set_compare` on the index sub-DBs LMDB2GraphQL scans
-- [ ] Comparator self-check at startup against a pinned fixture; **fail-closed** if our scan order disagrees with strfry's
 - [ ] Decode `EventPayload` (`0x00` raw + `0x01` zstd-dictionary) to return full event JSON
 - [ ] Query engine that resolves filters by scanning strfry's `Event__*` indexes (`Event__id`, `Event__pubkey`, `Event__kind`, `Event__pubkeyKind`, `Event__created_at`, `Event__tag`) and hydrating JSON via `EventPayload[levId]` point-lookups
 - [ ] `latestPerAuthor` via `Event__pubkeyKind` prefix scans (the query REQ cannot express)
@@ -97,4 +96,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-10 after initialization (Approach B; named LMDB2GraphQL)*
+*Last updated: 2026-06-11 — Phase 1 (LMDB Foundation & Comparator Proof) complete: golpe comparator reimplementation proven byte-exact, fail-closed comparator self-check (seek gate, CR-01 closed), 5/5 success criteria verified. Approach B de-risked.*
