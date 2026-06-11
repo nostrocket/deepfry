@@ -5,3 +5,7 @@ pub mod lmdb;
 /// Config loader — reads ~/deepfry/lmdb2graphql.yaml.
 /// Tests must use tempfile::tempdir() and call config::load_from() (CLAUDE.md).
 pub mod config;
+
+/// Query engine — filter/cursor/error contract types (Phase 3).
+/// Exposes the engine-facing types the GraphQL layer (Phase 4) calls.
+pub mod query;
