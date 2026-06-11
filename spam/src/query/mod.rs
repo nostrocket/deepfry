@@ -8,5 +8,6 @@
 /// - hydrate: plan 03-03 (TODO)
 /// - engine: plan 03-04 (TODO)
 pub mod filter;
+pub mod hydrate;
 pub mod merge;
 pub mod router;
