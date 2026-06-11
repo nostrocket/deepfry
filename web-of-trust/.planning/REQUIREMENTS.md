@@ -16,7 +16,7 @@ Operational reliability and throughput improvements motivated by a 40-batch prod
 ### Filter Size
 
 - [ ] **FILTER-01**: The default `batchSize` for relay REQ filters is reduced from 500 to 100 authors, staying within the default `maxFilterAuthors` of StrFry and the SQLite variable limit of Cloudflare D1 relays.
-- [ ] **FILTER-02**: `queryRelay` intercepts NOTICE messages from the relay's subscription and detects "filter item too large" (or equivalent); a relay that sends this NOTICE has its per-relay filter cap recorded and future REQs to that relay use chunked sub-queries at the detected cap. Relays that respond to an oversized REQ by closing the connection (connection-drop-on-REQ pattern) are also classified as having a small filter cap.
+- [x] **FILTER-02**: `queryRelay` intercepts NOTICE messages from the relay's subscription and detects "filter item too large" (or equivalent); a relay that sends this NOTICE has its per-relay filter cap recorded and future REQs to that relay use chunked sub-queries at the detected cap. Relays that respond to an oversized REQ by closing the connection (connection-drop-on-REQ pattern) are also classified as having a small filter cap.
 
 ### Frontier Prioritization
 
@@ -88,7 +88,7 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 | VALID-02 | Phase 5 | Complete |
 | VALID-03 | Phase 5 | Complete |
 | FILTER-01 | Phase 6 | Pending |
-| FILTER-02 | Phase 6 | Pending |
+| FILTER-02 | Phase 6 | Complete |
 | PERF-01 | Phase 8 | Pending |
 | PERF-02 | Phase 8 | Pending |
 | RELAY-01 | Phase 7 | Pending |

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: executing
-last_updated: "2026-06-11T08:23:21Z"
+status: verifying
+last_updated: "2026-06-11T08:29:26.520Z"
 last_activity: 2026-06-11 -- Phase 06 Plan 01 complete
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 2
-  percent: 25
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
@@ -27,7 +27,7 @@ progress:
 
 Phase: 06 (filter-size-per-relay-cap-detection) — EXECUTING
 Plan: 2 of 2
-Status: Executing Phase 06 (Plan 01 complete, Plan 02 pending)
+Status: Phase complete — ready for verification
 Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
 
 ## Performance Metrics
@@ -50,6 +50,7 @@ Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
 | Phase 8 = frontier + timeout + observability | PERF-01/02 touch GetStalePubkeys/MarkAttempted; TIMEOUT-01/02 and METRIC-01 all touch cmd/crawler or pkg/crawler event loop; all independent of relay health, can run in parallel with Phase 7 but grouped for coarse granularity; depends on Phase 5 for valid MarkAttempted UID stamps |
 | Phase 05-pubkey-validation-hardening P01 | 1200 | 3 tasks | 3 files |
 | Phase 06-filter-size-per-relay-cap-detection P01 | 117 | 2 tasks | 3 files |
+| Phase 06 P02 | 89 | 2 tasks | 2 files |
 
 ### Important Facts
 
@@ -90,3 +91,6 @@ None.
 - [Phase ?]: Inline recover-or-purge in MarkAttempted subsumes VALID-02 — no separate startup purge step needed; garbage nodes self-clean on first encounter
 - [Phase 06-01]: Floor for filterCap halving fixed at 10 (D-05); minCap=10 hardcoded in WithNoticeHandler closures; not config-driven
 - [Phase 06-01]: rs created before nostr.RelayConnect in New() to allow safe closure capture over pointer (avoids loop-variable bug)
+- [Phase ?]: rs.conn and rs.url used inside function; single call site updated
+- [Phase ?]: Caller manages sub.Unsub() per chunk — drainSubscription does not defer it, keeping per-chunk lifecycle explicit
+- [Phase ?]: Uses time.Since(subscribeStart) on Subscribe error return; no goroutine needed
