@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The service exits loudly if `Meta.dbVersion != 3` or `Meta.endianness` does not match the host
   3. Comparator self-check passes against the pinned fixture DB: scan order over each `Event__*` index matches strfry's known-correct order
   4. If the self-check fails (scan order mismatch), the service refuses to start (fail-closed, not silently wrong)
-  5. The pinned strfry version/digest is recorded in config/docs as a shared contract with the parent DeepFry stack**Plans**: 3 plans (3 waves)
+  5. The pinned strfry version/digest is recorded in config/docs as a shared contract with the parent DeepFry stack**Plans**: 4 plans (4 waves; 01-04 gap closure)
 
 **Wave 1**
 
@@ -45,6 +45,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 01-03-PLAN.md — Meta version/endianness gate, open all six Event__* indexes with correct comparators, fail-closed self-check, main startup gate (LMDB-01, LMDB-02, LMDB-03, LMDB-06)
+
+**Wave 4** *(gap closure — blocked on Wave 3 completion)*
+
+- [ ] 01-04-PLAN.md — Close CR-01: make the startup comparator self-check exercise the golpe comparator via MDB_SET_RANGE seeks on the adversarial pairs (fail-closed, non-vacuous); honesty fix for overstated docs (LMDB-06, LMDB-05)
 
 ### Phase 2: Payload Decoding & Index Scan Primitives
 
