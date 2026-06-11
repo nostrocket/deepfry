@@ -43,7 +43,7 @@ type relayState struct {
 	backoff   time.Duration
 	retryAt   time.Time
 	failures  atomic.Int32
-	filterCap int
+	filterCap atomic.Int32
 }
 
 type Crawler struct {
@@ -86,7 +86,8 @@ func New(cfg Config) (*Crawler, error) {
 	connected := 0
 
 	for _, url := range cfg.RelayURLs {
-		rs := &relayState{url: url, backoff: initialBackoff, filterCap: cfg.FilterBatchSize}
+		rs := &relayState{url: url, backoff: initialBackoff}
+		rs.filterCap.Store(int32(cfg.FilterBatchSize))
 		noticeHandler := nostr.WithNoticeHandler(func(notice string) {
 			handleFilterNotice(rs, notice, 10)
 		})
@@ -236,6 +237,7 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 		rs.alive = true
 		rs.backoff = initialBackoff
 		rs.failures.Store(0)
+		rs.filterCap.Store(int32(c.filterBatchSize))
 		kept = append(kept, rs)
 		log.Printf("Reconnected to relay: %s", rs.url)
 	}
@@ -495,14 +497,14 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 
 	authors := filter.Authors
 	for len(authors) > 0 {
-		cap := rs.filterCap
-		if cap <= 0 {
-			cap = 10 // safety guard
+		batchCap := int(rs.filterCap.Load())
+		if batchCap <= 0 {
+			batchCap = 10 // safety guard
 		}
 
 		chunk := authors
-		if len(authors) > cap {
-			chunk = authors[:cap]
+		if len(authors) > batchCap {
+			chunk = authors[:batchCap]
 		}
 		authors = authors[len(chunk):]
 
@@ -520,9 +522,14 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			// 500ms of Subscribe, treat as a filter-rejection and halve the cap.
 			if time.Since(subscribeStart) < 500*time.Millisecond &&
 				(strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write")) {
-				if rs.filterCap > 10 {
-					rs.filterCap = max(rs.filterCap/2, 10)
-					log.Printf("Relay %s: filter rejection drop, halved cap to %d; retrying chunk", relayURL, rs.filterCap)
+				old := rs.filterCap.Load()
+				if old > 10 {
+					newVal := old / 2
+					if newVal < 10 {
+						newVal = 10
+					}
+					rs.filterCap.Store(newVal)
+					log.Printf("Relay %s: filter rejection drop, halved cap to %d; retrying chunk", relayURL, newVal)
 					authors = append(chunk, authors...) // re-queue this chunk
 					continue
 				}
@@ -663,10 +670,21 @@ func cleanSubscribeError(err error) string {
 func handleFilterNotice(rs *relayState, notice string, minCap int) {
 	lower := strings.ToLower(notice)
 	if strings.Contains(lower, "filter") && strings.Contains(lower, "too large") {
-		if rs.filterCap > minCap {
-			rs.filterCap = max(rs.filterCap/2, minCap)
+		for {
+			old := rs.filterCap.Load()
+			if old <= int32(minCap) {
+				log.Printf("Relay %s NOTICE filter-too-large: cap already at floor %d", rs.url, minCap)
+				return
+			}
+			newVal := old / 2
+			if newVal < int32(minCap) {
+				newVal = int32(minCap)
+			}
+			if rs.filterCap.CompareAndSwap(old, newVal) {
+				log.Printf("Relay %s NOTICE filter-too-large: halved cap to %d", rs.url, newVal)
+				return
+			}
 		}
-		log.Printf("Relay %s NOTICE filter-too-large: halved cap to %d", rs.url, rs.filterCap)
 	}
 }
 
