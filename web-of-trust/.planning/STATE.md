@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: verifying
-last_updated: "2026-06-11T08:29:26.520Z"
-last_activity: 2026-06-11 -- Phase 06 Plan 01 complete
+status: active
+last_updated: "2026-06-11T16:40:00Z"
+last_activity: 2026-06-11 -- Phase 06 verified and complete
 progress:
   total_phases: 4
   completed_phases: 2
@@ -15,26 +15,26 @@ progress:
 
 # Project State: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
 
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-11
 
 ## Project Reference
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 06 — filter-size-per-relay-cap-detection
+**Current focus:** Phase 07 — relay-health-management (next)
 
 ## Current Position
 
-Phase: 06 (filter-size-per-relay-cap-detection) — EXECUTING
+Phase: 06 (filter-size-per-relay-cap-detection) — COMPLETE (verified 2026-06-11)
 Plan: 2 of 2
-Status: Phase complete — ready for verification
-Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
+Status: Phase verified — ready for Phase 07
+Last activity: 2026-06-11 -- Completed quick task 260611-ott: crawler logic flow spec (fable_logic_flow.md)
 
 ## Performance Metrics
 
-- Phases complete (v1.2): 0 / 4
-- Requirements delivered (v1.2): 0 / 12 (FILTER-01 and FILTER-02 foundation in P01; full delivery on P02)
-- Plans complete (v1.2): 1 / 0 (06-01 complete)
+- Phases complete (v1.2): 2 / 4
+- Requirements delivered (v1.2): 5 / 12 (VALID-01/02/03, FILTER-01, FILTER-02)
+- Plans complete (v1.2): 4 / 4
 
 ## Accumulated Context
 
@@ -51,6 +51,7 @@ Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
 | Phase 05-pubkey-validation-hardening P01 | 1200 | 3 tasks | 3 files |
 | Phase 06-filter-size-per-relay-cap-detection P01 | 117 | 2 tasks | 3 files |
 | Phase 06 P02 | 89 | 2 tasks | 2 files |
+| Phase 06 CR-01 fix | filterCap changed to atomic.Int32 after code review identified data race; CAS loop added to handleFilterNotice; filterCap reset on reconnect added (WR-03) |
 
 ### Important Facts
 
@@ -63,11 +64,10 @@ Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
 - METRIC: staleRemaining always 0 due to off-by-one in cmd/crawler/main.go metric formula.
 - Live config at `~/deepfry/web-of-trust.yaml` must not be edited for testing; use a temp `HOME`.
 - Integration tests gate on live Dgraph via `//go:build integration` / `make test-integration`.
+- Phase 06 used atomic.Int32 (not plain int) for filterCap after CR-01 review finding; go test -race passes.
 
 ### Todos
 
-- [ ] Plan Phase 5 (`/gsd-plan-phase 5`)
-- [ ] Plan Phase 6 (`/gsd-plan-phase 6`)
 - [ ] Plan Phase 7 (`/gsd-plan-phase 7`)
 - [ ] Plan Phase 8 (`/gsd-plan-phase 8`)
 
@@ -80,10 +80,11 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-fft | commit current uncommitted web-of-trust changes | 2026-06-10 | c62c2c5 | [260610-fft-commit-current-uncommitted-web-of-trust-](./quick/260610-fft-commit-current-uncommitted-web-of-trust-/) |
+| 260611-ott | Document crawler logic flow for cross-language reimplementation in fable_logic_flow.md | 2026-06-11 | b105f84 | [260611-ott-document-crawler-logic-flow-for-cross-la](./quick/260611-ott-document-crawler-logic-flow-for-cross-la/) |
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md` for full context. v1.2 roadmap defines Phases 5–8 covering 12 requirements. Phase 5 (pubkey validation) is the natural first target — it unblocks Phase 8's MarkAttempted UID stamping and cleans the DB before filter and relay health work begins.
+**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md` for full context. v1.2 roadmap defines Phases 5–8 covering 12 requirements. Phase 5 and 6 are complete. Phase 7 (relay health management) is next — it depends on Phase 6's filter-rejection failure class for RELAY-02 failure classification.
 
 ## Decisions
 
@@ -91,6 +92,7 @@ None.
 - [Phase ?]: Inline recover-or-purge in MarkAttempted subsumes VALID-02 — no separate startup purge step needed; garbage nodes self-clean on first encounter
 - [Phase 06-01]: Floor for filterCap halving fixed at 10 (D-05); minCap=10 hardcoded in WithNoticeHandler closures; not config-driven
 - [Phase 06-01]: rs created before nostr.RelayConnect in New() to allow safe closure capture over pointer (avoids loop-variable bug)
-- [Phase ?]: rs.conn and rs.url used inside function; single call site updated
-- [Phase ?]: Caller manages sub.Unsub() per chunk — drainSubscription does not defer it, keeping per-chunk lifecycle explicit
-- [Phase ?]: Uses time.Since(subscribeStart) on Subscribe error return; no goroutine needed
+- [Phase 06-02]: rs.conn and rs.url used inside function; single call site updated
+- [Phase 06-02]: Caller manages sub.Unsub() per chunk — drainSubscription does not defer it, keeping per-chunk lifecycle explicit
+- [Phase 06-02]: Uses time.Since(subscribeStart) on Subscribe error return; no goroutine needed
+- [Phase 06-CR]: filterCap uses atomic.Int32 (not plain int) — concurrent access from NOTICE handler goroutine required this
