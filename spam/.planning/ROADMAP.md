@@ -114,7 +114,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. LMDB Foundation & Comparator Proof | 4/4 | Complete   | 2026-06-11 |
+| 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
