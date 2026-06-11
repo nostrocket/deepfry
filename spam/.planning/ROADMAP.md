@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (4 plans complete 2026-06-11; CR-01 gap closed — seek gate added, LMDB-06 correctness restored)
 - [x] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index (3 plans complete 2026-06-11; LMDB-07/08/09 satisfied)
-- [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination)
+- [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — COMPLETE 2026-06-12
 - [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
 - [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment
 
@@ -100,7 +100,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Waves 2-3 completion)*
 
-- [ ] 03-04-PLAN.md — engine: execute_query (route+merge+over-fetch+NIP-40+cursor) and latest_per_author grouped buckets (QRY-01, QRY-02, QRY-03, QRY-05)
+- [x] 03-04-PLAN.md — engine: execute_query (route+merge+over-fetch+NIP-40+cursor) and latest_per_author grouped buckets (QRY-01, QRY-02, QRY-03, QRY-05) — COMPLETE 2026-06-12
 
 ### Phase 4: GraphQL API
 

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-query-engine-03-PLAN.md
+stopped_at: Completed 03-query-engine-04-PLAN.md
 last_updated: "2026-06-12T00:00:00Z"
-last_activity: 2026-06-11 -- Phase 03 execution started
+last_activity: 2026-06-12 -- Phase 03 completed
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 11
-  completed_plans: 9
-  percent: 40
+  completed_plans: 10
+  percent: 60
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 03 (query-engine) — EXECUTING
-Plan: 3 of 4
-Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 03 plan 03-03 completed (hydration step)
+Phase: 03 (query-engine) — COMPLETE
+Plan: 4 of 4 — DONE
+Status: Phase 3 complete; ready for Phase 4
+Last activity: 2026-06-12 -- Phase 03 plan 03-04 completed (query engine API)
 
-Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases remaining)
+Progress: [██████░░░░] 60% (Phases 1+2+3 complete; 2 phases remaining)
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases re
 *Updated after each plan completion*
 | Phase 03-query-engine P02 | 25 minutes | 3 tasks | 3 files |
 | Phase 03-query-engine P03 | 8 minutes | 2 tasks | 2 files |
+| Phase 03-query-engine P04 | 25 minutes | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,7 @@ Recent decisions affecting current work:
 - Plan 02-03 (2026-06-11): scan_index_bounded/windowed — ScanDirection, bounded forward/reverse with move_through_duplicate_values; limit=0 windowed via Included+levId-skip (DUPSORT-correct); scan_index_windowed exposed for test-only small-window override; index-specific start key lengths to avoid golpe C comparator SIGABRT; all six indexes dispatched via indexes.rs open helpers; 53 tests pass; LMDB-09 satisfied
 - [Phase ?]: No external hex crate: inline decode_hex in router.rs avoids new dep legitimacy concern
 - Plan 03-03 (2026-06-12): LevIdNotFound propagated as hard error (not skip) — a levId from a real index scan missing in EventPayload is structural corruption; decode failures use skip-warn-count (D-11); 57 tests pass
+- Plan 03-04 (2026-06-12): execute_query over-fetch+backfill+cursor + latest_per_author grouped buckets + is_expired NIP-40 predicate — QRY-01/02/03/05 satisfied; router.rs tag-filter fixed to hex-decode tag values to raw bytes matching strfry index format; 65 lib tests pass
 
 ### Pending Todos
 
@@ -106,6 +108,6 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-06-12T00:00:00Z
-Stopped at: Completed 03-query-engine-03-PLAN.md
-Resume: execute Phase 03 plan 04 — query engine (execute_query + latestPerAuthor)
-Resume file: .planning/phases/03-query-engine/03-CONTEXT.md
+Stopped at: Completed 03-query-engine-04-PLAN.md (Phase 03 complete)
+Resume: execute Phase 04 — GraphQL API
+Resume file: .planning/phases/04-graphql-api/ (next phase plans)
