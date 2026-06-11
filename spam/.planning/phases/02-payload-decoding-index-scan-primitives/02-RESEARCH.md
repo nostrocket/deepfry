@@ -742,22 +742,25 @@ The short-txn invariant (D-08) is a behavioral contract: "no read txn is held ac
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **zstd capacity ceiling: fixed vs dynamic**
    - What we know: `Decompressor::decompress(data, capacity)` returns `Err` if decompressed output would exceed `capacity`. `zstd_safe::get_frame_content_size` can read the frame header's content size field, but requires `zstd-safe` sub-crate access.
    - What's unclear: Whether events in the live compacted DB ever exceed 64 KiB decompressed; whether `zstd_safe` is exposed directly via `zstd = "0.13.3"`.
    - Recommendation: Use a fixed 4 MiB ceiling for Phase 2. If `zstd_safe` is accessible, add a `get_frame_content_size`-based dynamic path in a follow-up.
+   - **RESOLVED:** Fixed 4 MiB ceiling committed in Plan 02-02 Task 2 (`MAX_EVENT_DECOMPRESSED_SIZE`); dynamic `get_frame_content_size` path deferred to a follow-up.
 
 2. **`Compressor::with_dictionary` API for test synthesis**
    - What we know: `Decompressor::with_prepared_dictionary` exists and is verified. The compressor API is needed only for test synthesis of `0x01` payloads.
    - What's unclear: Exact `zstd::bulk::Compressor::with_dictionary` signature (not verified).
    - Recommendation: Plan a task to verify the compressor API when setting up the test; fallback is a hard-coded pre-compressed byte array.
+   - **RESOLVED:** Plan 02-02 Task 2 instructs the executor to verify the compressor API at test-setup time, with an explicit fallback to a pre-baked compressed byte array.
 
 3. **`once_cell` vs `std::sync::OnceLock` for per-entry cache**
    - What we know: `once_cell` 0.46.0 is already in the transitive dependency graph (Cargo.lock). `std::sync::OnceLock` is stable since Rust 1.70 (the project targets current stable).
    - What's unclear: Whether per-dictId `OnceLock` or `RwLock<HashMap>` is preferred by the team.
    - Recommendation: `RwLock<HashMap<u32, Arc<DecoderDictionary<'static>>>>` — handles multiple dictIds, write-once after first miss, read-many thereafter. Claude's discretion.
+   - **RESOLVED:** Plan 02-02 Task 1 adopts `RwLock<HashMap<u32, Arc<DecoderDictionary<'static>>>>` (documented as Claude's discretion).
 
 ---
 
