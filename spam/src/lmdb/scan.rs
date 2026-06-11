@@ -154,20 +154,28 @@ pub fn scan_index_bounded(
 /// up to `window_size` pairs, then drops the `RoTxn` before opening the next. This keeps
 /// read transactions short (D-08) and allows strfry to reclaim LMDB free pages (LMDB-09).
 ///
-/// ## DUPSORT resume semantics
+/// ## DUPSORT resume semantics (CR-01 — key-granular windowing)
 ///
 /// `Event__*` indexes use `MDB_DUPSORT + MDB_INTEGERDUP`: multiple events can share the same
-/// composite key (e.g., two events with the same `kind + created_at`). A batch boundary may
-/// fall in the middle of a duplicate-key group. Using `Bound::Excluded(last_key)` on resume
-/// would skip ALL remaining VALUES for that key, silently dropping levIds (RESEARCH.md Pitfall 5).
+/// composite key (e.g., two events with the same `kind + created_at`). A naive batch boundary
+/// can fall in the middle of a duplicate-key group, and resuming correctly across that split
+/// is direction-asymmetric in heed 0.22.1 (PROVEN ordering, see CR-01):
 ///
-/// Solution: resume with `Bound::Included(last_key)` and skip entries whose levId is <=
-/// the last-seen levId for the same key. levIds within a DUPSORT group are stored in ascending
-/// order by `MDB_INTEGERDUP`, so this correctly resumes past the last-seen levId in the group
-/// without re-emitting it.
+/// - **Forward** (`range`, end-open): resuming with `Bound::Included(last_key)` re-walks the
+///   ENTIRE dup group from its smallest dup, so a `levId <= last_seen` skip would suffice.
+/// - **Reverse** (`rev_range`, the bound is the START of the reverse walk): resuming with
+///   `Bound::Included(last_key)` makes heed position the cursor at the SMALLEST dup of that
+///   key (`MDB_SET_RANGE` semantics in `move_on_range_end`) and then immediately step to the
+///   previous KEY — it does NOT re-walk the higher, still-unemitted dups of the boundary key.
+///   A levId skip predicate cannot recover them because heed never yields them. This silently
+///   drops levIds (the CR-01 blocker).
 ///
-/// For non-duplicate keys (the common case), `resume_lev_id = 0` after any batch entry whose
-/// key differs from `resume_key`, so the skip is a no-op.
+/// **Fix — key-granular windowing (uniform across both directions):** a window never splits a
+/// dup group. `collect_window` fills up to `window_size` entries, then DRAINS the remaining
+/// dups of the last key so the window always ends on a KEY boundary. The next window resumes
+/// with `Bound::Excluded(resume_key)`, which skips the fully-consumed boundary key entirely.
+/// No levId is ever dropped or re-emitted, in either direction. A window may exceed
+/// `window_size` by at most one dup group's worth of entries (bounded; dup groups are small).
 ///
 /// Intended to be called via `scan_index_bounded` with `limit=0`. Exposed here so tests
 /// can supply a small `window_size` to prove multi-batch behavior.
@@ -179,10 +187,10 @@ pub fn scan_index_windowed(
     window_size: usize,
 ) -> Result<Vec<(Vec<u8>, LevId)>, IndexError> {
     let mut all_results: Vec<(Vec<u8>, LevId)> = Vec::new();
+    // Resume cursor is KEY-only. The first window includes `start_key` (Included); every
+    // subsequent window excludes the fully-drained boundary key (Excluded). Because
+    // `collect_window` drains the boundary dup group, no per-levId resume state is needed.
     let mut resume_key: Vec<u8> = start_key.to_vec();
-    // On resume, skip entries with the same key and levId <= resume_lev_id.
-    // This handles DUPSORT mid-group batch boundaries (see doc above).
-    let mut resume_lev_id: LevId = 0;
     let mut first_batch = true;
 
     loop {
@@ -191,51 +199,19 @@ pub fn scan_index_windowed(
         let batch = match short_name {
             "Event__id" | "Event__pubkey" | "Event__tag" => {
                 let db = open_index_string_uint64(env, &rtxn, short_name)?;
-                collect_window(
-                    &db,
-                    &rtxn,
-                    direction,
-                    &resume_key,
-                    resume_lev_id,
-                    first_batch,
-                    window_size,
-                )?
+                collect_window(&db, &rtxn, direction, &resume_key, first_batch, window_size)?
             }
             "Event__kind" => {
                 let db = open_index_uint64_uint64(env, &rtxn, short_name)?;
-                collect_window(
-                    &db,
-                    &rtxn,
-                    direction,
-                    &resume_key,
-                    resume_lev_id,
-                    first_batch,
-                    window_size,
-                )?
+                collect_window(&db, &rtxn, direction, &resume_key, first_batch, window_size)?
             }
             "Event__pubkeyKind" => {
                 let db = open_index_string_uint64_uint64(env, &rtxn, short_name)?;
-                collect_window(
-                    &db,
-                    &rtxn,
-                    direction,
-                    &resume_key,
-                    resume_lev_id,
-                    first_batch,
-                    window_size,
-                )?
+                collect_window(&db, &rtxn, direction, &resume_key, first_batch, window_size)?
             }
             "Event__created_at" => {
                 let db = open_index_created_at(env, &rtxn)?;
-                collect_window(
-                    &db,
-                    &rtxn,
-                    direction,
-                    &resume_key,
-                    resume_lev_id,
-                    first_batch,
-                    window_size,
-                )?
+                collect_window(&db, &rtxn, direction, &resume_key, first_batch, window_size)?
             }
             _ => {
                 return Err(IndexError::SubDbNotFound {
@@ -252,10 +228,11 @@ pub fn scan_index_windowed(
             break;
         }
 
-        // Record the last key AND last levId for the next window's resume cursor.
-        let (last_key, last_lev_id) = batch.last().unwrap();
+        // `collect_window` guarantees the batch ends on a KEY boundary (boundary dup group
+        // fully drained). The next window resumes with Bound::Excluded(resume_key), so the
+        // boundary key is not revisited and no dup is dropped or duplicated.
+        let (last_key, _last_lev_id) = batch.last().unwrap();
         resume_key = last_key.clone();
-        resume_lev_id = *last_lev_id;
 
         all_results.extend(batch);
     }
@@ -331,39 +308,55 @@ where
     Ok(results)
 }
 
-/// Collect a single window of up to `window_size` pairs for the windowing loop.
+/// Collect a single window for the windowing loop, ending on a KEY boundary (CR-01).
 ///
-/// ## Resume semantics (DUPSORT-correct)
+/// ## Resume semantics — key-granular, DUPSORT-correct in BOTH directions
 ///
-/// - `first_batch = true`: use `Bound::Included(resume_key)`, `resume_lev_id = 0` (no skip).
-/// - `first_batch = false`: use `Bound::Included(resume_key)` and skip entries with the same
-///   key where `lev_id <= resume_lev_id`. This correctly handles DUPSORT mid-group batch
-///   boundaries — `Bound::Excluded(last_key)` would skip ALL remaining VALUES for that key.
-///   For non-duplicate keys (most entries), key != resume_key after the first entry, so the
-///   skip is a no-op.
+/// - `first_batch = true`: the bound on `resume_key` is INCLUSIVE — `resume_key` is the
+///   caller-supplied scan start and must be considered.
+/// - `first_batch = false`: the bound is EXCLUSIVE — the previous window fully drained
+///   `resume_key`'s dup group (see below), so the boundary key must NOT be revisited.
+///   Forward uses `Bound::Excluded` as the range START; reverse uses `Bound::Excluded` as the
+///   `rev_range` END (which `move_on_range_end` resolves to "largest key strictly less than").
+///
+/// ## Why drain to a key boundary (the CR-01 fix)
+///
+/// heed 0.22.1 resumes forward and reverse DUPSORT groups asymmetrically. A forward
+/// `Bound::Included(key)` re-walks a key's entire dup group from its smallest dup, so a
+/// levId-skip predicate would work. But a reverse `rev_range` with `Bound::Included(key)` as
+/// its END bound positions the cursor at the SMALLEST dup of `key` and then steps to the
+/// previous KEY — the higher, still-unemitted dups of that key are NEVER yielded, so no skip
+/// predicate can recover them (PROVEN: see tests/dupsort_resume_test.rs). To make resume
+/// correct and symmetric, we never split a dup group across a window: once `window_size`
+/// entries are collected, we keep consuming while the next entry shares the last emitted
+/// key, so every window ends exactly on a key boundary. The loop then resumes with the
+/// EXCLUSIVE bound, skipping the fully-consumed key. A window may exceed `window_size` by at
+/// most one dup group (bounded — dup groups are small in practice).
 fn collect_window<C>(
     db: &heed::Database<Bytes, Bytes, C>,
     rtxn: &heed::RoTxn<'_>,
     direction: ScanDirection,
     resume_key: &[u8],
-    resume_lev_id: LevId,
     first_batch: bool,
     window_size: usize,
 ) -> Result<Vec<(Vec<u8>, LevId)>, IndexError>
 where
     C: heed::Comparator,
 {
-    let mut results = Vec::new();
+    let mut results: Vec<(Vec<u8>, LevId)> = Vec::new();
 
     match direction {
         ScanDirection::Forward => {
-            // Always use Included — we handle the "skip already-seen" ourselves for DUPSORT.
-            let range = (Bound::Included(resume_key), Bound::Unbounded);
+            // First window: Included (consider the caller's start key). Resumed window:
+            // Excluded (the previous window fully drained this key's dup group).
+            let lower = if first_batch {
+                Bound::Included(resume_key)
+            } else {
+                Bound::Excluded(resume_key)
+            };
+            let range = (lower, Bound::Unbounded);
             let iter = db.range(rtxn, &range)?.move_through_duplicate_values();
             for item in iter {
-                if results.len() >= window_size {
-                    break;
-                }
                 let (key, value) = item?;
                 if value.len() < 8 {
                     tracing::warn!(
@@ -373,21 +366,27 @@ where
                     continue;
                 }
                 let lev_id = u64::from_le_bytes(value[0..8].try_into().unwrap());
-                // On resume (not first batch), skip the boundary entry we already emitted
-                // and any earlier dups in the same DUPSORT group.
-                if !first_batch && key == resume_key && lev_id <= resume_lev_id {
-                    continue;
+                // Stop once the window is full AND we have crossed onto a new key — i.e. drain
+                // the current key's remaining dups so the window ends on a key boundary.
+                if results.len() >= window_size
+                    && results.last().map(|(k, _)| k.as_slice()) != Some(key)
+                {
+                    break;
                 }
                 results.push((key.to_vec(), lev_id));
             }
         }
         ScanDirection::Reverse => {
-            let range = (Bound::Unbounded, Bound::Included(resume_key));
+            // First window: Included upper bound. Resumed window: Excluded upper bound —
+            // resolves to the largest key strictly less than the drained boundary key.
+            let upper = if first_batch {
+                Bound::Included(resume_key)
+            } else {
+                Bound::Excluded(resume_key)
+            };
+            let range = (Bound::Unbounded, upper);
             let iter = db.rev_range(rtxn, &range)?.move_through_duplicate_values();
             for item in iter {
-                if results.len() >= window_size {
-                    break;
-                }
                 let (key, value) = item?;
                 if value.len() < 8 {
                     tracing::warn!(
@@ -397,12 +396,11 @@ where
                     continue;
                 }
                 let lev_id = u64::from_le_bytes(value[0..8].try_into().unwrap());
-                // On resume, skip the boundary entry and any dups already seen.
-                // For reverse, dups in INTEGERDUP order are ascending; we saw the LAST
-                // (highest) levId of the group in the previous batch, so skip lev_id >= resume_lev_id
-                // when the key matches.
-                if !first_batch && key == resume_key && lev_id >= resume_lev_id {
-                    continue;
+                // Drain the current key's remaining dups before stopping (see Forward arm).
+                if results.len() >= window_size
+                    && results.last().map(|(k, _)| k.as_slice()) != Some(key)
+                {
+                    break;
                 }
                 results.push((key.to_vec(), lev_id));
             }
