@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-query-engine-02-PLAN.md
-last_updated: "2026-06-11T15:55:36.464Z"
+stopped_at: Completed 03-query-engine-03-PLAN.md
+last_updated: "2026-06-12T00:00:00Z"
 last_activity: 2026-06-11 -- Phase 03 execution started
 progress:
   total_phases: 5
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 ## Current Position
 
 Phase: 03 (query-engine) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
-Last activity: 2026-06-11 -- Phase 03 execution started
+Last activity: 2026-06-12 -- Phase 03 plan 03-03 completed (hydration step)
 
 Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases remaining)
 
@@ -55,6 +55,7 @@ Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases re
 
 *Updated after each plan completion*
 | Phase 03-query-engine P02 | 25 minutes | 3 tasks | 3 files |
+| Phase 03-query-engine P03 | 8 minutes | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,7 @@ Recent decisions affecting current work:
 - Plan 02-02 (2026-06-11): DictCache + 0x01 zstd-dictionary decode path — DictCache{RwLock<HashMap<u32,Arc<DecoderDictionary<'static>>>>}; get_or_load: read-lock fast path, short-txn miss path, DecoderDictionary::copy OUTSIDE txn+write-lock; decode_event_payload_with_cache(raw,cache,env); MAX_EVENT_DECOMPRESSED_SIZE=4MiB; TruncatedZstdPayload/DictNotFound/ZstdError guards all tested; synthetic round-trip via from_continuous+Compressor::with_dictionary; .create()=0, write_txn=0; LMDB-08 satisfied; 38 tests pass
 - Plan 02-03 (2026-06-11): scan_index_bounded/windowed — ScanDirection, bounded forward/reverse with move_through_duplicate_values; limit=0 windowed via Included+levId-skip (DUPSORT-correct); scan_index_windowed exposed for test-only small-window override; index-specific start key lengths to avoid golpe C comparator SIGABRT; all six indexes dispatched via indexes.rs open helpers; 53 tests pass; LMDB-09 satisfied
 - [Phase ?]: No external hex crate: inline decode_hex in router.rs avoids new dep legitimacy concern
+- Plan 03-03 (2026-06-12): LevIdNotFound propagated as hard error (not skip) — a levId from a real index scan missing in EventPayload is structural corruption; decode failures use skip-warn-count (D-11); 57 tests pass
 
 ### Pending Todos
 
@@ -103,7 +105,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-11T15:55:36.460Z
-Stopped at: Completed 03-query-engine-02-PLAN.md
-Resume: execute Phase 03 — GraphQL schema + query engine
+Last session: 2026-06-12T00:00:00Z
+Stopped at: Completed 03-query-engine-03-PLAN.md
+Resume: execute Phase 03 plan 04 — query engine (execute_query + latestPerAuthor)
 Resume file: .planning/phases/03-query-engine/03-CONTEXT.md

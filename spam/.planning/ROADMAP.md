@@ -96,7 +96,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-03-PLAN.md — hydrate_lev_ids: post-merge EventPayload point-lookup + decode with skip-warn-count (QRY-04)
+- [x] 03-03-PLAN.md — hydrate_lev_ids: post-merge EventPayload point-lookup + decode with skip-warn-count (QRY-04) — COMPLETE 2026-06-12
 
 **Wave 4** *(blocked on Waves 2-3 completion)*
 
@@ -141,6 +141,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 2/4 | In Progress|  |
+| 3. Query Engine | 3/4 | In Progress|  |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
