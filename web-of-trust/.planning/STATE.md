@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-11T07:37:30.779Z"
-last_activity: 2026-06-10 -- Phase 05 execution started
+last_updated: "2026-06-11T08:23:21Z"
+last_activity: 2026-06-11 -- Phase 06 Plan 01 complete
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 2
+  total_plans: 4
   completed_plans: 2
   percent: 25
 ---
@@ -21,20 +21,20 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 05 — pubkey-validation-hardening
+**Current focus:** Phase 06 — filter-size-per-relay-cap-detection
 
 ## Current Position
 
-Phase: 05 (pubkey-validation-hardening) — EXECUTING
+Phase: 06 (filter-size-per-relay-cap-detection) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
-Last activity: 2026-06-10 -- Phase 05 execution started
+Status: Executing Phase 06 (Plan 01 complete, Plan 02 pending)
+Last activity: 2026-06-11 -- Phase 06 Plan 01 complete
 
 ## Performance Metrics
 
 - Phases complete (v1.2): 0 / 4
-- Requirements delivered (v1.2): 0 / 12
-- Plans complete (v1.2): 0 / 0
+- Requirements delivered (v1.2): 0 / 12 (FILTER-01 and FILTER-02 foundation in P01; full delivery on P02)
+- Plans complete (v1.2): 1 / 0 (06-01 complete)
 
 ## Accumulated Context
 
@@ -49,6 +49,7 @@ Last activity: 2026-06-10 -- Phase 05 execution started
 | Phase 7 = relay health management | Depends on Phase 6 because FILTER-02 introduces the filter-rejection failure class that RELAY-02 needs to classify; RELAY-01/02 are coupled (persistence + classification) |
 | Phase 8 = frontier + timeout + observability | PERF-01/02 touch GetStalePubkeys/MarkAttempted; TIMEOUT-01/02 and METRIC-01 all touch cmd/crawler or pkg/crawler event loop; all independent of relay health, can run in parallel with Phase 7 but grouped for coarse granularity; depends on Phase 5 for valid MarkAttempted UID stamps |
 | Phase 05-pubkey-validation-hardening P01 | 1200 | 3 tasks | 3 files |
+| Phase 06-filter-size-per-relay-cap-detection P01 | 117 | 2 tasks | 3 files |
 
 ### Important Facts
 
@@ -87,3 +88,5 @@ None.
 
 - [Phase ?]: Replace nostr.GetPublicKey (key-derivation) with dgraph.ValidatePubkey (hex-regex) at both crawler call sites
 - [Phase ?]: Inline recover-or-purge in MarkAttempted subsumes VALID-02 — no separate startup purge step needed; garbage nodes self-clean on first encounter
+- [Phase 06-01]: Floor for filterCap halving fixed at 10 (D-05); minCap=10 hardcoded in WithNoticeHandler closures; not config-driven
+- [Phase 06-01]: rs created before nostr.RelayConnect in New() to allow safe closure capture over pointer (avoids loop-variable bug)
