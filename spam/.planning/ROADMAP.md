@@ -69,7 +69,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — DictCache (lazy, concurrency-safe) + 0x01 zstd-dictionary decode path with capacity ceiling, synthetic round-trip test (LMDB-08)
+- [x] 02-02-PLAN.md — DictCache (lazy, concurrency-safe) + 0x01 zstd-dictionary decode path with capacity ceiling, synthetic round-trip test (LMDB-08) — COMPLETE 2026-06-11
 - [ ] 02-03-PLAN.md — Bounded forward/reverse/windowed Event__* scan primitives (DUPSORT-aware, short per-call txns), golden-vector tests (LMDB-09)
 
 ### Phase 3: Query Engine
@@ -124,7 +124,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
-| 2. Payload Decoding & Index Scan Primitives | 1/3 | In progress | 2026-06-11 |
+| 2. Payload Decoding & Index Scan Primitives | 2/3 | In progress | 2026-06-11 |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
