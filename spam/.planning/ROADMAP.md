@@ -61,7 +61,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A `0x01` (zstd-dictionary-compressed) EventPayload is decoded using the correct `CompressionDictionary[dictId]`
   3. Read transactions are opened and closed per-query (not held open across queries), so strfry can reclaim free pages without `data.mdb` growth
 
-**Plans**: TBD
+**Plans**: 3 plans (2 waves)
+
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Add zstd dep (legitimacy gate), NostrEvent/DecodedEvent types, open EventPayload/CompressionDictionary read-only, 0x00 raw-JSON decode (LMDB-07)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-02-PLAN.md — DictCache (lazy, concurrency-safe) + 0x01 zstd-dictionary decode path with capacity ceiling, synthetic round-trip test (LMDB-08)
+- [ ] 02-03-PLAN.md — Bounded forward/reverse/windowed Event__* scan primitives (DUPSORT-aware, short per-call txns), golden-vector tests (LMDB-09)
 
 ### Phase 3: Query Engine
 
@@ -115,7 +124,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
-| 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
+| 2. Payload Decoding & Index Scan Primitives | 0/3 | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
