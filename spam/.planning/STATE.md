@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-06-11T10:22:00.000Z"
-last_activity: 2026-06-11 -- Plan 02-02 complete (DictCache + 0x01 zstd decode path, LMDB-08)
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-06-11T10:31:00.000Z"
+last_activity: 2026-06-11 -- Plan 02-03 complete (scan primitives — scan_index_bounded/windowed, LMDB-09)
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
-  percent: 32
+  completed_plans: 7
+  percent: 43
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 02 (payload-decoding-index-scan-primitives) — EXECUTING
-Plan: 3 of 3 (Plans 02-01 and 02-02 complete)
-Status: Executing Phase 02 — Plans 02-01/02-02 done, 02-03 next
-Last activity: 2026-06-11 -- Plan 02-02 complete (DictCache + 0x01 zstd decode path, LMDB-08)
+Phase: 02 (payload-decoding-index-scan-primitives) — COMPLETE
+Plan: 3 of 3 (Plans 02-01, 02-02, 02-03 all complete)
+Status: Phase 02 complete — all 3 plans done; Phase 03 next
+Last activity: 2026-06-11 -- Plan 02-03 complete (scan_index_bounded/windowed, LMDB-09; 53 tests pass)
 
-Progress: [████░░░░░░] 32% (Phase 1 complete; Plans 02-01/02-02 done; 02-03 + 3 phases remaining)
+Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases remaining)
 
 ## Performance Metrics
 
@@ -45,7 +45,7 @@ Progress: [████░░░░░░] 32% (Phase 1 complete; Plans 02-01/02
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-lmdb-foundation-comparator-proof | 4/4 | ~115 min | ~29 min |
-| 02-payload-decoding-index-scan-primitives | 2/3 | ~27 min | ~13 min |
+| 02-payload-decoding-index-scan-primitives | 3/3 | ~33 min | ~11 min |
 
 **Recent Trend:**
 
@@ -75,6 +75,7 @@ Recent decisions affecting current work:
 - Plan 02-01 (2026-06-11): EventPayload 0x00 decode foundation — NostrEvent (lenient, 7 typed fields, no deny_unknown_fields D-02; tags Vec<Vec<String>> D-03) + DecodedEvent{event, raw_json} (D-01 exact retained bytes); EventPayload/CompressionDictionary read-only IntegerComparator opens; get_event_payload short txn + copy-out (D-08); decode_payload_skip_on_error skip+warn+count (D-11); 0x01 zstd arm returns UnknownTypeTag (Plan 02-02 wires it); all PayloadError zstd variants defined now for stable API; LMDB-07 verified — all 11 fixture levIds decode against Event__id.json golden vectors; 25 tests pass
 - Plan 01-04 (2026-06-11): CR-01 gap closed — seek_first_ge_lev_id added to indexes.rs (MDB_SET_RANGE via heed db.range()); run_comparator_self_check upgraded to two-phase: Phase 1 physical-order integrity scan + Phase 2 comparator seek gate; ComparatorSeekMismatch error variant; non-vacuous test proves memcmp landing=levId=4 (kind=1) != golpe-correct levId=2 (kind=256); 01-03-SUMMARY honesty fixed; 19 tests pass; LMDB-06/LMDB-05/D-03/D-04 correctness restored
 - Plan 02-02 (2026-06-11): DictCache + 0x01 zstd-dictionary decode path — DictCache{RwLock<HashMap<u32,Arc<DecoderDictionary<'static>>>>}; get_or_load: read-lock fast path, short-txn miss path, DecoderDictionary::copy OUTSIDE txn+write-lock; decode_event_payload_with_cache(raw,cache,env); MAX_EVENT_DECOMPRESSED_SIZE=4MiB; TruncatedZstdPayload/DictNotFound/ZstdError guards all tested; synthetic round-trip via from_continuous+Compressor::with_dictionary; .create()=0, write_txn=0; LMDB-08 satisfied; 38 tests pass
+- Plan 02-03 (2026-06-11): scan_index_bounded/windowed — ScanDirection, bounded forward/reverse with move_through_duplicate_values; limit=0 windowed via Included+levId-skip (DUPSORT-correct); scan_index_windowed exposed for test-only small-window override; index-specific start key lengths to avoid golpe C comparator SIGABRT; all six indexes dispatched via indexes.rs open helpers; 53 tests pass; LMDB-09 satisfied
 
 ### Pending Todos
 
@@ -99,7 +100,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-11T10:22:00.000Z
-Stopped at: Completed 02-02-PLAN.md
-Resume: execute Plan 02-03 (index scan primitives) next
-Resume file: .planning/phases/02-payload-decoding-index-scan-primitives/02-03-PLAN.md
+Last session: 2026-06-11T10:31:00.000Z
+Stopped at: Completed 02-03-PLAN.md (Phase 02 complete)
+Resume: execute Phase 03 — GraphQL schema + query engine
+Resume file: None (Phase 03 plans not yet created — run /gsd-plan-phase for Phase 03)
