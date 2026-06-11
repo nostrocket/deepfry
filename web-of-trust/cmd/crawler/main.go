@@ -74,6 +74,7 @@ func main() {
 		Timeout:         cfg.Timeout,
 		Debug:           cfg.Debug,
 		ForwardRelayURL: cfg.ForwardRelayURL,
+		FilterBatchSize: cfg.RelayFilterBatchSize,
 		OnConnectFail: func(url string) {
 			if err := config.RemoveRelayURL(url); err != nil {
 				log.Printf("Warning: could not remove relay %s from config: %v", url, err)
@@ -106,8 +107,7 @@ mainLoop:
 		}
 
 		// Get stale pubkeys to process
-		const batchSize = 500
-		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, batchSize)
+		pubkeys, err := dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.RelayFilterBatchSize)
 		if err != nil {
 			log.Printf("Error getting stale pubkeys: %v", err)
 			break
@@ -131,7 +131,7 @@ mainLoop:
 			break
 		}
 
-		// The stale-pubkey query now bounds the batch itself (batchSize).
+		// The stale-pubkey query now bounds the batch itself (cfg.RelayFilterBatchSize).
 		totalStale := len(pubkeys)
 
 		// Reconnect any dead relays before processing
