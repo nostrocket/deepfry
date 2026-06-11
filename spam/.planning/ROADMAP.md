@@ -13,7 +13,7 @@ LMDB2GraphQL is built in five dependency-ordered horizontal layers. Phase 1 is a
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (3 plans complete 2026-06-10; gap closure pending — CR-01: self-check must exercise the comparator via range-seek)
+- [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (4 plans complete 2026-06-11; CR-01 gap closed — seek gate added, LMDB-06 correctness restored)
 - [ ] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index
 - [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination)
 - [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(gap closure — blocked on Wave 3 completion)*
 
-- [ ] 01-04-PLAN.md — Close CR-01: make the startup comparator self-check exercise the golpe comparator via MDB_SET_RANGE seeks on the adversarial pairs (fail-closed, non-vacuous); honesty fix for overstated docs (LMDB-06, LMDB-05)
+- [x] 01-04-PLAN.md — Close CR-01: make the startup comparator self-check exercise the golpe comparator via MDB_SET_RANGE seeks on the adversarial pairs (fail-closed, non-vacuous); honesty fix for overstated docs (LMDB-06, LMDB-05) — COMPLETE 2026-06-11
 
 ### Phase 2: Payload Decoding & Index Scan Primitives
 
@@ -114,7 +114,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. LMDB Foundation & Comparator Proof | 3/3 | Complete   | 2026-06-10 |
+| 1. LMDB Foundation & Comparator Proof | 4/4 | Complete   | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 0/TBD | Not started | - |
 | 3. Query Engine | 0/TBD | Not started | - |
 | 4. GraphQL API | 0/TBD | Not started | - |
