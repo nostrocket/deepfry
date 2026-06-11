@@ -26,7 +26,7 @@
   2. After the startup migration or `healthcheck -purge` run, a DQL query for pubkeys not matching `^[0-9a-f]{64}$` returns zero results — the 19 known garbage nodes and any others are gone. (Per phase CONTEXT.md, the explicit migration step VALID-02 is dropped; VALID-03's inline recover/purge in `MarkAttempted` removes/corrects garbage nodes the first time they surface from the frontier.)
   3. When `MarkAttempted` is called for a pubkey that fails the hex validator, the node's `last_attempt` is updated via a UID-based mutation — the node no longer re-enters the stale frontier on every batch.
 
-**Plans**: 2 plansPlans:
+**Plans**: 2 plans
 **Wave 1**
 
 - [x] 05-01-PLAN.md — Validator swap (VALID-01), MarkAttempted recover-or-purge (VALID-03/02), validator unit tests
@@ -46,7 +46,14 @@
   2. When a relay sends a NOTICE containing "filter item too large" (or equivalent), `queryRelay` records the per-relay cap and subsequent REQs to that relay use chunked sub-queries at the detected limit — the relay is not discarded, just throttled.
   3. A relay that responds to a REQ by closing the connection (connection-drop-on-REQ pattern) is classified as having a small filter cap, and future batches to that relay are sized accordingly.
 
-**Plans**: TBD
+**Plans**: 2 plans
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — Config field relay_filter_batch_size (FILTER-01, D-01/D-02), filterCap on relayState (D-03), handleFilterNotice helper (D-04/D-05), WithNoticeHandler wiring at New() and ReconnectRelays() (D-08)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 06-02-PLAN.md — queryRelay chunked sub-REQ loop (D-06/D-07), connection-drop attribution (D-09/D-10), drainSubscription extraction, unit tests (FILTER-02)
 
 ### Phase 7: Relay Health Management
 
@@ -81,6 +88,6 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
-| 6. Filter Size & Per-Relay Cap Detection | 0/0 | Not started | - |
+| 6. Filter Size & Per-Relay Cap Detection | 0/2 | Not started | - |
 | 7. Relay Health Management | 0/0 | Not started | - |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
