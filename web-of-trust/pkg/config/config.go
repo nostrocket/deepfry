@@ -19,6 +19,7 @@ type Config struct {
 	Timeout              time.Duration `mapstructure:"timeout"`
 	Debug                bool          `mapstructure:"debug"`
 	StalePubkeyThreshold int64         `mapstructure:"stale_pubkey_threshold"`
+	RelayFilterBatchSize int           `mapstructure:"relay_filter_batch_size"`
 	ForwardRelayURL      string        `mapstructure:"forward_relay_url"`
 
 	// Spam-cluster scan (clusterscan CLI) settings.
@@ -60,6 +61,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("debug", false)
 	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
 	viper.SetDefault("stale_pubkey_threshold", 24*60*60) // 24 hours in seconds
+	viper.SetDefault("relay_filter_batch_size", 100)
 
 	// clusterscan defaults: the admin/forwarder keys used by the whitelist
 	// plugin (whitelist-plugin/pkg/repository getHardcodedPubkeys) form the
