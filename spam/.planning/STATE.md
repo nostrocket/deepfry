@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-06-11T15:15:16.542Z"
-last_activity: 2026-06-11 -- Phase 03 planning complete
+last_updated: "2026-06-11T15:27:56.032Z"
+last_activity: 2026-06-11 -- Phase 03 execution started
 progress:
   total_phases: 5
   completed_phases: 2
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-10)
 
 **Core value:** Serve correct, rich queries over strfry's events by reading strfry's live on-disk state directly — never copying event data or indexes out of strfry, never writing to strfry's database.
-**Current focus:** Phase 02 — payload-decoding-index-scan-primitives
+**Current focus:** Phase 03 — query-engine
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-11 -- Phase 03 planning complete
+Phase: 03 (query-engine) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 03
+Last activity: 2026-06-11 -- Phase 03 execution started
 
 Progress: [█████░░░░░] 43% (Phases 1+2 complete; 3 phases remaining)
 
