@@ -75,11 +75,12 @@ func main() {
 		Debug:           cfg.Debug,
 		ForwardRelayURL: cfg.ForwardRelayURL,
 		FilterBatchSize: cfg.RelayFilterBatchSize,
+		// Phase 7: per-class ejection thresholds from config (D-06).
+		EjectionThresholds: cfg.RelayEjectionThresholds,
 		OnConnectFail: func(url string) {
-			if err := config.RemoveRelayURL(url); err != nil {
-				log.Printf("Warning: could not remove relay %s from config: %v", url, err)
-			} else {
-				log.Printf("Removed relay %s from config", url)
+			// markRelayDead already emits the single ejection log line with class/count/threshold (LOG-03/D-15).
+			if err := config.EjectRelayURL(url); err != nil {
+				log.Printf("Warning: could not eject relay %s from config: %v", url, err)
 			}
 		},
 	}
