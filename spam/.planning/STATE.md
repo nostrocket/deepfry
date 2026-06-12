@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 03-query-engine-05-PLAN.md
-last_updated: "2026-06-12T06:13:14.729Z"
+last_updated: "2026-06-12T06:49:15.791Z"
 last_activity: 2026-06-12 -- Phase 03 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 14
-  completed_plans: 12
+  completed_plans: 13
   percent: 40
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 ## Current Position
 
 Phase: 03 (query-engine) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-06-12 -- Phase 03 execution started
 
@@ -58,6 +58,7 @@ Progress: [█████░░░░░] 55% (Phases 1+2 complete; Phase 3 exe
 | Phase 03-query-engine P03 | 8 minutes | 2 tasks | 2 files |
 | Phase 03-query-engine P04 | 25 minutes | 3 tasks | 3 files |
 | Phase 03-query-engine P05 | 20 | 2 tasks | 2 files |
+| Phase 03-query-engine P06 | 31 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,8 @@ Recent decisions affecting current work:
 - Plan 03-03 (2026-06-12): LevIdNotFound propagated as hard error (not skip) — a levId from a real index scan missing in EventPayload is structural corruption; decode failures use skip-warn-count (D-11); 57 tests pass
 - Plan 03-04 (2026-06-12): execute_query over-fetch+backfill+cursor + latest_per_author grouped buckets + is_expired NIP-40 predicate — QRY-01/02/03/05 satisfied; router.rs tag-filter fixed to hex-decode tag values to raw bytes matching strfry index format; 65 lib tests pass
 - [Phase ?]: CR-05 fix: Vec<(LevId, DecodedEvent)> return from hydrate_lev_ids; callers join on lev_id via HashMap, never positional zip
+- [Phase ?]: scan_index_one_window in scan.rs reuses collect_window for key-granular exclusive-resume without modifying merge_prefixes signature
+- [Phase ?]: CR-03 fix: per-stream StreamState with exclusive-resume replaces Included-restart windowing in execute_query_internal; stuck-window advance branch removed entirely
 
 ### Pending Todos
 
@@ -109,7 +112,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-12T06:13:14.725Z
+Last session: 2026-06-12T06:49:15.787Z
 Stopped at: Completed 03-query-engine-05-PLAN.md
 Resume: execute Phase 04 — GraphQL API
 Resume file: None

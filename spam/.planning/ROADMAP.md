@@ -108,7 +108,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 6** *(gap closure — Cluster 1 / CR-01,02,03,04 + WR-01; blocked on Wave 5: shares engine.rs)*
 
-- [ ] 03-06-PLAN.md — merge prefix guard (take_while starts_with), since stop-bound + kind/author/id residual, exclusive-resume windowing (proven scan.rs pattern), lev_id reset on stuck advance, deduped start keys (QRY-01 / CR-01,CR-02,CR-03,CR-04,WR-01,IN-01,IN-04)
+- [x] 03-06-PLAN.md — merge prefix guard (take_while starts_with), since stop-bound + kind/author/id residual, exclusive-resume windowing (proven scan.rs pattern), lev_id reset on stuck advance, deduped start keys (QRY-01 / CR-01,CR-02,CR-03,CR-04,WR-01,IN-01,IN-04)
 
 **Wave 7** *(gap closure — Cluster 3 / CR-06,07 + WR-04; blocked on Wave 6: shares engine.rs/router.rs)*
 
@@ -153,6 +153,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 5/7 | In Progress|  |
+| 3. Query Engine | 6/7 | In Progress|  |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
