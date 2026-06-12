@@ -31,7 +31,9 @@ use crate::query::filter::NostrFilter;
 
 /// Decode a lowercase or uppercase hex string into bytes.
 /// Returns `Err(String)` describing the failure for warn logging.
-fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+///
+/// Made `pub(crate)` so engine.rs can reuse instead of maintaining a duplicate (IN-02).
+pub(crate) fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     if s.len() % 2 != 0 {
         return Err(format!("odd hex length: {}", s.len()));
     }
@@ -45,7 +47,8 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn nibble(b: u8) -> Result<u8, &'static str> {
+/// Made `pub(crate)` so engine.rs can reuse via the shared `decode_hex` path (IN-02).
+pub(crate) fn nibble(b: u8) -> Result<u8, &'static str> {
     match b {
         b'0'..=b'9' => Ok(b - b'0'),
         b'a'..=b'f' => Ok(b - b'a' + 10),
@@ -221,21 +224,44 @@ pub fn build_start_keys(
         SelectedIndex::Multi("Event__tag") => {
             // One start_key per (tag_name_byte ‖ tag_value_raw_bytes) prefix ‖ created_at(8 LE)
             //
-            // strfry stores tag values as their raw (hex-decoded) bytes in the Event__tag index.
-            // For `#e` and `#p` tags the value is a 64-char hex string representing a 32-byte
-            // event/pubkey id — strfry decodes it to 32 raw bytes as the key prefix. Similarly
-            // for any 64-char hex tag value. Non-hex values are stored as raw UTF-8.
-            // We attempt hex-decode: if the value decodes successfully, use raw bytes; otherwise
-            // use the raw UTF-8 bytes (for non-hex tag values).
+            // strfry's exact rule for Event__tag value encoding (T-03-CR07-I):
+            //   - If value is EXACTLY 64 lowercase hex chars (0-9, a-f), decode to 32 raw bytes.
+            //   - All other values (including uppercase hex, short even-length hex like "beef",
+            //     and non-hex) use the raw UTF-8 bytes unchanged.
+            //
+            // "beef" (4-char even-length hex) must NOT be hex-decoded: strfry stores topic
+            // tags as raw UTF-8. Only 32-byte event/pubkey ids (64 lowercase hex chars) are
+            // decoded to binary in strfry's index. Getting this wrong silently misses matches.
+            //
+            // Tag name validation (T-03-WR04-I):
+            //   - Tag names must be exactly 1 character (single byte). Nostr protocol tag names
+            //     are single-letter (e.g. "e", "p", "t"). A multi-char or empty name would
+            //     either silently scan the wrong prefix (old first-byte truncation bug) or panic.
+            //     Instead: skip the tag with a warn and produce zero start keys for it.
             let tags = filter.tags.as_deref().unwrap_or(&[]);
             let mut keys = Vec::new();
             for tag in tags {
-                let name_byte = tag.name.as_bytes().first().copied().unwrap_or(b'_');
+                // WR-04 / T-03-WR04-I: require exactly 1 character; warn and skip otherwise.
+                if tag.name.len() != 1 {
+                    tracing::warn!(
+                        name = tag.name.as_str(),
+                        "tag name must be exactly one character — skipping filter"
+                    );
+                    continue;
+                }
+                let name_byte = tag.name.as_bytes()[0];
+
                 for value in &tag.values {
-                    // Try hex-decode first; fall back to raw UTF-8 bytes on failure.
-                    let value_bytes: Vec<u8> = match decode_hex(value) {
-                        Ok(decoded) => decoded,
-                        Err(_) => value.as_bytes().to_vec(),
+                    // CR-07 / T-03-CR07-I: strfry's 32-byte-id decode rule.
+                    // Decode ONLY when value is exactly 64 lowercase-hex chars.
+                    let value_bytes: Vec<u8> = if value.len() == 64
+                        && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                    {
+                        // Safe to unwrap: we've verified all bytes are valid lowercase hex.
+                        decode_hex(value).unwrap_or_else(|_| value.as_bytes().to_vec())
+                    } else {
+                        // Raw UTF-8 — this is what strfry stores for non-id tag values.
+                        value.as_bytes().to_vec()
                     };
                     let mut k = Vec::with_capacity(1 + value_bytes.len() + 8);
                     k.push(name_byte);
@@ -528,6 +554,175 @@ mod tests {
             2,
             "distinct authors must produce 2 start keys, got {}",
             keys3.len()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-07 / WR-04 regression tests (plan 03-07 gap closure)
+    // -----------------------------------------------------------------------
+
+    /// CR-07: a literal short hex-looking tag value ("beef") must use raw UTF-8 bytes,
+    /// NOT hex-decoded bytes (0xBE 0xEF). Only 64-char lowercase hex values are decoded.
+    ///
+    /// This test verifies that `build_start_keys` for a tag filter with value="beef"
+    /// produces a key whose value segment (bytes 1..key.len()-8) equals b"beef" (4 UTF-8 bytes),
+    /// not [0xBE, 0xEF] (2 hex-decoded bytes). Getting this wrong silently misses real matches
+    /// because strfry stores the tag value as raw UTF-8 in its index.
+    #[test]
+    fn test_build_start_keys_tag_literal_hex_not_decoded() {
+        let f = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "t".to_string(),
+                values: vec!["beef".to_string()],
+            }]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__tag");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(keys.len(), 1, "one tag value → one start key");
+        let key = &keys[0];
+        // key layout: name_byte(1) ‖ value_bytes(var) ‖ ts(8)
+        // For "beef" (raw UTF-8): value_bytes = [0x62, 0x65, 0x65, 0x66] (4 bytes)
+        // Total key length = 1 + 4 + 8 = 13
+        assert_eq!(
+            key.len(),
+            13,
+            "key must be 13 bytes (1 name + 4 UTF-8 'beef' bytes + 8 ts): got {} bytes",
+            key.len()
+        );
+        // name byte = 't' = 0x74
+        assert_eq!(key[0], b't', "name byte must be 't'");
+        // value segment = raw UTF-8 of "beef" = [0x62, 0x65, 0x65, 0x66]
+        assert_eq!(
+            &key[1..5],
+            b"beef",
+            "value segment must be raw UTF-8 bytes of 'beef', not hex-decoded [0xBE, 0xEF]"
+        );
+        // Confirm NOT hex-decoded: if it were, the value would be 2 bytes [0xBE, 0xEF]
+        // and total key length would be 11 (1 + 2 + 8), which we already reject above.
+    }
+
+    /// CR-07: an uppercase 64-char hex value must NOT be decoded as a 32-byte id.
+    ///
+    /// strfry's rule is lowercase-only for 32-byte id values. An uppercase hex string
+    /// that looks like a 64-char event id must be stored as raw UTF-8 in the tag filter
+    /// start key (because strfry would NOT decode it to binary either).
+    #[test]
+    fn test_build_start_keys_tag_uppercase_hex_not_decoded() {
+        // 64-char string with uppercase hex characters — must NOT be decoded.
+        let uppercase_hex = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(uppercase_hex.len(), 64, "test value must be exactly 64 chars");
+        assert!(
+            uppercase_hex.bytes().all(|b| b == b'A'),
+            "test value must be all uppercase A"
+        );
+
+        let f = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![uppercase_hex.to_string()],
+            }]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__tag");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(keys.len(), 1, "one tag value → one start key");
+        let key = &keys[0];
+        // If NOT decoded: value_bytes = 64 UTF-8 bytes, total = 1 + 64 + 8 = 73
+        // If incorrectly decoded: value_bytes = 32 binary bytes, total = 1 + 32 + 8 = 41
+        assert_eq!(
+            key.len(),
+            73,
+            "uppercase 64-char hex must be raw UTF-8 (73 bytes), not decoded binary (41 bytes): got {}",
+            key.len()
+        );
+        // Value segment must be the raw uppercase ASCII bytes.
+        assert_eq!(
+            &key[1..65],
+            uppercase_hex.as_bytes(),
+            "value segment must be raw UTF-8 of the uppercase string"
+        );
+    }
+
+    /// WR-04: a multi-character tag name must produce ZERO start keys (skipped with warn).
+    ///
+    /// Nostr protocol tag names are single-letter. A multi-char name would either silently
+    /// scan the wrong prefix (old first-byte truncation) or produce meaningless results.
+    /// The correct behavior is to skip the tag entirely and emit zero start keys.
+    #[test]
+    fn test_build_start_keys_tag_multichar_name_skipped() {
+        let f = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "emoji".to_string(),
+                values: vec!["somevalue".to_string()],
+            }]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__tag");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(
+            keys.len(),
+            0,
+            "multi-char tag name 'emoji' must produce zero start keys (WR-04), got {}",
+            keys.len()
+        );
+    }
+
+    /// WR-04: an empty tag name must produce ZERO start keys (skipped with warn).
+    ///
+    /// An empty name would also be invalid for a scan (no byte to use as the prefix).
+    #[test]
+    fn test_build_start_keys_tag_empty_name_skipped() {
+        let f = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "".to_string(),
+                values: vec!["somevalue".to_string()],
+            }]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__tag");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(
+            keys.len(),
+            0,
+            "empty tag name must produce zero start keys (WR-04), got {}",
+            keys.len()
+        );
+    }
+
+    /// CR-07 positive case: the existing 64-char lowercase hex tag value (64 'a' chars)
+    /// must STILL be hex-decoded to 32 raw bytes for correct index key construction.
+    ///
+    /// This is the existing test scenario from the fixture — levIds 6, 8, 11 carry
+    /// tag e=aaaa...aa (64 lowercase hex 'a' chars), which strfry stores as 32 bytes
+    /// of 0xAA. The start key must hex-decode the value to match strfry's key format.
+    #[test]
+    fn test_build_start_keys_tag_64char_lowercase_hex_decoded() {
+        let tag_value_64a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(tag_value_64a.len(), 64, "test value must be exactly 64 chars");
+
+        let f = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![tag_value_64a.to_string()],
+            }]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__tag");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(keys.len(), 1, "one tag value → one start key");
+        let key = &keys[0];
+        // If CORRECTLY decoded: value_bytes = 32 raw bytes, total = 1 + 32 + 8 = 41
+        assert_eq!(
+            key.len(),
+            41,
+            "64-char lowercase hex must be hex-decoded to 32 bytes (41 bytes total), got {}",
+            key.len()
+        );
+        // All 32 value bytes must be 0xAA (hex "aa" repeated)
+        assert!(
+            key[1..33].iter().all(|&b| b == 0xAA),
+            "value segment must be 32 bytes of 0xAA (decoded from 'aaa...aaa')"
         );
     }
 
