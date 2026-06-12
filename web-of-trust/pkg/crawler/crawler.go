@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"web-of-trust/pkg/config"
 	"web-of-trust/pkg/dgraph"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -31,19 +32,51 @@ func (e *transportError) Error() string { return e.err.Error() }
 func (e *transportError) Unwrap() error { return e.err }
 
 const (
-	initialBackoff         = 30 * time.Second
-	maxBackoff             = 5 * time.Minute
-	maxConsecutiveFailures = 5
+	initialBackoff = 30 * time.Second
+	maxBackoff     = 5 * time.Minute
 )
 
+// failureClass identifies which per-relay counter to increment.
+type failureClass int
+
+const (
+	classTransport failureClass = iota // transport errors, connection drops
+	classFilterRej                     // filter rejections at or below learned cap
+	classSubFlap                       // Subscribe refused (not filter-size related)
+)
+
+func (fc failureClass) String() string {
+	switch fc {
+	case classTransport:
+		return "transport"
+	case classFilterRej:
+		return "filter_rejection"
+	case classSubFlap:
+		return "subscription_flap"
+	default:
+		return "unknown"
+	}
+}
+
 type relayState struct {
-	url       string
-	conn      *nostr.Relay
-	alive     bool
-	backoff   time.Duration
-	retryAt   time.Time
-	failures  atomic.Int32
+	url     string
+	conn    *nostr.Relay
+	alive   bool
+	backoff time.Duration
+	retryAt time.Time
+
+	// Per-class failure counters (D-05). Halved on reconnect (D-01),
+	// reset to 0 on completed query (D-02). In-memory only (D-04).
+	failTransport atomic.Int32
+	failFilterRej atomic.Int32
+	failSubFlap   atomic.Int32
+
+	// Phase 6: filterCap NOT reset on reconnect (D-09).
 	filterCap atomic.Int32
+
+	// Probe-up state (D-10/D-11).
+	successStreak atomic.Int32 // incremented once per successful queryRelay call
+	probing       atomic.Bool  // true while a probe chunk is in flight; exempt from filter_rejection counting
 }
 
 type Crawler struct {
@@ -55,16 +88,19 @@ type Crawler struct {
 	dbUpdateMutex   sync.Mutex
 	onConnectFail   func(url string)
 	filterBatchSize int
+	// Phase 7: per-class ejection thresholds from config (D-06)
+	ejectionThresholds map[failureClass]int32
 }
 
 type Config struct {
-	RelayURLs       []string
-	DgraphAddr      string
-	Timeout         time.Duration
-	Debug           bool
-	ForwardRelayURL string
-	FilterBatchSize int
-	OnConnectFail   func(url string)
+	RelayURLs          []string
+	DgraphAddr         string
+	Timeout            time.Duration
+	Debug              bool
+	ForwardRelayURL    string
+	FilterBatchSize    int
+	OnConnectFail      func(url string)
+	EjectionThresholds config.EjectionThresholds // Phase 7
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -122,6 +158,11 @@ func New(cfg Config) (*Crawler, error) {
 		debug:           cfg.Debug,
 		onConnectFail:   cfg.OnConnectFail,
 		filterBatchSize: cfg.FilterBatchSize,
+		ejectionThresholds: map[failureClass]int32{
+			classTransport: int32(cfg.EjectionThresholds.Transport),
+			classFilterRej: int32(cfg.EjectionThresholds.FilterRej),
+			classSubFlap:   int32(cfg.EjectionThresholds.SubFlap),
+		},
 	}
 
 	// Connect to forward relay if configured
@@ -177,7 +218,12 @@ func (c *Crawler) forwardEvent(ctx context.Context, event *nostr.Event) {
 	}
 }
 
-func (c *Crawler) markRelayDead(url string) {
+// markRelayDead increments the per-class failure counter for url, applies
+// threshold-driven ejection (via onConnectFail), or reschedules with backoff.
+// Exactly one log line is emitted: either ejection or dead+retry.
+// LOG-03/D-15: this is the single authoritative dead-state log line; callers
+// must not emit their own WARN before calling markRelayDead.
+func (c *Crawler) markRelayDead(url string, class failureClass) {
 	kept := c.relays[:0]
 	for _, rs := range c.relays {
 		if rs.url != url {
@@ -189,16 +235,31 @@ func (c *Crawler) markRelayDead(url string) {
 		}
 		rs.conn = nil
 		rs.alive = false
-		failures := int(rs.failures.Add(1))
-		if failures >= maxConsecutiveFailures {
-			log.Printf("Relay %s failed %d consecutive times, removing from config", url, failures)
+
+		var count int32
+		switch class {
+		case classTransport:
+			count = rs.failTransport.Add(1)
+		case classFilterRej:
+			count = rs.failFilterRej.Add(1)
+		case classSubFlap:
+			count = rs.failSubFlap.Add(1)
+		}
+
+		threshold := c.ejectionThresholds[class]
+		if threshold <= 0 {
+			threshold = 10 // safety: never eject immediately on misconfigured threshold
+		}
+		if count >= threshold {
+			log.Printf("Relay %s ejected (%s %d/%d)", url, class, count, threshold)
 			if c.onConnectFail != nil {
 				c.onConnectFail(url)
 			}
-			continue
+			continue // do NOT re-append to kept
 		}
+
 		rs.retryAt = time.Now().Add(rs.backoff)
-		log.Printf("Relay %s marked dead (failure %d/%d), next retry in %v", url, failures, maxConsecutiveFailures, rs.backoff)
+		log.Printf("Relay %s dead (%s %d/%d), retry in %v", url, class, count, threshold, rs.backoff)
 		rs.backoff *= 2
 		if rs.backoff > maxBackoff {
 			rs.backoff = maxBackoff
@@ -209,6 +270,7 @@ func (c *Crawler) markRelayDead(url string) {
 }
 
 func (c *Crawler) ReconnectRelays(ctx context.Context) {
+	var reconnected, removed, stillDead int
 	kept := c.relays[:0]
 	for _, rs := range c.relays {
 		if rs.alive {
@@ -227,23 +289,57 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 		})
 		relay, err := nostr.RelayConnect(ctx, rs.url, noticeHandler)
 		if err != nil {
-			log.Printf("WARN: Reconnect to %s failed, removing from config: %v", rs.url, err)
-			if c.onConnectFail != nil {
-				c.onConnectFail(rs.url)
+			if c.debug {
+				log.Printf("Reconnect to %s failed: %v", rs.url, err)
 			}
+			// D-03: failed reconnect counts as transport failure; threshold governs ejection.
+			rs.failTransport.Add(1)
+			threshold := c.ejectionThresholds[classTransport]
+			if threshold <= 0 {
+				threshold = 10
+			}
+			if rs.failTransport.Load() >= threshold {
+				log.Printf("Relay %s ejected (%s %d/%d) after repeated reconnect failures",
+					rs.url, classTransport, rs.failTransport.Load(), threshold)
+				if c.onConnectFail != nil {
+					c.onConnectFail(rs.url)
+				}
+				removed++
+				continue
+			}
+			rs.retryAt = time.Now().Add(rs.backoff)
+			rs.backoff *= 2
+			if rs.backoff > maxBackoff {
+				rs.backoff = maxBackoff
+			}
+			stillDead++
+			kept = append(kept, rs)
 			continue
 		}
+		reconnected++
 		rs.conn = relay
 		rs.alive = true
 		rs.backoff = initialBackoff
-		rs.failures.Store(0)
-		rs.filterCap.Store(int32(c.filterBatchSize))
+		// D-01: halve all class counters on reconnect (not reset to 0).
+		rs.failTransport.Store(rs.failTransport.Load() / 2)
+		rs.failFilterRej.Store(rs.failFilterRej.Load() / 2)
+		rs.failSubFlap.Store(rs.failSubFlap.Load() / 2)
+		// D-09: filterCap is NOT reset on reconnect — learned cap survives.
 		kept = append(kept, rs)
-		log.Printf("Reconnected to relay: %s", rs.url)
+		if c.debug {
+			log.Printf("Reconnected to relay: %s", rs.url)
+		}
 	}
 	c.relays = kept
 
-	// Reconnect forward relay if needed
+	// D-13/LOG-01: emit one sweep-summary line only when something changed.
+	if reconnected > 0 || removed > 0 || stillDead > 0 {
+		total := len(c.relays) + removed
+		log.Printf("Reconnected %d/%d relays, %d removed, %d still dead",
+			reconnected, total, removed, stillDead)
+	}
+
+	// Reconnect forward relay if needed (UNCHANGED — does not route through markRelayDead).
 	if c.forwardRelay != nil && !c.forwardRelay.alive {
 		rs := c.forwardRelay
 		if time.Now().Before(rs.retryAt) {
@@ -320,7 +416,11 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				errorsChan <- relayError{url: rs.url, err: err}
 				return
 			}
-			rs.failures.Store(0)
+			// D-02: successful query resets all class counters to 0 and increments streak.
+			rs.failTransport.Store(0)
+			rs.failFilterRej.Store(0)
+			rs.failSubFlap.Store(0)
+			rs.successStreak.Add(1)
 		}(rs)
 	}
 
@@ -430,16 +530,20 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				continue
 			}
 
+			// LOG-03/D-15: markRelayDead emits the single dead-state log line.
+			// Do NOT emit a WARN here before calling markRelayDead.
 			var subErr *subscriptionError
 			var transErr *transportError
 			switch {
 			case errors.As(re.err, &subErr):
-				log.Printf("WARN: Subscription failed: %v", re.err)
+				c.markRelayDead(re.url, classSubFlap)
 			case errors.As(re.err, &transErr):
-				log.Printf("WARN: Connection timed out: %v", re.err)
-				c.markRelayDead(re.url)
+				c.markRelayDead(re.url, classTransport)
 			default:
-				log.Printf("WARN: Relay error: %v", re.err)
+				if c.debug {
+					log.Printf("Relay %s: unclassified error: %v", re.url, re.err)
+				}
+				c.markRelayDead(re.url, classTransport) // treat unknown as transport
 			}
 		}
 	}
@@ -502,6 +606,22 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			batchCap = 10 // safety guard
 		}
 
+		// Probe-up (D-10): after 10 successful batches, try doubling the cap.
+		isProbing := false
+		if rs.successStreak.Load() >= 10 {
+			probe := batchCap * 2
+			if probe > c.filterBatchSize {
+				probe = c.filterBatchSize
+			}
+			if probe > batchCap {
+				isProbing = true
+				batchCap = probe
+				rs.probing.Store(true)
+			}
+		}
+		// Ensure probing flag is always cleared on return (Pitfall 3 — probe flag not cleared on cancel).
+		defer rs.probing.Store(false)
+
 		chunk := authors
 		if len(authors) > batchCap {
 			chunk = authors[:batchCap]
@@ -529,12 +649,22 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 						newVal = 10
 					}
 					rs.filterCap.Store(newVal)
-					log.Printf("Relay %s: filter rejection drop, halved cap to %d; retrying chunk", relayURL, newVal)
+					rs.successStreak.Store(0)
+					rs.probing.Store(false)
+					if isProbing {
+						// D-11: probe rejection — cap reverted, streak reset, no ejection count.
+						log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
+					} else {
+						// At-cap rejection — count toward filter_rejection ejection.
+						log.Printf("Relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)
+						c.markRelayDead(relayURL, classFilterRej)
+					}
 					authors = append(chunk, authors...) // re-queue this chunk
+					isProbing = false
 					continue
 				}
-				// filterCap is already at floor=10; mark the relay dead (D-10)
-				log.Printf("Relay %s: filter cap floor reached, marking dead", relayURL)
+				// filterCap is already at floor=10 — mark dead (filter_rejection, not transport wording per LOG-03/D-15).
+				log.Printf("Relay %s: filter cap at floor, marking dead (filter_rejection)", relayURL)
 				return &transportError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
 			}
 			// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
@@ -554,6 +684,14 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			return err
 		}
 		sub.Unsub()
+
+		// D-10/D-14: probe succeeded — update cap and log.
+		if isProbing && batchCap > int(rs.filterCap.Load()) {
+			rs.filterCap.Store(int32(batchCap))
+			rs.successStreak.Store(0)
+			log.Printf("Relay %s: probe-up to %d succeeded, new cap", relayURL, batchCap)
+			isProbing = false
+		}
 	}
 	return nil
 }
@@ -667,6 +805,8 @@ func cleanSubscribeError(err error) string {
 // handleFilterNotice inspects a relay NOTICE message and halves the relay's
 // filterCap when the notice indicates the filter is too large. The cap is
 // never reduced below minCap (per D-05: floor = 10).
+// D-14: per-step halving is debug-only; the caller (queryRelay) decides whether
+// to call markRelayDead(classFilterRej) based on rs.probing (D-11 exemption).
 func handleFilterNotice(rs *relayState, notice string, minCap int) {
 	lower := strings.ToLower(notice)
 	if strings.Contains(lower, "filter") && strings.Contains(lower, "too large") {
@@ -681,14 +821,23 @@ func handleFilterNotice(rs *relayState, notice string, minCap int) {
 				newVal = int32(minCap)
 			}
 			if rs.filterCap.CompareAndSwap(old, newVal) {
-				log.Printf("Relay %s NOTICE filter-too-large: halved cap to %d", rs.url, newVal)
+				rs.successStreak.Store(0)
+				rs.probing.Store(false)
+				// D-14: one human-readable line; the CAS succeeded so the cap changed.
+				log.Printf("Relay %s: cap learned at %d (NOTICE)", rs.url, newVal)
+				// D-11: probing flag cleared here; ejection decision made at queryRelay call site.
 				return
 			}
 		}
 	}
 }
 
+// logRelayError emits a structured RELAY_ERROR log line, demoted to debug-only
+// per D-15 (LOG-03) so RELAY_ERROR JSON blobs do not flood production logs.
 func (c *Crawler) logRelayError(errorType string, err error) {
+	if !c.debug {
+		return // D-15: RELAY_ERROR JSON blobs are debug-only
+	}
 	metrics := map[string]interface{}{
 		"error_type":  errorType,
 		"error":       err.Error(),
