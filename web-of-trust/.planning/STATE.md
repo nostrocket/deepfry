@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: active
-last_updated: "2026-06-12T00:00:00Z"
-last_activity: 2026-06-12 -- RELAY-03 + LOG-01/02/03 added to v1.2, folded into Phase 7
+status: verifying
+last_updated: "2026-06-12T09:03:18.396Z"
+last_activity: "2026-06-12 -- Production log review: added RELAY-03 (filter-cap persistence) and LOG-01/02/03 (logging noise) to v1.2, folded into Phase 7"
 progress:
   total_phases: 4
   completed_phases: 2
