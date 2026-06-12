@@ -84,7 +84,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
 
-**Plans**: 9 plans (9 waves; 03-05/06/07 + 03-08/09 gap closure for the verification gaps in 03-VERIFICATION.md)
+**Plans**: 10 plans (10 waves; 03-05/06/07 + 03-08/09 + 03-10 gap closure for the verification gaps in 03-VERIFICATION.md)
 
 **Wave 1**
 
@@ -121,6 +121,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 9** *(gap closure — CR-02/CR-03 engine k-way merge; blocked on Wave 8: consumes the corrected scan bound)*
 
 - [x] 03-09-PLAN.md — replace sort-per-batch with a windowed k-way merge (merge_windowed) routed through the engine for true (created_at DESC, lev_id DESC) order across iterations; per-stream since exhaustion instead of global since_cutoff; delete orphaned merge path + IN-01/02/03 cleanups (QRY-01,QRY-02 / CR-02,CR-03,WR-04,IN-01,IN-02,IN-03)
+
+**Wave 10** *(gap closure — new REVIEW CR-01 no-backfill-loop; blocked on Wave 9: shares engine.rs)*
+
+- [ ] 03-10-PLAN.md — restore a bounded round-loop (MAX_ROUNDS budget) in execute_query_internal calling merge_windowed from an advancing resume boundary, build a partial-result cursor when the budget stops the loop early so reachable events are never stranded, rewrite the divergent comments; fold in scan.rs reverse_upper_bound fail-soft + merge.rs MergeCandidate Eq/Ord consistency (QRY-01,QRY-02 / new REVIEW CR-01; WR-03 budget preserved)
 
 ### Phase 4: GraphQL API
 
