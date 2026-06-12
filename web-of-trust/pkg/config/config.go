@@ -11,6 +11,16 @@ import (
 	"github.com/spf13/viper"
 )
 
+// EjectionThresholds holds per-failure-class ejection thresholds (D-06).
+// A relay is ejected when its failure counter for a given class reaches the
+// corresponding threshold. Non-positive values are corrected to hardcoded
+// defaults (Transport=10, FilterRej=3, SubFlap=5) after unmarshal.
+type EjectionThresholds struct {
+	Transport int `mapstructure:"transport"`
+	FilterRej int `mapstructure:"filter_rejection"`
+	SubFlap   int `mapstructure:"subscription_flap"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	RelayURLs            []string      `mapstructure:"relay_urls"`
@@ -28,6 +38,10 @@ type Config struct {
 	ClusterDepth    int      `mapstructure:"cluster_depth"`     // follows-hops to walk when measuring a cluster
 	MaxBridgeWeight int      `mapstructure:"max_bridge_weight"` // a candidate is a "weak bridge" if 1..N edges cross into trusted
 	MinClusterSize  int      `mapstructure:"min_cluster_size"`  // ignore bridges whose cluster is smaller than this
+
+	// Relay health management (Phase 7) settings.
+	RelayEjectionThresholds EjectionThresholds `mapstructure:"relay_ejection_thresholds"`
+	EjectedRelays           []string           `mapstructure:"ejected_relays"`
 }
 
 // LoadConfig loads the application configuration from various sources
@@ -78,6 +92,14 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("max_bridge_weight", 2)
 	viper.SetDefault("min_cluster_size", 5)
 
+	// Relay health management defaults (D-06).
+	viper.SetDefault("relay_ejection_thresholds", map[string]interface{}{
+		"transport":         10,
+		"filter_rejection":  3,
+		"subscription_flap": 5,
+	})
+	viper.SetDefault("ejected_relays", []string{})
+
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -103,6 +125,23 @@ func LoadConfig() (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unable to decode config: %w", err)
+	}
+
+	// Guard: zero or negative thresholds would eject relays on the first failure
+	// (STRIDE DoS threat T-07-DOS). Correct to hardcoded defaults.
+	if cfg.RelayEjectionThresholds.Transport <= 0 {
+		cfg.RelayEjectionThresholds.Transport = 10
+	}
+	if cfg.RelayEjectionThresholds.FilterRej <= 0 {
+		cfg.RelayEjectionThresholds.FilterRej = 3
+	}
+	if cfg.RelayEjectionThresholds.SubFlap <= 0 {
+		cfg.RelayEjectionThresholds.SubFlap = 5
+	}
+
+	// Ensure EjectedRelays is non-nil for safe slice operations.
+	if cfg.EjectedRelays == nil {
+		cfg.EjectedRelays = []string{}
 	}
 
 	// Ensure at least one relay URL is provided
@@ -164,5 +203,31 @@ func RemoveRelayURL(url string) error {
 		return nil
 	}
 	viper.Set("relay_urls", filtered)
+	return viper.WriteConfig()
+}
+
+// EjectRelayURL removes a relay URL from relay_urls and appends it to
+// ejected_relays in the config file (D-08). The reason, failure class,
+// count, and timestamp are logged by the caller (markRelayDead); this
+// function persists only the URL-only ejected list.
+//
+// Operates on the package-global viper instance populated by LoadConfig;
+// do not call before LoadConfig has run.
+func EjectRelayURL(url string) error {
+	// Remove from relay_urls (mirror RemoveRelayURL pattern).
+	current := viper.GetStringSlice("relay_urls")
+	filtered := make([]string, 0, len(current))
+	for _, u := range current {
+		if u != url {
+			filtered = append(filtered, u)
+		}
+	}
+	viper.Set("relay_urls", filtered)
+
+	// Append to ejected_relays (URL only; no metadata in YAML per D-08).
+	ejected := viper.GetStringSlice("ejected_relays")
+	ejected = append(ejected, url)
+	viper.Set("ejected_relays", ejected)
+
 	return viper.WriteConfig()
 }
