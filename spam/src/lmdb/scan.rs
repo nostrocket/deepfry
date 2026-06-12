@@ -326,6 +326,61 @@ pub fn scan_index_one_window(
 // Generic low-level helpers — comparator-agnostic
 // ---------------------------------------------------------------------------
 
+/// Build the upper bound key for a Reverse scan over an `Event__*` index when the
+/// caller-supplied `start_key` is a FINITE boundary (not `u64::MAX`).
+///
+/// ## Why ts+1 is required (CR-01)
+///
+/// heed 0.22.1's `rev_range(Bound::Included(K))` with `.move_through_duplicate_values()`
+/// positions the LMDB cursor via `MDB_SET_RANGE` at the SMALLEST dup of `K` and then
+/// immediately steps to the PREVIOUS key — it never yields the larger dups of `K`.
+/// To land on the LARGEST dup of `K` (the first entry a descending walk needs), the
+/// upper bound must be strictly ABOVE `K` — i.e., `Bound::Excluded(key_with_ts+1)`.
+/// `rev_range(Bound::Excluded(K'))` positions at the largest key strictly less than `K'`,
+/// which is the largest dup of the real timestamp `ts`. The full dup group is then walked
+/// descending.
+///
+/// ## Key layout
+///
+/// Every `Event__*` composite key ends with a trailing 8-byte little-endian `created_at`.
+/// The rebuilt key preserves the EXACT byte width — `prefix ‖ ts1.to_le_bytes()` — so the
+/// golpe/IntegerComparator never sees a short key (T-03-CR01-D mitigation).
+///
+/// For `Event__created_at` the prefix is empty (key len == 8) — the rebuilt key is just
+/// the 8 timestamp bytes.
+///
+/// ## Returns
+///
+/// `(rebuilt_key, true)` — `ts < u64::MAX`: a new key with `ts+1` in the trailing 8 bytes;
+/// use `Bound::Excluded(rebuilt_key)` for the rev_range upper bound.
+///
+/// `(original_key.to_vec(), false)` — `ts == u64::MAX`: overflow; keep
+/// `Bound::Included(original_key)` (the caller must handle the `false` case).
+fn reverse_upper_bound(start_key: &[u8]) -> (Vec<u8>, bool) {
+    debug_assert!(
+        start_key.len() >= 8,
+        "reverse_upper_bound: start_key too short ({} bytes) — every Event__* key ends with 8-byte created_at",
+        start_key.len()
+    );
+
+    let len = start_key.len();
+    // Decode the trailing 8-byte created_at.
+    let ts = u64::from_le_bytes(start_key[len - 8..len].try_into().unwrap_or([0u8; 8]));
+
+    match ts.checked_add(1) {
+        Some(ts1) => {
+            // Rebuild key with ts+1 in the trailing 8 bytes; prefix bytes unchanged.
+            let mut rebuilt = start_key[..len - 8].to_vec();
+            rebuilt.extend_from_slice(&ts1.to_le_bytes());
+            (rebuilt, true)
+        }
+        None => {
+            // ts == u64::MAX: saturating overflow — keep original key, caller uses Included.
+            (start_key.to_vec(), false)
+        }
+    }
+}
+
 /// Collect up to `limit` `(key, levId)` pairs from a bounded range or rev_range.
 ///
 /// ## DUPSORT (T-02-14)
@@ -337,6 +392,16 @@ pub fn scan_index_one_window(
 ///
 /// Keys are copied out of LMDB-mapped memory via `.to_vec()`. The copies are
 /// txn-independent — safe to return after the `RoTxn` is dropped.
+///
+/// ## Reverse upper bound (CR-01)
+///
+/// For the Reverse arm with a finite `start_key`, the upper bound is built via
+/// `reverse_upper_bound(start_key)` which computes `ts+1` and returns
+/// `Bound::Excluded(rebuilt_key)`. This positions `rev_range` ABOVE the boundary key so
+/// it lands on the LARGEST dup of `ts` — the full dup group is then walked descending.
+/// When `ts == u64::MAX` the helper returns `is_excluded=false` and the Included path
+/// is used (no overflow; u64::MAX start keys are unbounded-high scans where no dup is at
+/// exactly u64::MAX in practice).
 fn collect_bounded<C>(
     db: &heed::Database<Bytes, Bytes, C>,
     rtxn: &heed::RoTxn<'_>,
@@ -368,7 +433,16 @@ where
             }
         }
         ScanDirection::Reverse => {
-            let range = (Bound::Unbounded, Bound::Included(start_key));
+            // CR-01: build the upper bound from ts+1 so rev_range positions ABOVE the
+            // boundary key, landing on its LARGEST dup. Bind rebuilt_key to a local so
+            // the Bound borrows a value that outlives the range tuple.
+            let (rebuilt_key, is_excluded) = reverse_upper_bound(start_key);
+            let upper: Bound<&[u8]> = if is_excluded {
+                Bound::Excluded(rebuilt_key.as_slice())
+            } else {
+                Bound::Included(start_key)
+            };
+            let range = (Bound::Unbounded, upper);
             // MUST call .move_through_duplicate_values() — DUPSORT default skips duplicates
             // CRITICAL: RoRange has NO .rev() method — MUST use db.rev_range() (RESEARCH.md anti-patterns)
             let iter = db.rev_range(rtxn, &range)?.move_through_duplicate_values();
@@ -459,11 +533,30 @@ where
             }
         }
         ScanDirection::Reverse => {
-            // First window: Included upper bound. Resumed window: Excluded upper bound —
-            // resolves to the largest key strictly less than the drained boundary key.
-            let upper = if first_batch {
-                Bound::Included(resume_key)
+            // First window: build the upper bound from ts+1 (CR-01) — positions rev_range
+            // ABOVE the boundary key so it lands on the LARGEST dup of ts. The full dup
+            // group is then walked descending and drained (see key-granular windowing below).
+            // Resumed window: Excluded(resume_key) — the boundary dup group was fully
+            // drained in the prior window; skip the boundary key entirely. Do NOT apply
+            // ts+1 on resume (the drained group already had its largest dup emitted).
+            // Bind rebuilt_key to a local so the Bound borrows a value that outlives range.
+            // CR-01: first_batch uses ts+1 Excluded bound to land on the largest dup.
+            // Resumed window uses Excluded(resume_key) directly — no ts+1 needed.
+            // `rebuilt_key` is bound BEFORE `upper` so its lifetime covers the &[u8] borrow.
+            let (rebuilt_key, first_batch_is_excluded) = if first_batch {
+                reverse_upper_bound(resume_key)
             } else {
+                (Vec::new(), false) // not used when first_batch=false
+            };
+            let upper: Bound<&[u8]> = if first_batch {
+                if first_batch_is_excluded {
+                    Bound::Excluded(rebuilt_key.as_slice())
+                } else {
+                    // ts == u64::MAX: keep Included(resume_key)
+                    Bound::Included(resume_key)
+                }
+            } else {
+                // Resumed window: boundary dup group fully drained — skip it.
                 Bound::Excluded(resume_key)
             };
             let range = (Bound::Unbounded, upper);
