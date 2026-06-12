@@ -25,17 +25,17 @@ Operational reliability and throughput improvements motivated by a 40-batch prod
 
 ### Relay Health Management
 
-- [ ] **RELAY-01**: The relay failure counter is no longer reset to zero on successful reconnect. On reconnect it is decayed (e.g. halved) so a relay that repeatedly connects-and-drops can still accumulate past `maxConsecutiveFailures` and be removed from the config.
+- [x] **RELAY-01**: The relay failure counter is no longer reset to zero on successful reconnect. On reconnect it is decayed (e.g. halved) so a relay that repeatedly connects-and-drops can still accumulate past `maxConsecutiveFailures` and be removed from the config.
 - [x] **RELAY-02**: Relay failure reasons are classified into at least three buckets — transport error (connection lost), filter rejection (NOTICE or connection-drop on REQ), and subscription flap (connects but drops immediately on first subscription). Per-class ejection thresholds are configurable. A relay exceeding its threshold for a class is automatically removed from the config file and logged with the reason class.
-- [ ] **RELAY-03**: Learned per-relay filter caps persist across reconnects instead of being reset (reverses the Phase 6 reset-on-reconnect decision). A recovery mechanism (e.g. periodic probe-up or slow decay) lets a relay that raised its limit regain a larger cap, but the 50→25→12→10 halving cascade is not re-run — and floor-capped relays are not re-marked dead — on every batch.
+- [x] **RELAY-03**: Learned per-relay filter caps persist across reconnects instead of being reset (reverses the Phase 6 reset-on-reconnect decision). A recovery mechanism (e.g. periodic probe-up or slow decay) lets a relay that raised its limit regain a larger cap, but the 50→25→12→10 halving cascade is not re-run — and floor-capped relays are not re-marked dead — on every batch.
 
 ### Logging Noise
 
 Production logs are dominated by per-relay, per-event lines: ~100 `Reconnected to relay` lines per sweep, 6-line filter-cap halving cascades per relay per batch, and duplicate `WARN: Connection timed out` + `marked dead` pairs (with misleading "timed out" wording for filter-cap failures).
 
-- [ ] **LOG-01**: A reconnect sweep emits a single summary line (e.g. `Reconnected 96/103 relays, 1 removed, 6 still dead`) instead of one line per relay; per-relay reconnect detail is only emitted when the debug flag is enabled.
-- [ ] **LOG-02**: Filter-cap negotiation logs at most one line per relay per batch stating the final outcome (`cap learned at N` or `floor reached`) — individual halving steps are not logged (or are debug-only).
-- [ ] **LOG-03**: A relay entering the dead state produces exactly one log line carrying the failure class, failure count, and next retry time — the duplicate `WARN: Connection timed out` + `marked dead` pair is collapsed, and filter-cap failures are no longer described as timeouts.
+- [x] **LOG-01**: A reconnect sweep emits a single summary line (e.g. `Reconnected 96/103 relays, 1 removed, 6 still dead`) instead of one line per relay; per-relay reconnect detail is only emitted when the debug flag is enabled.
+- [x] **LOG-02**: Filter-cap negotiation logs at most one line per relay per batch stating the final outcome (`cap learned at N` or `floor reached`) — individual halving steps are not logged (or are debug-only).
+- [x] **LOG-03**: A relay entering the dead state produces exactly one log line carrying the failure class, failure count, and next retry time — the duplicate `WARN: Connection timed out` + `marked dead` pair is collapsed, and filter-cap failures are no longer described as timeouts.
 
 ### Timeout & Observability
 
@@ -100,12 +100,12 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 | FILTER-02 | Phase 6 | Complete |
 | PERF-01 | Phase 8 | Pending |
 | PERF-02 | Phase 8 | Pending |
-| RELAY-01 | Phase 7 | Pending |
+| RELAY-01 | Phase 7 | Complete |
 | RELAY-02 | Phase 7 | Complete |
-| RELAY-03 | Phase 7 | Pending |
-| LOG-01 | Phase 7 | Pending |
-| LOG-02 | Phase 7 | Pending |
-| LOG-03 | Phase 7 | Pending |
+| RELAY-03 | Phase 7 | Complete |
+| LOG-01 | Phase 7 | Complete |
+| LOG-02 | Phase 7 | Complete |
+| LOG-03 | Phase 7 | Complete |
 | TIMEOUT-01 | Phase 8 | Pending |
 | TIMEOUT-02 | Phase 8 | Pending |
 | METRIC-01 | Phase 8 | Pending |
