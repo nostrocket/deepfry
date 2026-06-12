@@ -2,7 +2,6 @@ package crawler
 
 import (
 	"fmt"
-	"sync"
 	"testing"
 )
 
@@ -142,7 +141,7 @@ func TestFailureClass_String(t *testing.T) {
 // threshold fires onConnectFail exactly once and removes the relay from c.relays.
 // Below threshold, the relay stays in c.relays and onConnectFail is not called.
 func TestMarkRelayDead_EjectsAtThreshold(t *testing.T) {
-	// Scenario A: below threshold (failFilterRej=2, threshold=3) — stays in relays.
+	// Scenario A: below threshold (failFilterRej=1, threshold=3; Add(1) → 2 < 3) — stays in relays.
 	calledA := 0
 	c := &Crawler{
 		ejectionThresholds: map[failureClass]int32{
@@ -151,7 +150,7 @@ func TestMarkRelayDead_EjectsAtThreshold(t *testing.T) {
 		onConnectFail: func(url string) { calledA++ },
 	}
 	rs := &relayState{url: "wss://test.relay"}
-	rs.failFilterRej.Store(2)
+	rs.failFilterRej.Store(1)
 	rs.backoff = initialBackoff
 	c.relays = []*relayState{rs}
 
@@ -166,7 +165,7 @@ func TestMarkRelayDead_EjectsAtThreshold(t *testing.T) {
 		t.Fatal("below threshold: relay should be marked dead (alive=false)")
 	}
 
-	// Scenario B: at threshold (failFilterRej becomes 3) — ejected.
+	// Scenario B: at threshold (failFilterRej=2, Add(1) → 3 = threshold) — ejected.
 	calledB := 0
 	c2 := &Crawler{
 		ejectionThresholds: map[failureClass]int32{
@@ -347,38 +346,34 @@ func TestProbeRejection_ExemptFromEjection(t *testing.T) {
 
 	// Scenario B: probing=false — rejection DOES call markRelayDead.
 	// Use a relay that already has failFilterRej=2 so one Add(1) reaches threshold=3.
-	_, rsB, callsB := makeC()
-	// We need a fresh crawler where markRelayDead will eject at count=3.
+	callsB := 0
 	cB := &Crawler{
 		ejectionThresholds: map[failureClass]int32{
 			classFilterRej: 3,
 		},
-		onConnectFail: func(url string) { *callsB++ },
+		onConnectFail: func(url string) { callsB++ },
 	}
-	rsB2 := &relayState{url: "wss://probe.relay"}
-	rsB2.filterCap.Store(50)
-	rsB2.failFilterRej.Store(2) // next Add(1) in markRelayDead → 3 = threshold
-	rsB2.backoff = initialBackoff
-	cB.relays = []*relayState{rsB2}
+	rsB := &relayState{url: "wss://probe.relay"}
+	rsB.filterCap.Store(50)
+	rsB.failFilterRej.Store(2) // next Add(1) in markRelayDead → 3 = threshold
+	rsB.backoff = initialBackoff
+	cB.relays = []*relayState{rsB}
 
-	old2 := rsB2.filterCap.Load()
+	old2 := rsB.filterCap.Load()
 	if old2 > 10 {
 		newVal := old2 / 2
 		if newVal < 10 {
 			newVal = 10
 		}
-		rsB2.filterCap.Store(newVal)
-		rsB2.successStreak.Store(0)
-		rsB2.probing.Store(false)
+		rsB.filterCap.Store(newVal)
+		rsB.successStreak.Store(0)
+		rsB.probing.Store(false)
 		isProbing := false
 		if !isProbing {
-			cB.markRelayDead(rsB2.url, classFilterRej)
+			cB.markRelayDead(rsB.url, classFilterRej)
 		}
 	}
-	if *callsB != 1 {
-		t.Fatalf("probing=false at-cap: onConnectFail called %d times, want 1", *callsB)
+	if callsB != 1 {
+		t.Fatalf("probing=false at-cap: onConnectFail called %d times, want 1", callsB)
 	}
-
-	// Suppress unused variable warning.
-	_ = sync.Mutex{}
 }
