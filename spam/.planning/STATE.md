@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 03-query-engine-04-PLAN.md (Phase 03 complete)
-last_updated: "2026-06-12T04:33:52.072Z"
-last_activity: 2026-06-12 -- Phase 03 verification found 3 blocker gap clusters (see 03-VERIFICATION.md)
+status: executing
+stopped_at: Completed 03-query-engine-05-PLAN.md
+last_updated: "2026-06-12T06:13:14.729Z"
+last_activity: 2026-06-12 -- Phase 03 execution started
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 11
-  completed_plans: 10
-  percent: 60
+  completed_phases: 2
+  total_plans: 14
+  completed_plans: 12
+  percent: 40
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 03 (query-engine) — gaps found in verification
-Plan: 4 of 4 executed; gap closure pending
-Status: Verification failed (2/5 must-haves) — run /gsd-plan-phase 03 --gaps
-Last activity: 2026-06-12 -- Phase 03 verification found 3 blocker gap clusters (see 03-VERIFICATION.md)
+Phase: 03 (query-engine) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-06-12 -- Phase 03 execution started
 
 Progress: [█████░░░░░] 55% (Phases 1+2 complete; Phase 3 executed, gaps pending)
 
@@ -57,6 +57,7 @@ Progress: [█████░░░░░] 55% (Phases 1+2 complete; Phase 3 exe
 | Phase 03-query-engine P02 | 25 minutes | 3 tasks | 3 files |
 | Phase 03-query-engine P03 | 8 minutes | 2 tasks | 2 files |
 | Phase 03-query-engine P04 | 25 minutes | 3 tasks | 3 files |
+| Phase 03-query-engine P05 | 20 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,7 @@ Recent decisions affecting current work:
 - [Phase ?]: No external hex crate: inline decode_hex in router.rs avoids new dep legitimacy concern
 - Plan 03-03 (2026-06-12): LevIdNotFound propagated as hard error (not skip) — a levId from a real index scan missing in EventPayload is structural corruption; decode failures use skip-warn-count (D-11); 57 tests pass
 - Plan 03-04 (2026-06-12): execute_query over-fetch+backfill+cursor + latest_per_author grouped buckets + is_expired NIP-40 predicate — QRY-01/02/03/05 satisfied; router.rs tag-filter fixed to hex-decode tag values to raw bytes matching strfry index format; 65 lib tests pass
+- [Phase ?]: CR-05 fix: Vec<(LevId, DecodedEvent)> return from hydrate_lev_ids; callers join on lev_id via HashMap, never positional zip
 
 ### Pending Todos
 
@@ -107,7 +109,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-12T00:00:00Z
-Stopped at: Completed 03-query-engine-04-PLAN.md (Phase 03 complete)
+Last session: 2026-06-12T06:13:14.725Z
+Stopped at: Completed 03-query-engine-05-PLAN.md
 Resume: execute Phase 04 — GraphQL API
-Resume file: .planning/phases/04-graphql-api/ (next phase plans)
+Resume file: None
