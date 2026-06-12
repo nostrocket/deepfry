@@ -893,6 +893,90 @@ mod tests {
         (env, dir)
     }
 
+    // -----------------------------------------------------------------------
+    // Task 2 — Fixture regression: kinds=[1], until=1700000256 yields levIds 7 and 8
+    // -----------------------------------------------------------------------
+
+    /// CR-01 fixture regression: reverse scan of Event__kind with start_key kind=1 ‖ ts=1700000256
+    /// (an existing boundary timestamp) must return BOTH levId=7 and levId=8 and exactly 5
+    /// kind=1 events at ts<=1700000256 (levIds 4,5,6,7,8).
+    ///
+    /// Before the CR-01 fix, scan_index_bounded Reverse with Bound::Included(start_key) on this
+    /// existing key returned only levId=7 (the smallest dup of ts=1700000256), silently dropping
+    /// levId=8. The ts+1 Excluded fix positions rev_range above ts=1700000256 so both dups are
+    /// yielded descending.
+    ///
+    /// Fixture kind=1 layout (from Event__kind.json / 03-VERIFICATION.md):
+    ///   levId=4   ts=1700000000
+    ///   levId=5   ts=1700000255
+    ///   levId=6   ts=1700000255
+    ///   levId=7   ts=1700000256  ← boundary dup group
+    ///   levId=8   ts=1700000256  ← boundary dup group (must NOT be dropped)
+    ///   levId=10  ts=1710000000
+    ///   levId=11  ts=1720000000
+    ///
+    /// scan_index_bounded("Event__kind", Reverse, kind=1‖ts=1700000256, limit=20) must include
+    /// BOTH levId=7 and levId=8 among its returned events, and exactly 5 kind=1 entries total
+    /// (levIds 4,5,6,7,8 at ts<=1700000256).
+    #[test]
+    fn test_scan_reverse_until_existing_ts_keeps_both_dups() {
+        let (env, _tmp) = open_temp_fixture_env();
+
+        // Build the Event__kind start key for kind=1, created_at=1700000256.
+        let start_key = {
+            let mut k = Vec::with_capacity(16);
+            k.extend_from_slice(&1u64.to_le_bytes());         // kind=1
+            k.extend_from_slice(&1700000256u64.to_le_bytes()); // ts=1700000256
+            k
+        };
+
+        // Reverse scan from kind=1/ts=1700000256 downward, limit large enough for all kind=1 events.
+        let results = scan_index_bounded(
+            &env,
+            "Event__kind",
+            ScanDirection::Reverse,
+            &start_key,
+            20,
+        )
+        .expect("scan_index_bounded Reverse must not error");
+
+        // Extract kind=1 levIds from results (key[0..8] == 1u64.to_le_bytes()).
+        let kind1_prefix = 1u64.to_le_bytes();
+        let lev_ids: Vec<u64> = results
+            .iter()
+            .filter(|(k, _)| k.len() >= 8 && k[0..8] == kind1_prefix)
+            .map(|(_, l)| *l)
+            .collect();
+
+        println!(
+            "test_scan_reverse_until_existing_ts_keeps_both_dups: kind=1 levIds at ts<=1700000256 = {:?}",
+            lev_ids
+        );
+
+        // Both levId=7 AND levId=8 must be present (the boundary dup group at ts=1700000256).
+        assert!(
+            lev_ids.contains(&7),
+            "CR-01 fixture regression: levId=7 (ts=1700000256) must be returned, got {:?}",
+            lev_ids
+        );
+        assert!(
+            lev_ids.contains(&8),
+            "CR-01 fixture regression: levId=8 (ts=1700000256) must be returned (was dropped before fix), got {:?}",
+            lev_ids
+        );
+
+        // Exactly 5 kind=1 events at ts<=1700000256: levIds {4,5,6,7,8}.
+        let mut sorted = lev_ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            vec![4, 5, 6, 7, 8],
+            "CR-01 fixture regression: exactly 5 kind=1 events at ts<=1700000256 must be returned \
+             (levIds 4,5,6,7,8), got {:?}",
+            sorted
+        );
+    }
+
     /// CR-01 fix: a reverse windowed scan starting on an existing 3-dup key returns all 3 dups.
     ///
     /// Bug: collect_window Reverse first_batch arm used Bound::Included(resume_key) which
