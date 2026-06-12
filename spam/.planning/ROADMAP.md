@@ -84,7 +84,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
 
-**Plans**: 7 plans (7 waves; 03-05/06/07 gap closure for the verification gaps in 03-VERIFICATION.md)
+**Plans**: 9 plans (9 waves; 03-05/06/07 + 03-08/09 gap closure for the verification gaps in 03-VERIFICATION.md)
 
 **Wave 1**
 
@@ -113,6 +113,14 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 7** *(gap closure — Cluster 3 / CR-06,07 + WR-04; blocked on Wave 6: shares engine.rs/router.rs)*
 
 - [x] 03-07-PLAN.md — Event__tag decode restricted to 64-char lowercase hex; single-char tag-name validation; tag residual changed to NIP-01 AND across distinct fields (QRY-02 / CR-06,CR-07,WR-04,IN-02)
+
+**Wave 8** *(gap closure — CR-01 scan-layer; blocked on Wave 7: touches src/lmdb/scan.rs only)*
+
+- [ ] 03-08-PLAN.md — reverse first-window/bounded Bound::Included on an existing key drops higher dup-group levIds; fix builds the reverse upper bound from ts+1 (saturating) with Bound::Excluded so the largest dup is the landing point; fixture regression until=1700000256 returns both levId 7 and 8 (QRY-01 / CR-01)
+
+**Wave 9** *(gap closure — CR-02/CR-03 engine k-way merge; blocked on Wave 8: consumes the corrected scan bound)*
+
+- [ ] 03-09-PLAN.md — replace sort-per-batch with a windowed k-way merge (merge_windowed) routed through the engine for true (created_at DESC, lev_id DESC) order across iterations; per-stream since exhaustion instead of global since_cutoff; delete orphaned merge path + IN-01/02/03 cleanups (QRY-01,QRY-02 / CR-02,CR-03,WR-04,IN-01,IN-02,IN-03)
 
 ### Phase 4: GraphQL API
 
