@@ -26,7 +26,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **QRY-01**: LMDB2GraphQL resolves `events()` filters (ids, authors, kinds, since/until) by scanning the most selective applicable strfry index (`Event__id` / `Event__pubkey` / `Event__pubkeyKind` / `Event__kind` / `Event__created_at`) to produce ordered `levId`s
 - [x] **QRY-02**: LMDB2GraphQL resolves tag filters by scanning `Event__tag` (`tagName ‖ tagValue ‖ created_at`)
 - [ ] **QRY-03**: LMDB2GraphQL resolves `latestPerAuthor` via `Event__pubkeyKind` prefix scans (newest-first, N events per pubkey)
-- [ ] **QRY-04**: LMDB2GraphQL hydrates full event JSON by point-looking-up `EventPayload[levId]` for each matched result
+- [x] **QRY-04**: LMDB2GraphQL hydrates full event JSON by point-looking-up `EventPayload[levId]` for each matched result
 - [ ] **QRY-05**: LMDB2GraphQL filters out NIP-40 expired events (`expiration != 0 && expiration <= now`) at query time
 
 ### GraphQL API
@@ -95,7 +95,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QRY-01 | Phase 3 | Complete |
 | QRY-02 | Phase 3 | Complete |
 | QRY-03 | Phase 3 | Pending |
-| QRY-04 | Phase 3 | Pending |
+| QRY-04 | Phase 3 | Complete |
 | QRY-05 | Phase 3 | Pending |
 | API-01 | Phase 4 | Pending |
 | API-02 | Phase 4 | Pending |

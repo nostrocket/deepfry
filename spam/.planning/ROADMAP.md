@@ -104,7 +104,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 5** *(gap closure — Cluster 2 / CR-05; blocked on Wave 4)*
 
-- [ ] 03-05-PLAN.md — hydrate_lev_ids returns lev_id-associated pairs; engine joins on lev_id (not positional zip) so a corrupt-payload skip cannot corrupt the cursor or shift keys (QRY-04 / CR-05)
+- [x] 03-05-PLAN.md — hydrate_lev_ids returns lev_id-associated pairs; engine joins on lev_id (not positional zip) so a corrupt-payload skip cannot corrupt the cursor or shift keys (QRY-04 / CR-05)
 
 **Wave 6** *(gap closure — Cluster 1 / CR-01,02,03,04 + WR-01; blocked on Wave 5: shares engine.rs)*
 
@@ -153,6 +153,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 4/7 | In Progress (gap closure) |  |
+| 3. Query Engine | 5/7 | In Progress|  |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
