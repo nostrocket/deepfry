@@ -747,4 +747,133 @@ mod tests {
             "limit=0 windowed and limit=100 bounded scans must return the same sequence"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // CR-01 fix: Reverse arm ts+1 saturating Bound::Excluded tests
+    // -----------------------------------------------------------------------
+
+    /// Full sub-DB name for Event__kind (matches rasgueadb_defaultDb__ prefix).
+    const EVENT_KIND_FULL: &str = "rasgueadb_defaultDb__Event__kind";
+
+    /// Build a Uint64Uint64-shaped key for synthetic env tests.
+    fn kind_key_synthetic(kind: u64, created_at: u64) -> Vec<u8> {
+        let mut k = Vec::with_capacity(16);
+        k.extend_from_slice(&kind.to_le_bytes());
+        k.extend_from_slice(&created_at.to_le_bytes());
+        k
+    }
+
+    /// Build a synthetic Event__kind env with the given (key, levId) pairs.
+    /// Uses write transactions (legitimate — this is NOT strfry's env).
+    fn build_synthetic_kind_env(entries: &[(Vec<u8>, u64)]) -> (heed::Env, tempfile::TempDir) {
+        use crate::lmdb::comparators::Uint64Uint64Cmp;
+        use heed::{DatabaseFlags, EnvOpenOptions};
+
+        let dir = tempfile::tempdir().expect("tempdir for synthetic env");
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .max_dbs(5)
+                .map_size(10 * 1024 * 1024)
+                .open(dir.path())
+                .expect("open synthetic env")
+        };
+
+        {
+            let mut wtxn = env.write_txn().expect("write txn");
+            let mut opts = env
+                .database_options()
+                .types::<heed::types::Bytes, heed::types::Bytes>()
+                .key_comparator::<Uint64Uint64Cmp>();
+            #[allow(deprecated)] // MDB_INTEGERDUP: deliberate strfry on-disk replication
+            opts.flags(DatabaseFlags::DUP_SORT | DatabaseFlags::INTEGER_DUP);
+            opts.name(EVENT_KIND_FULL);
+            let db: heed::Database<heed::types::Bytes, heed::types::Bytes, Uint64Uint64Cmp> =
+                opts.create(&mut wtxn).expect("create synthetic sub-DB");
+
+            for (key, lev_id) in entries {
+                db.put(&mut wtxn, key.as_slice(), &lev_id.to_le_bytes())
+                    .expect("put entry");
+            }
+            wtxn.commit().expect("commit");
+        }
+
+        (env, dir)
+    }
+
+    /// CR-01 fix: a reverse windowed scan starting on an existing 3-dup key returns all 3 dups.
+    ///
+    /// Bug: collect_window Reverse first_batch arm used Bound::Included(resume_key) which
+    /// positions heed at the SMALLEST dup of resume_key and steps to the previous key —
+    /// dropping the higher dups. Fix: build upper bound from ts+1 (Bound::Excluded) so
+    /// rev_range positions ABOVE the boundary key and lands on the largest dup of ts.
+    ///
+    /// Layout: one key kind=1/ts=1000 with dups {5,6,7}.
+    /// start_key = kind=1 ‖ ts=1000 (the existing key).
+    /// Expected reverse results: all of {5,6,7} (sorted), none dropped.
+    #[test]
+    fn test_reverse_first_window_existing_key_keeps_all_dups() {
+        let key = kind_key_synthetic(1, 1000);
+        let entries = vec![
+            (key.clone(), 5u64),
+            (key.clone(), 6u64),
+            (key.clone(), 7u64),
+        ];
+        let (env, _dir) = build_synthetic_kind_env(&entries);
+
+        // scan_index_one_window with first_batch=true and resume_key equal to the existing key.
+        let (batch, _next_key, _next_first) = scan_index_one_window(
+            &env,
+            "Event__kind",
+            ScanDirection::Reverse,
+            &key,
+            true,  // first_batch: inclusive start
+            100,   // large window — all dups should fit
+        )
+        .expect("scan_index_one_window must not error");
+
+        let mut lev_ids: Vec<u64> = batch.iter().map(|(_, l)| *l).collect();
+        lev_ids.sort_unstable();
+
+        assert_eq!(
+            lev_ids,
+            vec![5, 6, 7],
+            "CR-01: reverse scan starting on existing 3-dup key must return ALL dups [5,6,7], got {:?}",
+            lev_ids
+        );
+    }
+
+    /// CR-01 fix: scan_index_bounded Reverse with start_key equal to an existing key returns
+    /// the full dup group.
+    ///
+    /// Same layout as test_reverse_first_window_existing_key_keeps_all_dups but uses the
+    /// collect_bounded Reverse arm (scan_index_bounded with finite limit).
+    #[test]
+    fn test_reverse_bounded_existing_key_keeps_all_dups() {
+        let key = kind_key_synthetic(1, 1000);
+        let entries = vec![
+            (key.clone(), 5u64),
+            (key.clone(), 6u64),
+            (key.clone(), 7u64),
+        ];
+        let (env, _dir) = build_synthetic_kind_env(&entries);
+
+        let results = scan_index_bounded(
+            &env,
+            "Event__kind",
+            ScanDirection::Reverse,
+            &key,
+            100, // large limit — all dups should fit
+        )
+        .expect("scan_index_bounded Reverse must not error");
+
+        let mut lev_ids: Vec<u64> = results.iter().map(|(_, l)| *l).collect();
+        lev_ids.sort_unstable();
+
+        assert_eq!(
+            lev_ids,
+            vec![5, 6, 7],
+            "CR-01: scan_index_bounded Reverse starting on existing 3-dup key must return ALL dups [5,6,7], got {:?}",
+            lev_ids
+        );
+    }
 }
