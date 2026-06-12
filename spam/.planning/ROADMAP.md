@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (4 plans complete 2026-06-11; CR-01 gap closed — seek gate added, LMDB-06 correctness restored)
 - [x] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index (3 plans complete 2026-06-11; LMDB-07/08/09 satisfied)
-- [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — plans executed 2026-06-12; verification found gaps (2/5 must-haves), gap closure pending
+- [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — plans executed 2026-06-12; verification found gaps (2/5 must-haves); gap-closure plans 03-05/06/07 created 2026-06-12
 - [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
 - [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment
 
@@ -84,7 +84,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
 
-**Plans**: 4 plans (4 waves)
+**Plans**: 7 plans (7 waves; 03-05/06/07 gap closure for the verification gaps in 03-VERIFICATION.md)
 
 **Wave 1**
 
@@ -101,6 +101,18 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 4** *(blocked on Waves 2-3 completion)*
 
 - [x] 03-04-PLAN.md — engine: execute_query (route+merge+over-fetch+NIP-40+cursor) and latest_per_author grouped buckets (QRY-01, QRY-02, QRY-03, QRY-05) — COMPLETE 2026-06-12
+
+**Wave 5** *(gap closure — Cluster 2 / CR-05; blocked on Wave 4)*
+
+- [ ] 03-05-PLAN.md — hydrate_lev_ids returns lev_id-associated pairs; engine joins on lev_id (not positional zip) so a corrupt-payload skip cannot corrupt the cursor or shift keys (QRY-04 / CR-05)
+
+**Wave 6** *(gap closure — Cluster 1 / CR-01,02,03,04 + WR-01; blocked on Wave 5: shares engine.rs)*
+
+- [ ] 03-06-PLAN.md — merge prefix guard (take_while starts_with), since stop-bound + kind/author/id residual, exclusive-resume windowing (proven scan.rs pattern), lev_id reset on stuck advance, deduped start keys (QRY-01 / CR-01,CR-02,CR-03,CR-04,WR-01,IN-01,IN-04)
+
+**Wave 7** *(gap closure — Cluster 3 / CR-06,07 + WR-04; blocked on Wave 6: shares engine.rs/router.rs)*
+
+- [ ] 03-07-PLAN.md — Event__tag decode restricted to 64-char lowercase hex; single-char tag-name validation; tag residual changed to NIP-01 AND across distinct fields (QRY-02 / CR-06,CR-07,WR-04,IN-02)
 
 ### Phase 4: GraphQL API
 
@@ -141,6 +153,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 3/4 | In Progress|  |
+| 3. Query Engine | 4/7 | In Progress (gap closure) |  |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
