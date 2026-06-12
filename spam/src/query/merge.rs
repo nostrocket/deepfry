@@ -2,28 +2,26 @@
 ///
 /// ## Purpose
 ///
-/// Given a set of per-prefix start_keys for a single `Event__*` index, `merge_prefixes` issues
-/// one bounded `Reverse` `scan_index_bounded` call per prefix and merges their results into a
-/// single `(created_at, lev_id)` DESC-ordered stream using a `BinaryHeap` (max-heap).
+/// Given a set of per-prefix start_keys for a single `Event__*` index, `merge_windowed`
+/// (the production entry point) issues windowed `scan_index_one_window` calls per prefix and
+/// merges their results into a single `(created_at, lev_id)` DESC-ordered stream using a
+/// `BinaryHeap` (max-heap). `merge_prefixes` is a backward-compat thin wrapper used by tests.
 ///
 /// ## Key invariants
 ///
 /// - **No hydration** (D-06): `created_at` is extracted from the trailing 8 bytes of each key
 ///   via `crate::query::router::created_at_from_key` — the `EventPayload` sub-DB is never opened.
-/// - **No long-lived txn** (D-08): each `scan_index_bounded` call opens and drops its own short
+/// - **No long-lived txn** (D-08): each `scan_index_one_window` call opens and drops its own short
 ///   `RoTxn`. The merge holds NO transaction across per-prefix scan calls.
-/// - **Bounded by `limit`** (T-03-DOS): each per-prefix scan is bounded by `limit` (or
-///   `DEFAULT_WINDOW_SIZE` when `limit==0`). The heap emits at most `limit` results total.
+/// - **Bounded by `emit_limit`** (T-03-DOS): each per-stream window is bounded by `batch_size`;
+///   the heap emits at most `emit_limit` results total.
 /// - **Total order** (D-10): output is `(created_at, lev_id)` DESC — a total order because
 ///   `lev_id` is unique per event.
-///
-/// ## v1 materialization note
-///
-/// Each per-prefix scan is fully materialized into a `Vec` before merging (D-05 over-scan is
-/// bounded by `limit`). A lazy streaming merge is a future optimization; for v1 this is
-/// straightforward and correct.
+/// - **Per-stream since exhaustion** (CR-03): when a stream's descending batch first contains an
+///   entry with ts < since, the batch is truncated at that point and the stream is marked exhausted.
+///   Other streams are not affected — they continue until their own since boundary or exhaustion.
 
-use crate::lmdb::scan::{scan_index_bounded, ScanDirection, DEFAULT_WINDOW_SIZE};
+use crate::lmdb::scan::{scan_index_one_window, ScanDirection, DEFAULT_WINDOW_SIZE};
 use crate::lmdb::types::LevId;
 use crate::lmdb::indexes::IndexError;
 use crate::query::router::created_at_from_key;
@@ -70,36 +68,259 @@ impl PartialOrd for MergeCandidate {
 }
 
 // ---------------------------------------------------------------------------
-// merge_prefixes: the k-way merge entry point
+// merge_windowed: the windowed k-way merge entry point (CR-02/CR-03 fix)
+// ---------------------------------------------------------------------------
+
+/// Per-stream state for the windowed k-way merge.
+///
+/// Holds the resume position for `scan_index_one_window`, the prefix guard bytes,
+/// whether this stream is exhausted, and a pending-emission buffer of decoded
+/// `(created_at, lev_id, key_bytes)` triples in descending order.
+struct StreamState {
+    resume_key: Vec<u8>,
+    first_batch: bool,
+    prefix: Vec<u8>,
+    exhausted: bool,
+    /// Pending entries in (created_at DESC, lev_id DESC) order. Consumed front-to-back.
+    buffer: Vec<(u64, LevId, Vec<u8>)>,
+    /// Cursor into `buffer`: index of the next unconsumed entry.
+    buf_pos: usize,
+}
+
+impl StreamState {
+    /// Return the next buffered (ts, lev_id, key) without removing it, or None if drained.
+    fn peek(&self) -> Option<(u64, LevId)> {
+        self.buffer.get(self.buf_pos).map(|(ts, lev, _)| (*ts, *lev))
+    }
+
+    /// True when the buffer is fully consumed and the stream is not exhausted.
+    fn needs_refill(&self) -> bool {
+        !self.exhausted && self.buf_pos >= self.buffer.len()
+    }
+}
+
+/// Refill one stream by issuing a `scan_index_one_window` call, applying the prefix guard,
+/// applying per-stream `since` truncation (CR-03), and loading results into `stream.buffer`.
+///
+/// After a refill, `stream.buf_pos` is reset to 0. If the window was empty or the prefix
+/// guard exhausted all entries, the stream is marked exhausted.
+fn refill_stream(
+    env: &heed::Env,
+    short_name: &str,
+    stream: &mut StreamState,
+    batch_size: usize,
+    since: u64,
+) -> Result<(), IndexError> {
+    debug_assert!(stream.needs_refill(), "refill_stream called on a non-empty or exhausted stream");
+
+    let (batch, next_resume, next_first) = scan_index_one_window(
+        env,
+        short_name,
+        ScanDirection::Reverse,
+        &stream.resume_key,
+        stream.first_batch,
+        batch_size,
+    )?;
+
+    stream.resume_key = next_resume;
+    stream.first_batch = next_first;
+
+    if batch.is_empty() {
+        stream.exhausted = true;
+        stream.buffer = Vec::new();
+        stream.buf_pos = 0;
+        return Ok(());
+    }
+
+    // CR-01 prefix guard: take_while(starts_with(prefix)) in descending order —
+    // entries below the prefix are contiguous at a lower key, so take_while terminates cleanly.
+    let prefix = &stream.prefix;
+    let guarded: Vec<(u64, LevId, Vec<u8>)> = batch
+        .into_iter()
+        .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
+        .map(|(k, lev_id)| {
+            let ts = created_at_from_key(&k);
+            (ts, lev_id, k)
+        })
+        .collect();
+
+    if guarded.is_empty() {
+        stream.exhausted = true;
+        stream.buffer = Vec::new();
+        stream.buf_pos = 0;
+        return Ok(());
+    }
+
+    // CR-03 per-stream since exhaustion: the batch is in descending order. Find the first
+    // entry with ts < since and truncate there. The stream is then exhausted because all
+    // subsequent entries will also be < since (the scan is descending).
+    let truncated: Vec<(u64, LevId, Vec<u8>)> = if since > 0 {
+        let cutoff = guarded.iter().position(|(ts, _, _)| *ts < since);
+        if let Some(idx) = cutoff {
+            let trimmed = guarded[..idx].to_vec();
+            stream.exhausted = true; // no more entries >= since from this stream
+            trimmed
+        } else {
+            guarded
+        }
+    } else {
+        guarded
+    };
+
+    if truncated.is_empty() {
+        // since truncated the entire window; stream is already marked exhausted above
+        // (if since > 0 and all entries were < since, cutoff == Some(0) → trimmed is empty)
+        stream.buffer = Vec::new();
+        stream.buf_pos = 0;
+        return Ok(());
+    }
+
+    stream.buffer = truncated;
+    stream.buf_pos = 0;
+    Ok(())
+}
+
+/// Windowed k-way merge over per-prefix `Reverse` scans (CR-02/CR-03 fix).
+///
+/// ## Algorithm (frontier emission)
+///
+/// 1. Initialize per-stream state with the provided `start_keys`; for each stream derive
+///    `prefix = key[..len-8]` (the logical value-partition boundary).
+/// 2. Seed the `BinaryHeap` with the first entry from each non-empty stream's buffer (after
+///    an initial `refill_stream` call).
+/// 3. Repeatedly:
+///    - Pop the max `(created_at, lev_id)` candidate from the heap — this is guaranteed to be
+///      globally the newest remaining entry because the heap invariant holds over ALL streams'
+///      current buffer heads.
+///    - Push the emitted triple to `results`.
+///    - Refill the popped stream's buffer head: if the stream's buffer still has entries at
+///      `buf_pos`, push the next buffered entry into the heap. If the buffer is drained and
+///      the stream is not exhausted, call `refill_stream` and push the new head.
+/// 4. Stop at `emit_limit` results or when the heap is empty (all streams exhausted and buffers
+///    drained).
+///
+/// ## Why this is correct (CR-02)
+///
+/// A popped candidate is the max over ALL heap entries, and each heap entry is the HEAD
+/// (highest ts/lev_id) of its stream's remaining buffer. Because the per-stream buffer is in
+/// descending order, the heap head is always the maximum of that stream. Therefore the popped
+/// global max is >= all other stream heads, and emitting it next is globally correct. This is
+/// the standard k-way merge invariant; crucially it holds ACROSS window boundaries because we
+/// only advance the heap when a stream's buffer is drained and we refill from `scan_index_one_window`.
+///
+/// ## Parameters
+///
+/// - `env`: the heed LMDB environment (read-only).
+/// - `short_name`: the short `Event__*` index name (e.g. `"Event__kind"`).
+/// - `start_keys`: one composite start_key per prefix. Empty slice → empty result.
+/// - `batch_size`: per-stream window size passed to `scan_index_one_window`.
+/// - `emit_limit`: maximum number of triples to return.
+/// - `since`: per-stream lower bound. Streams are exhausted when their next entry is < since.
+///   Pass `0` for no lower bound.
+///
+/// ## Returns
+///
+/// `Ok(Vec<(u64, LevId, Vec<u8>)>)` — `(created_at, lev_id, key_bytes)` triples in
+/// `(created_at DESC, lev_id DESC)` order. Length ≤ `emit_limit`.
+///
+/// `Err(IndexError)` — LMDB or sub-DB error from any per-stream scan.
+pub fn merge_windowed(
+    env: &heed::Env,
+    short_name: &str,
+    start_keys: &[Vec<u8>],
+    batch_size: usize,
+    emit_limit: usize,
+    since: u64,
+) -> Result<Vec<(u64, LevId, Vec<u8>)>, IndexError> {
+    if start_keys.is_empty() || emit_limit == 0 {
+        return Ok(vec![]);
+    }
+
+    // Initialize per-stream state; don't refill yet (lazy: seed heap after init).
+    let mut streams: Vec<StreamState> = start_keys
+        .iter()
+        .map(|key| {
+            let prefix_len = key.len().saturating_sub(8);
+            StreamState {
+                resume_key: key.clone(),
+                first_batch: true,
+                prefix: key[..prefix_len].to_vec(),
+                exhausted: false,
+                buffer: Vec::new(),
+                buf_pos: 0,
+            }
+        })
+        .collect();
+
+    // Initial fill: load the first window for each stream.
+    for s in &mut streams {
+        refill_stream(env, short_name, s, batch_size, since)?;
+    }
+
+    // Seed the BinaryHeap with the first candidate from each non-empty stream.
+    let mut heap: BinaryHeap<MergeCandidate> = BinaryHeap::with_capacity(streams.len());
+    for (idx, s) in streams.iter().enumerate() {
+        if let Some((ts, lev_id)) = s.peek() {
+            let key_bytes = s.buffer[s.buf_pos].2.clone();
+            heap.push(MergeCandidate { created_at: ts, lev_id, key_bytes, stream_idx: idx });
+        }
+    }
+
+    // K-way frontier merge.
+    let mut results: Vec<(u64, LevId, Vec<u8>)> = Vec::with_capacity(emit_limit.min(256));
+
+    while let Some(candidate) = heap.pop() {
+        let idx = candidate.stream_idx;
+        results.push((candidate.created_at, candidate.lev_id, candidate.key_bytes));
+
+        if results.len() >= emit_limit {
+            break;
+        }
+
+        // Advance the popped stream: consume the entry we just popped (buf_pos was at it).
+        streams[idx].buf_pos += 1;
+
+        // Refill the stream if its buffer is drained and it is not exhausted.
+        if streams[idx].needs_refill() {
+            refill_stream(env, short_name, &mut streams[idx], batch_size, since)?;
+        }
+
+        // Push the next head of this stream into the heap (if any remains).
+        if let Some((ts, lev_id)) = streams[idx].peek() {
+            let key_bytes = streams[idx].buffer[streams[idx].buf_pos].2.clone();
+            heap.push(MergeCandidate { created_at: ts, lev_id, key_bytes, stream_idx: idx });
+        }
+    }
+
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// merge_prefixes: thin backward-compat wrapper over merge_windowed
 // ---------------------------------------------------------------------------
 
 /// Merge per-prefix `Reverse` scans over `short_name` into a single `(created_at DESC, lev_id DESC)` stream.
 ///
-/// ## Algorithm
+/// ## Note (WR-04 / plan 03-09)
 ///
-/// 1. For each `start_key` in `start_keys`, issue one `scan_index_bounded(env, short_name,
-///    Reverse, start_key, scan_limit)` where `scan_limit = limit.max(1)` (never zero — limit=0
-///    here means "bounded by DEFAULT_WINDOW_SIZE", handled below).
-/// 2. Materialize each per-prefix scan result as a `Vec<IntoIter<(Vec<u8>, LevId)>>`.
-/// 3. Seed the `BinaryHeap` with the first `MergeCandidate` from each non-empty stream.
-/// 4. Repeatedly: pop the max candidate, push it to results, pull the next entry from its
-///    stream back into the heap.
-/// 5. Stop after `limit` results (or when all streams are drained).
+/// This is now a thin wrapper over `merge_windowed` with `since=0` (no lower bound) and
+/// `batch_size = scan_limit`. The production engine path calls `merge_windowed` directly;
+/// `merge_prefixes` is retained for backward compatibility with its existing unit tests and
+/// any caller that does not need per-stream since semantics or windowed refill.
 ///
 /// ## Parameters
 ///
-/// - `env`: the heed LMDB environment (read-only). Passed directly to `scan_index_bounded`.
+/// - `env`: the heed LMDB environment (read-only).
 /// - `short_name`: the short `Event__*` index name (e.g. `"Event__kind"`).
-/// - `start_keys`: one composite start_key per prefix (from `router::build_start_keys`). Empty slice → empty result.
-/// - `limit`: maximum results to return. `0` → uses `DEFAULT_WINDOW_SIZE` as the per-prefix
-///   scan limit (D-04 unbounded-feed case).
+/// - `start_keys`: one composite start_key per prefix (from `router::build_start_keys`). Empty → empty.
+/// - `limit`: maximum results to return. `0` → uses `DEFAULT_WINDOW_SIZE`.
 ///
 /// ## Returns
 ///
 /// `Ok(Vec<(u64, LevId, Vec<u8>)>)` — `(created_at, lev_id, key_bytes)` triples in newest-first
-/// `(created_at, lev_id)` DESC order. Length ≤ `limit` (or `DEFAULT_WINDOW_SIZE` when `limit==0`).
+/// order. Length ≤ `limit` (or `DEFAULT_WINDOW_SIZE` when `limit==0`).
 ///
-/// `Err(IndexError)` — LMDB or sub-DB error from any per-prefix scan.
+/// `Err(IndexError)` — from `merge_windowed`.
 pub fn merge_prefixes(
     env: &heed::Env,
     short_name: &str,
@@ -110,78 +331,15 @@ pub fn merge_prefixes(
         return Ok(vec![]);
     }
 
-    // When limit==0, use DEFAULT_WINDOW_SIZE as the per-prefix bound (T-03-DOS).
     let scan_limit = if limit == 0 { DEFAULT_WINDOW_SIZE } else { limit };
-    let emit_limit = if limit == 0 { DEFAULT_WINDOW_SIZE } else { limit };
+    let emit_limit = scan_limit;
 
-    // Issue one bounded Reverse scan per prefix; materialize as an into_iter cursor.
-    // Each scan_index_bounded owns its own short RoTxn (D-08) — no txn held here.
-    //
-    // CR-01 prefix guard: for each start_key, derive a per-prefix slice:
-    //   prefix = &start_key[..start_key.len().saturating_sub(8)]
-    // All Event__* keys end with created_at(8 LE). Dropping the trailing 8 bytes leaves
-    // the fixed-width prefix that uniquely identifies the logical value-partition:
-    //   Event__kind:       kind(8 LE) → prefix len = 8
-    //   Event__pubkey:     pubkey(32) → prefix len = 32
-    //   Event__pubkeyKind: pubkey(32) ‖ kind(8 LE) → prefix len = 40
-    //   Event__id:         id(32) → prefix len = 32
-    //   Event__tag:        tagName(1) ‖ tagValue(var) → prefix len = key.len()-8
-    //   Event__created_at: len=8, prefix len=0 → starts_with([]) is vacuously true
-    //
-    // After scanning, apply .take_while(|(k,_)| k.starts_with(prefix)) BEFORE pushing
-    // into the stream Vec. take_while (not filter) is correct: in a reverse walk, all
-    // entries below the prefix are contiguous at a lower key prefix. take_while terminates
-    // the stream at the first out-of-prefix entry rather than scanning further garbage.
-    let mut streams: Vec<std::vec::IntoIter<(Vec<u8>, LevId)>> = Vec::with_capacity(start_keys.len());
-    // Store the per-key prefix alongside the stream so take_while can reference it.
-    let mut stream_prefixes: Vec<Vec<u8>> = Vec::with_capacity(start_keys.len());
-    for key in start_keys {
-        let prefix_len = key.len().saturating_sub(8);
-        let prefix = key[..prefix_len].to_vec();
-        let batch = scan_index_bounded(env, short_name, ScanDirection::Reverse, key, scan_limit)?;
-        // Apply prefix boundary guard: only keep entries whose key begins with `prefix`.
-        // take_while stops at the first non-matching entry (they are contiguous in a reverse walk).
-        let guarded: Vec<(Vec<u8>, LevId)> = batch
-            .into_iter()
-            .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
-            .collect();
-        streams.push(guarded.into_iter());
-        stream_prefixes.push(prefix);
-    }
-    drop(stream_prefixes); // Prefixes were consumed during guarded collection above.
-
-    // Seed the heap with the first candidate from each non-empty stream.
-    let mut heap: BinaryHeap<MergeCandidate> = BinaryHeap::with_capacity(streams.len());
-    for (idx, stream) in streams.iter_mut().enumerate() {
-        if let Some((key_bytes, lev_id)) = stream.next() {
-            let created_at = created_at_from_key(&key_bytes);
-            heap.push(MergeCandidate { created_at, lev_id, key_bytes, stream_idx: idx });
-        }
-    }
-
-    // K-way merge: pop max, emit, pull next from that stream.
-    let mut results = Vec::with_capacity(emit_limit);
-    while let Some(candidate) = heap.pop() {
-        let stream_idx = candidate.stream_idx;
-        results.push((candidate.created_at, candidate.lev_id, candidate.key_bytes));
-
-        if results.len() >= emit_limit {
-            break;
-        }
-
-        // Pull the next entry from this stream back into the heap.
-        if let Some((next_key, next_lev_id)) = streams[stream_idx].next() {
-            let next_ca = created_at_from_key(&next_key);
-            heap.push(MergeCandidate {
-                created_at: next_ca,
-                lev_id: next_lev_id,
-                key_bytes: next_key,
-                stream_idx,
-            });
-        }
-    }
-
-    Ok(results)
+    // Delegate entirely to merge_windowed with since=0 and the same scan_limit as batch_size.
+    // scan_index_one_window will issue a single window of scan_limit entries per stream —
+    // for backward compat with the old merge_prefixes single-pass behavior, use a large enough
+    // batch_size so each stream materializes in one go (scan_limit is the per-stream bound).
+    // merge_windowed's frontier then merges them correctly.
+    merge_windowed(env, short_name, start_keys, scan_limit, emit_limit, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +468,7 @@ mod tests {
 
         // Two pubkeys → two prefixes
         let f = NostrFilter {
-            authors: Some(vec![PK1.to_string(), PK2.to_string()]),
+            authors: Some(vec![PK1.to_string(), PK2.to_string()],),
             ..Default::default()
         };
         let selected = select_index(&f);
@@ -357,13 +515,101 @@ mod tests {
     fn test_no_payload_imports_compile_time_proof() {
         // D-06: merge operates on key bytes alone — no hydration.
         // Verified by construction: merge.rs imports only:
-        //   crate::lmdb::scan::{scan_index_bounded, ScanDirection, DEFAULT_WINDOW_SIZE}
+        //   crate::lmdb::scan::{scan_index_one_window, scan_index_bounded, ScanDirection, DEFAULT_WINDOW_SIZE}
         //   crate::lmdb::types::LevId
         //   crate::lmdb::indexes::IndexError
         //   crate::query::router::created_at_from_key
         // No reference to crate::lmdb::payload, DecodedEvent, or NostrEvent.
         // This is a documentation test — passes vacuously.
         assert!(true, "merge.rs imports verified — no payload or DecodedEvent import");
+    }
+
+    /// Test 6 (merge_windowed cross-iteration order): two streams of different time densities,
+    /// small batch_size forces multiple over-fetch iterations; global DESC order must hold.
+    ///
+    /// Stream A (kind=1): 7 events at ts 1700000000..1720000000 (descending)
+    /// Stream B (kind=2): 2 events at ts 1700000000, 1710000000
+    ///
+    /// With batch_size=2, multiple windowed iterations are needed. The emitted sequence must be
+    /// strictly non-increasing in (created_at DESC, lev_id DESC) across ALL iterations.
+    #[test]
+    fn test_merge_windowed_cross_iteration_global_desc_order() {
+        let (env, _tmp) = open_temp_fixture_env();
+
+        // kinds=[1,2] → two start keys for Event__kind
+        let f = NostrFilter {
+            kinds: Some(vec![1, 2]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__kind");
+        let start_keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(start_keys.len(), 2, "two kinds → two start_keys");
+
+        // batch_size=2, since=0 (no lower bound), large emit cap
+        let results = merge_windowed(&env, "Event__kind", &start_keys, 2, 20, 0)
+            .expect("merge_windowed must not error");
+
+        assert!(!results.is_empty(), "must emit at least some results");
+
+        // Verify strict non-increasing (created_at DESC, lev_id DESC)
+        let mut prev_ts = u64::MAX;
+        let mut prev_lev = u64::MAX;
+        for (ts, lev_id, _key) in &results {
+            if *ts == prev_ts {
+                assert!(
+                    *lev_id <= prev_lev,
+                    "equal ts={}: lev_id {} must be <= prev lev_id {} (D-10 tie-break)",
+                    ts, lev_id, prev_lev
+                );
+            } else {
+                assert!(
+                    *ts <= prev_ts,
+                    "created_at must be non-increasing across iterations: got ts={} after ts={} — CR-02 ordering broken",
+                    ts, prev_ts
+                );
+            }
+            prev_ts = *ts;
+            prev_lev = *lev_id;
+        }
+
+        // All 9 events (7 kind=1 + 2 kind=2) must be emitted
+        assert_eq!(results.len(), 9, "must emit all 9 events (7 kind=1 + 2 kind=2)");
+    }
+
+    /// Test 7 (merge_windowed per-stream since exhaustion): stream A has events >= T, stream B
+    /// has events < T. With since=T, all of A's events must be returned and none of B's.
+    /// Crossing `since` on stream B must NOT terminate stream A (CR-03 per-stream since).
+    ///
+    /// Use since=1715000000:
+    ///   kind=1: levId=11 (ts=1720000000) only — 1 event (all others < 1715000000)
+    ///   kind=2: none (ts=1700000000 and ts=1710000000 both < 1715000000)
+    /// Expected: 1 event total (levId=11 from kind=1).
+    #[test]
+    fn test_merge_windowed_per_stream_since_exhaustion() {
+        let (env, _tmp) = open_temp_fixture_env();
+
+        // kinds=[1,2] → two start keys
+        let f = NostrFilter {
+            kinds: Some(vec![1, 2]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__kind");
+        let start_keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(start_keys.len(), 2, "two kinds → two start_keys");
+
+        // since=1715000000: only kind=1/levId=11 (ts=1720000000) survives
+        let results = merge_windowed(&env, "Event__kind", &start_keys, 10, 20, 1715000000)
+            .expect("merge_windowed with since must not error");
+
+        // Exactly 1 event: kind=1/levId=11 (ts=1720000000)
+        assert_eq!(
+            results.len(),
+            1,
+            "since=1715000000 must return exactly 1 event; got {} — CR-03 per-stream since broken",
+            results.len()
+        );
+        assert_eq!(results[0].0, 1720000000, "the event must be ts=1720000000");
+        assert_eq!(results[0].1, 11, "the event must be levId=11");
     }
 
     /// Test 5 (CR-01): prefix guard — a kind=2 start key returns ONLY kind=2 entries.
