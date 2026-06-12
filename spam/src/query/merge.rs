@@ -116,11 +116,39 @@ pub fn merge_prefixes(
 
     // Issue one bounded Reverse scan per prefix; materialize as an into_iter cursor.
     // Each scan_index_bounded owns its own short RoTxn (D-08) — no txn held here.
+    //
+    // CR-01 prefix guard: for each start_key, derive a per-prefix slice:
+    //   prefix = &start_key[..start_key.len().saturating_sub(8)]
+    // All Event__* keys end with created_at(8 LE). Dropping the trailing 8 bytes leaves
+    // the fixed-width prefix that uniquely identifies the logical value-partition:
+    //   Event__kind:       kind(8 LE) → prefix len = 8
+    //   Event__pubkey:     pubkey(32) → prefix len = 32
+    //   Event__pubkeyKind: pubkey(32) ‖ kind(8 LE) → prefix len = 40
+    //   Event__id:         id(32) → prefix len = 32
+    //   Event__tag:        tagName(1) ‖ tagValue(var) → prefix len = key.len()-8
+    //   Event__created_at: len=8, prefix len=0 → starts_with([]) is vacuously true
+    //
+    // After scanning, apply .take_while(|(k,_)| k.starts_with(prefix)) BEFORE pushing
+    // into the stream Vec. take_while (not filter) is correct: in a reverse walk, all
+    // entries below the prefix are contiguous at a lower key prefix. take_while terminates
+    // the stream at the first out-of-prefix entry rather than scanning further garbage.
     let mut streams: Vec<std::vec::IntoIter<(Vec<u8>, LevId)>> = Vec::with_capacity(start_keys.len());
+    // Store the per-key prefix alongside the stream so take_while can reference it.
+    let mut stream_prefixes: Vec<Vec<u8>> = Vec::with_capacity(start_keys.len());
     for key in start_keys {
+        let prefix_len = key.len().saturating_sub(8);
+        let prefix = key[..prefix_len].to_vec();
         let batch = scan_index_bounded(env, short_name, ScanDirection::Reverse, key, scan_limit)?;
-        streams.push(batch.into_iter());
+        // Apply prefix boundary guard: only keep entries whose key begins with `prefix`.
+        // take_while stops at the first non-matching entry (they are contiguous in a reverse walk).
+        let guarded: Vec<(Vec<u8>, LevId)> = batch
+            .into_iter()
+            .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
+            .collect();
+        streams.push(guarded.into_iter());
+        stream_prefixes.push(prefix);
     }
+    drop(stream_prefixes); // Prefixes were consumed during guarded collection above.
 
     // Seed the heap with the first candidate from each non-empty stream.
     let mut heap: BinaryHeap<MergeCandidate> = BinaryHeap::with_capacity(streams.len());
@@ -336,5 +364,61 @@ mod tests {
         // No reference to crate::lmdb::payload, DecodedEvent, or NostrEvent.
         // This is a documentation test — passes vacuously.
         assert!(true, "merge.rs imports verified — no payload or DecodedEvent import");
+    }
+
+    /// Test 5 (CR-01): prefix guard — a kind=2 start key returns ONLY kind=2 entries.
+    ///
+    /// The fixture Event__kind index (forward order): [4,5,6,7,8,10,11,1,9,3,2]
+    ///   kind=1 lev_ids: 4,5,6,7,8,10,11 (7 events at ts 1700000000..1720000000)
+    ///   kind=2 lev_ids: 1,9 (2 events at ts 1700000000, 1710000000)
+    ///
+    /// Without the prefix guard, a reverse scan from kind=2||ts=u64::MAX walks backward
+    /// through kind=1 entries. With the guard, take_while stops at the first entry
+    /// whose key doesn't start with `kind=2 LE` (i.e. any kind != 2), so only
+    /// levIds 9 (ts=1710000000) and 1 (ts=1700000000) are returned.
+    #[test]
+    fn test_merge_prefix_guard_no_contamination() {
+        let (env, _tmp) = open_temp_fixture_env();
+
+        // Build the kind=2 start key: kind(8 LE) || ts=u64::MAX (reverse upper bound)
+        let mut start_key = Vec::with_capacity(16);
+        start_key.extend_from_slice(&2u64.to_le_bytes()); // kind=2
+        start_key.extend_from_slice(&u64::MAX.to_le_bytes()); // ts upper bound
+
+        let limit = 20; // large enough to return everything if unguarded
+        let merged = merge_prefixes(&env, "Event__kind", &[start_key], limit)
+            .expect("merge_prefixes must not error");
+
+        // Must return exactly the 2 kind=2 events (levIds 1 and 9).
+        assert_eq!(
+            merged.len(),
+            2,
+            "kind=2 prefix must return exactly 2 events (levIds 1,9); got {} — CR-01 prefix guard may be missing",
+            merged.len()
+        );
+
+        // Verify all returned lev_ids are kind=2 events (1 and 9) — no kind=1 contamination.
+        let returned_lev_ids: Vec<LevId> = merged.iter().map(|(_, lev, _)| *lev).collect();
+        assert!(
+            returned_lev_ids.contains(&9),
+            "kind=2 levId=9 (ts=1710000000) must be returned"
+        );
+        assert!(
+            returned_lev_ids.contains(&1),
+            "kind=2 levId=1 (ts=1700000000) must be returned"
+        );
+
+        // Confirm no kind=1 levIds leaked (fixture kind=1 levIds: 4,5,6,7,8,10,11).
+        let kind1_lev_ids: std::collections::HashSet<LevId> = [4,5,6,7,8,10,11].iter().cloned().collect();
+        for lev in &returned_lev_ids {
+            assert!(
+                !kind1_lev_ids.contains(lev),
+                "kind=1 levId={lev} must NOT be returned from kind=2 prefix scan (CR-01 contamination)"
+            );
+        }
+
+        // Verify newest-first order: levId=9 (ts=1710000000) before levId=1 (ts=1700000000).
+        assert_eq!(merged[0].1, 9, "first result must be levId=9 (ts=1710000000, newest kind=2)");
+        assert_eq!(merged[1].1, 1, "second result must be levId=1 (ts=1700000000, oldest kind=2)");
     }
 }

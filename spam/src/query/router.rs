@@ -136,7 +136,7 @@ pub fn build_start_keys(
     };
     let ts_bytes = ts.to_le_bytes();
 
-    match selected {
+    let mut keys: Vec<Vec<u8>> = match selected {
         SelectedIndex::Single("Event__id") => {
             // One start_key per id — id(32 raw) ‖ created_at(8 LE)
             let ids = filter.ids.as_deref().unwrap_or(&[]);
@@ -257,7 +257,14 @@ pub fn build_start_keys(
             tracing::warn!("build_start_keys called with unknown SelectedIndex variant — returning empty");
             vec![]
         }
-    }
+    };
+
+    // WR-01 dedup: sort + dedup the produced start-key vector so that duplicate filter
+    // values (e.g. authors=[pk1, pk1]) do not produce duplicate start keys. merge_prefixes
+    // re-merges by (created_at, lev_id) so start-key order does not affect output order.
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +479,56 @@ mod tests {
         let mut k16 = vec![0u8; 8];
         k16.extend_from_slice(&ts.to_le_bytes());
         assert_eq!(created_at_from_key(&k16), ts);
+    }
+
+    /// Test 5 (WR-01): duplicate authors produce exactly one start key after dedup.
+    ///
+    /// `build_start_keys` with authors=[PK1, PK1] must return exactly 1 key — not 2.
+    /// Without dedup, merge_prefixes would scan the same prefix twice, doubling every
+    /// result. This is the WR-01 regression guard.
+    #[test]
+    fn test_build_start_keys_dedup_duplicate_authors() {
+        // Duplicate PK1 in authors → should produce exactly 1 start key.
+        let f = NostrFilter {
+            authors: Some(vec![PK1.to_string(), PK1.to_string()]),
+            ..Default::default()
+        };
+        let selected = SelectedIndex::Multi("Event__pubkey");
+        let keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
+        assert_eq!(
+            keys.len(),
+            1,
+            "duplicate authors must produce exactly 1 start key after dedup (WR-01), got {}",
+            keys.len()
+        );
+
+        // Same test for duplicate kinds.
+        let f2 = NostrFilter {
+            kinds: Some(vec![1, 1, 1]),
+            ..Default::default()
+        };
+        let selected2 = SelectedIndex::Multi("Event__kind");
+        let keys2 = build_start_keys(&f2, &selected2, ScanDirection::Reverse);
+        assert_eq!(
+            keys2.len(),
+            1,
+            "duplicate kinds must produce exactly 1 start key after dedup, got {}",
+            keys2.len()
+        );
+
+        // Distinct values must still produce distinct keys.
+        let f3 = NostrFilter {
+            authors: Some(vec![PK1.to_string(), PK2.to_string()]),
+            ..Default::default()
+        };
+        let selected3 = SelectedIndex::Multi("Event__pubkey");
+        let keys3 = build_start_keys(&f3, &selected3, ScanDirection::Reverse);
+        assert_eq!(
+            keys3.len(),
+            2,
+            "distinct authors must produce 2 start keys, got {}",
+            keys3.len()
+        );
     }
 
     /// Fixture smoke test: build_start_keys for pk1 reverse produces a key that finds events in LMDB.
