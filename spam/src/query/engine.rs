@@ -24,7 +24,7 @@ use crate::lmdb::scan::{scan_index_bounded, scan_index_one_window, ScanDirection
 use crate::lmdb::types::{DecodedEvent, LevId, NostrEvent};
 use crate::query::filter::{NostrFilter, PageCursor, QueryError};
 use crate::query::hydrate::hydrate_lev_ids;
-use crate::query::router::{build_start_keys, created_at_from_key, select_index, SelectedIndex};
+use crate::query::router::{build_start_keys, created_at_from_key, decode_hex, select_index, SelectedIndex};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -341,22 +341,28 @@ fn execute_query_internal(
                 }
             }
 
-            // Tag residual predicate: if filter has tags, verify the decoded event carries a
-            // matching tag+value. The Event__tag key prefix guarantees tag_name byte match but
-            // we confirm tag_value on the decoded event for full correctness (QRY-02).
+            // Tag residual predicate: NIP-01 AND-across-fields semantics (CR-06 fix).
+            //
+            // A multi-tag filter {#e:[X], #p:[Y]} requires the event to carry BOTH an #e tag
+            // matching X AND a #p tag matching Y. Multiple TagFilter entries (distinct tag names)
+            // are ANDed together. Values WITHIN a single TagFilter are ORed (a filter for
+            // #e:[X, Z] matches an event with either #e=X or #e=Z).
+            //
+            // Old code (CR-06 bug): `'outer` loop broke on the FIRST matching TagFilter — any
+            // tag matched meant the event passed, regardless of whether the other tag filters
+            // also matched. This is OR semantics, which contradicts NIP-01.
+            //
+            // Fix: `tags_filter.iter().all(...)` — every TagFilter must match (AND across
+            // distinct fields). The inner `.any(...)` on values within a TagFilter preserves
+            // the within-field OR semantics.
             if let Some(tags_filter) = &filter.tags {
-                let mut passes = false;
-                'outer: for tf in tags_filter {
-                    for ev_tag in &decoded.event.tags {
-                        if ev_tag.len() >= 2
+                let passes = tags_filter.iter().all(|tf| {
+                    decoded.event.tags.iter().any(|ev_tag| {
+                        ev_tag.len() >= 2
                             && ev_tag[0] == tf.name
                             && tf.values.iter().any(|v| v == &ev_tag[1])
-                        {
-                            passes = true;
-                            break 'outer;
-                        }
-                    }
-                }
+                    })
+                });
                 if !passes {
                     continue;
                 }
@@ -511,26 +517,18 @@ pub fn latest_per_author(
 // ---------------------------------------------------------------------------
 
 /// Hex-decode a string into exactly 32 bytes, or return None.
+///
+/// IN-02: reuses the shared `decode_hex` from router.rs instead of a duplicate
+/// implementation. The lowercase-hex-only semantics for tag values are enforced in
+/// router.rs (build_start_keys Event__tag arm); this function is only used for pubkey
+/// decoding in latest_per_author which accepts both upper- and lower-case (via decode_hex).
 fn decode_hex_32(s: &str) -> Option<[u8; 32]> {
     if s.len() != 64 {
         return None;
     }
-    let bytes = s.as_bytes();
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        let hi = nibble(bytes[i * 2])?;
-        let lo = nibble(bytes[i * 2 + 1])?;
-        out[i] = (hi << 4) | lo;
-    }
-    Some(out)
-}
-
-fn nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
+    match decode_hex(s) {
+        Ok(bytes) => bytes.try_into().ok(),
+        Err(_) => None,
     }
 }
 
@@ -1230,5 +1228,132 @@ mod tests {
             );
             prev_ts = ev.event.created_at;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-06 regression tests: tag residual AND-across-fields semantics (plan 03-07)
+    // -----------------------------------------------------------------------
+
+    /// CR-06: a multi-tag filter {#e:[64a], #p:[any64hex]} returns ZERO events.
+    ///
+    /// The fixture has 3 events with #e=64xa. None carry a #p tag. Under correct NIP-01 AND
+    /// semantics, both tag fields must match; since no event has BOTH #e=64xa AND #p=...,
+    /// the result must be empty.
+    ///
+    /// Under the old OR code (`'outer` break-on-first-match), the #e match alone caused
+    /// `passes=true` and all 3 #e-tagged events were returned — wrong NIP-01 semantics.
+    #[test]
+    fn test_execute_query_multi_tag_and_semantics() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // A pubkey value for the #p filter — any valid 64-char hex, doesn't matter which.
+        // No fixture event has both #e and #p tags, so the result must be empty.
+        let dummy_p = "0000000000000000000000000000000000000000000000000000000000000001";
+
+        let filter = NostrFilter {
+            tags: Some(vec![
+                TagFilter {
+                    name: "e".to_string(),
+                    values: vec![TAG_VALUE_64A.to_string()],
+                },
+                TagFilter {
+                    name: "p".to_string(),
+                    values: vec![dummy_p.to_string()],
+                },
+            ]),
+            limit: 10,
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("multi-tag AND query must succeed");
+
+        // Zero events: no fixture event carries both #e and #p tags (AND semantics required).
+        assert_eq!(
+            events.len(),
+            0,
+            "multi-tag {{#e:[64a], #p:[...]}} must return 0 events (NIP-01 AND) — OR semantics if != 0; got {}",
+            events.len()
+        );
+    }
+
+    /// CR-06: values WITHIN a single TagFilter field are ORed.
+    ///
+    /// A filter {#e:[64a, other_value]} must match events that carry either #e=64a OR
+    /// #e=other_value. The 3 fixture events all have #e=64a, so they must all match.
+    /// This verifies that the within-field OR semantics are preserved after the AND fix.
+    #[test]
+    fn test_execute_query_tag_values_or_within_field() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // Two values for the same #e field: one matches (64a) and one doesn't exist in fixture.
+        // Any event matching either value should be returned.
+        let other_value = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        let filter = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![TAG_VALUE_64A.to_string(), other_value.to_string()],
+            }]),
+            limit: 10,
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("single-field OR tag query must succeed");
+
+        // All 3 #e=64a events must match (within-field OR: 64a value matches).
+        assert_eq!(
+            events.len(),
+            3,
+            "single-field OR {{#e:[64a, other]}} must return 3 events (all #e=64a match); got {}",
+            events.len()
+        );
+
+        // All returned events must carry the #e=64a tag.
+        for ev in &events {
+            let has_e_tag = ev.event.tags.iter().any(|t| {
+                t.len() >= 2 && t[0] == "e" && t[1] == TAG_VALUE_64A
+            });
+            assert!(
+                has_e_tag,
+                "every returned event must carry #e=64a (within-field OR matched this value)"
+            );
+        }
+    }
+
+    /// CR-06 + existing single-tag: single {#e:[64a]} filter still returns the 3 tagged events.
+    ///
+    /// The AND fix must not break single-tag queries. This is a regression guard for the
+    /// basic tag filter path that was working before the AND change.
+    #[test]
+    fn test_execute_query_single_tag_still_matches() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+        let filter = NostrFilter {
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![TAG_VALUE_64A.to_string()],
+            }]),
+            limit: 10,
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("single-tag query must succeed");
+
+        assert_eq!(
+            events.len(),
+            3,
+            "single tag #e=[64a] must still return 3 events after AND fix; got {}",
+            events.len()
+        );
+
+        // Newest first (levId=11 ts=1720000000, levId=8 ts=1700000256, levId=6 ts=1700000255).
+        assert_eq!(events[0].event.created_at, 1720000000, "first: ts=1720000000");
+        assert_eq!(events[1].event.created_at, 1700000256, "second: ts=1700000256");
+        assert_eq!(events[2].event.created_at, 1700000255, "third: ts=1700000255");
     }
 }
