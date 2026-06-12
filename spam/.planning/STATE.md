@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-query-engine-07-PLAN.md
-last_updated: "2026-06-12T08:47:49.042Z"
+stopped_at: Completed 03-query-engine-08-PLAN.md
+last_updated: "2026-06-12T08:59:05.355Z"
 last_activity: 2026-06-12 -- Phase 03 execution started
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 60
+  completed_phases: 2
+  total_plans: 16
+  completed_plans: 15
+  percent: 40
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 ## Current Position
 
 Phase: 03 (query-engine) — EXECUTING
-Plan: 4 of 7
+Plan: 2 of 9
 Status: Ready to execute
 Last activity: 2026-06-12 -- Phase 03 execution started
 
@@ -60,6 +60,7 @@ Progress: [█████░░░░░] 55% (Phases 1+2 complete; Phase 3 exe
 | Phase 03-query-engine P05 | 20 | 2 tasks | 2 files |
 | Phase 03-query-engine P06 | 31 | 2 tasks | 5 files |
 | Phase 03-query-engine P07 | 15 | 2 tasks | 2 files |
+| Phase 03-query-engine P08 | 5min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Decode Event__tag values to 32 raw bytes ONLY when exactly 64 lowercase hex chars; all other values use raw UTF-8
 - [Phase ?]: tags_filter.iter().all() for AND across distinct TagFilter fields; inner .any() for OR within one field
 - [Phase ?]: decode_hex/nibble pub(crate) in router.rs; engine.rs decode_hex_32 delegates to shared helper; local nibble removed
+- [Phase 03-query-engine]: CR-01 closed: Reverse scan Bound::Excluded(ts+1) for finite start keys — heed 0.22.1 rev_range Included positions at smallest dup then steps away; Excluded(ts+1) lands on largest dup of the boundary timestamp
 
 ### Pending Todos
 
@@ -116,7 +118,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-12T06:56:05.036Z
-Stopped at: Completed 03-query-engine-07-PLAN.md
+Last session: 2026-06-12T08:58:54.547Z
+Stopped at: Completed 03-query-engine-08-PLAN.md
 Resume: execute Phase 04 — GraphQL API
 Resume file: None

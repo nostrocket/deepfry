@@ -116,7 +116,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 8** *(gap closure — CR-01 scan-layer; blocked on Wave 7: touches src/lmdb/scan.rs only)*
 
-- [ ] 03-08-PLAN.md — reverse first-window/bounded Bound::Included on an existing key drops higher dup-group levIds; fix builds the reverse upper bound from ts+1 (saturating) with Bound::Excluded so the largest dup is the landing point; fixture regression until=1700000256 returns both levId 7 and 8 (QRY-01 / CR-01)
+- [x] 03-08-PLAN.md — reverse first-window/bounded Bound::Included on an existing key drops higher dup-group levIds; fix builds the reverse upper bound from ts+1 (saturating) with Bound::Excluded so the largest dup is the landing point; fixture regression until=1700000256 returns both levId 7 and 8 (QRY-01 / CR-01)
 
 **Wave 9** *(gap closure — CR-02/CR-03 engine k-way merge; blocked on Wave 8: consumes the corrected scan bound)*
 
@@ -161,6 +161,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 7/7 | Complete   | 2026-06-12 |
+| 3. Query Engine | 8/9 | In Progress|  |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
