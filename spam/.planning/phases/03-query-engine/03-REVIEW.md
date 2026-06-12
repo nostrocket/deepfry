@@ -1,221 +1,285 @@
 ---
 phase: 03-query-engine
-reviewed: 2026-06-11T16:49:16Z
+reviewed: 2026-06-12T07:03:11Z
 depth: standard
-files_reviewed: 8
+files_reviewed: 9
 files_reviewed_list:
-  - spam/Cargo.toml
-  - spam/src/lib.rs
-  - spam/src/query/engine.rs
-  - spam/src/query/filter.rs
-  - spam/src/query/hydrate.rs
-  - spam/src/query/merge.rs
-  - spam/src/query/mod.rs
-  - spam/src/query/router.rs
+  - Cargo.toml
+  - src/lib.rs
+  - src/lmdb/scan.rs
+  - src/query/mod.rs
+  - src/query/engine.rs
+  - src/query/filter.rs
+  - src/query/hydrate.rs
+  - src/query/merge.rs
+  - src/query/router.rs
 findings:
-  critical: 7
-  warning: 5
-  info: 6
-  total: 18
+  critical: 3
+  warning: 4
+  info: 5
+  total: 12
 status: issues_found
 ---
 
 # Phase 3: Code Review Report
 
-**Reviewed:** 2026-06-11T16:49:16Z
+**Reviewed:** 2026-06-12T07:03:11Z
 **Depth:** standard
-**Files Reviewed:** 8
+**Files Reviewed:** 9
 **Status:** issues_found
 
 ## Summary
 
-The Phase-3 query engine (filter contracts, index routing, k-way merge, hydration, public API) was reviewed at standard depth, including tracing into the Phase-2 primitives it builds on (`scan.rs`, `payload.rs`) and the CR-01 DUPSORT proof tests. The read-only invariant (T-03-RDONLY) holds, the cursor decode path fails closed (T-03-CUR), and hex parsing never panics (T-03-HEX). All 26 unit tests pass.
+This is a re-review after gap-closure plans 03-05/06/07 (lev_id-join hydration, prefix-guarded
+merge + since stop-bound + key-granular exclusive-resume windowing, strfry-exact tag decode +
+NIP-01 AND tag residual). Those fixes are present and correct as far as they go: the lev_id join
+(hydrate.rs / engine.rs), the prefix guards, the dup-group-draining `collect_window`, the tag
+AND-across-fields residual, and the strfry-exact 64-lowercase-hex tag value decode all check out
+against the code and the fixture tests.
 
-However, `execute_query` returns **silently wrong results** in several real-world scenarios. Three of the critical findings were **empirically reproduced against the committed fixture** with a standalone harness (no repo modification):
+However, the review found **three remaining correctness blockers**, all in the query-engine layer:
 
-```text
-kinds=[2] limit=10        -> 10 events, kinds: [2, 2, 1, 1, 1, 1, 1, 1, 1, 2]   (7 wrong-kind events + 1 duplicate)
-kinds=[1] since=1715000000 -> 7 events, ts: [1720000000, ..., 1700000000]        (5 events older than `since`)
-authors=[pk1, pk1] limit=6 -> 6 events, ids: [e7c4c1b0, e7c4c1b0, 2c4ca2cb, 2c4ca2cb, f7ae1f95, f7ae1f95]  (every event doubled)
-```
+1. The CR-01 fix for heed's reverse-DUPSORT `Included`-bound asymmetry was applied only to window
+   *resume*, not to the *first* window. Any reverse scan whose start bound is an **existing** key
+   (which is true by construction for every cursor-resumed page, and true whenever `filter.until`
+   equals a real event timestamp) silently drops the higher duplicates of the boundary key. The
+   repo's own proof test (`tests/dupsort_resume_test.rs::test_old_code_reverse_drops_levid_nonvacuity`)
+   empirically demonstrates the exact heed behavior that makes this a data-loss path.
+2. The engine's multi-stream over-fetch loop is not a real k-way merge: it sorts each iteration's
+   combined batch in isolation, so results can be emitted out of `(created_at DESC)` order across
+   iterations, which corrupts the page cursor (duplicates and skips across pages).
+3. The CR-02 `since` stop-bound is global: the first stream to dip below `since` terminates the
+   whole loop, silently starving other streams that still have matching events.
 
-The unit tests mask these defects because they query the lexicographically-lowest prefix in the fixture (`kinds=[1]`, where kind=1 is the smallest kind, so the reverse scan has nothing below it to contaminate). Given this component's stated crux — *"serve correct, rich queries"* — silently-wrong query results are ship-blocking.
+Findings 2 and 3 share a root cause — the engine bypasses `merge.rs`'s heap merge and substitutes
+a sort-each-batch approximation. The fixture (11 events, dup groups of size 2) is too small to
+expose any of the three blockers in the existing test suite; all three are reachable on a real
+strfry database.
 
 ## Critical Issues
 
-### CR-01: Reverse scans walk past the filter prefix — wrong-kind/wrong-author/wrong-id events returned, plus duplicate emission
+### CR-01: Reverse first-window `Bound::Included` on an existing key drops the boundary key's higher duplicates — events lost at `until` and at every cursor page boundary
 
-**File:** `spam/src/query/engine.rs:203-292` (root cause spans `engine.rs`, `merge.rs:103-157`, and the `scan_index_bounded` contract in `src/lmdb/scan.rs:288-306`)
-**Issue:** `scan_index_bounded(Reverse, start_key, limit)` iterates `rev_range(Unbounded, Included(start_key))` — it walks down the **entire index** from the start key with no prefix bound. `build_start_keys` constructs `prefix ‖ ts` start keys, so once a prefix's entries are exhausted the scan continues into lexicographically smaller prefixes: smaller kinds on `Event__kind`, smaller pubkeys on `Event__pubkey`/`Event__pubkeyKind`, smaller event ids on `Event__id`. `execute_query` applies **no residual predicate** on kind/author/id (only `is_expired` and the tag residual), so those foreign events are hydrated and returned as matches. Empirically proven: `kinds=[2]` returns 7 kind-1 events.
+**File:** `src/lmdb/scan.rs:370-374` (collect_bounded Reverse), `src/lmdb/scan.rs:461-469` (collect_window, `first_batch` arm), `src/query/engine.rs:155-165` (cursor → until override)
 
-Two secondary corruptions follow from the same root cause:
-1. **Merge order violation:** `merge_prefixes` assumes each per-prefix stream is `(created_at, lev_id)` DESC sorted, which is only true *within* a prefix. After a stream crosses a prefix boundary, `created_at` jumps arbitrarily, breaking the heap invariant and the D-10 output order.
-2. **Duplicate emission:** the windowing restart key `prefix ‖ wb_ts` re-walks contaminated regions; the window-exclusion filter (`ts == wb_ts && lev_id >= wb_lev`) re-admits an already-emitted event from a *different* prefix at the same ts with a lower levId. Proven: the trailing `2` in the `kinds=[2]` repro is levId=1's event emitted twice (positions 2 and 10).
+**Issue:** The gap-closure fix (key-granular exclusive resume) made *resumed* windows use
+`Bound::Excluded(drained_key)`, which is correct. But the **first** window — and every
+`scan_index_bounded` Reverse call — still uses `Bound::Included(start_key)`. The repo's own
+empirical proof (`tests/dupsort_resume_test.rs`, non-vacuity test, lines 331-425) demonstrates
+heed 0.22.1's behavior when the `rev_range` end bound is `Included(K)` and **K exists**:
+`move_on_range_end` positions at the **smallest** dup of K, yields it, then `MDB_PREV` steps to
+the previous KEY — the higher dups of K are **never yielded**.
 
-Note that `latest_per_author` (engine.rs:404-420) gets this right — it filters scan results to the exact `pubkey ‖ kind` key prefix. `execute_query` has no equivalent.
-**Fix:** Bound every per-prefix stream to its prefix before merging. Cheapest correct form — drop entries whose key bytes do not start with the prefix, inside `merge_prefixes` (key bytes are already available; no hydration needed):
+This bound key exists in two production-reachable cases:
+
+1. **`filter.until` equals a real event timestamp.** Reproducible against the committed fixture
+   today: `kinds=[1], until=1700000256` should return levIds `[8,7,6,5,4]`; the key
+   `kind=1‖ts=1700000256` exists with dup group `[7,8]`, so the scan yields only the smallest dup
+   `7` and levId **8 — a matching event at exactly `until` — is silently dropped** with no
+   residual or cursor logic to recover it. NIP-01 `until` is inclusive; this violates it.
+2. **Every cursor-resumed page.** `execute_query` sets `until = cursor.created_at`
+   (engine.rs:155-165), and the cursor's timestamp is *by construction* the timestamp of a real
+   emitted event, so for the stream that produced the cursor the bound key always exists. With a
+   dup group of size ≥ 3 at the cursor timestamp (e.g. levIds `[a,b,c]`, cursor at `c`), page 2
+   positions at `a`, yields it, and skips `b` — **`b` is lost from pagination forever**. The
+   fixture's dup groups are size 2, which is exactly the size at which this is invisible (smallest
+   dup yielded + larger dup already cursor-excluded), so the existing cursor tests pass while the
+   ≥3 case loses data. Real strfry databases have many events per `(kind, created_at)` second —
+   and for the `Event__created_at` default feed, the dup group is *all events in that second*,
+   making loss at page boundaries routine.
+
+**Fix:** For Reverse first-batch bounds derived from a finite `until`/cursor timestamp, position
+*above* the boundary key instead of on it, and let the prefix guard / per-entry filters do the
+trimming:
+
 ```rust
-// In merge_prefixes: pair each start_key with its prefix (start_key minus trailing 8 ts bytes)
-let prefix = &start_key[..start_key.len() - 8];
-let batch = scan_index_bounded(env, short_name, ScanDirection::Reverse, start_key, scan_limit)?
-    .into_iter()
-    .take_while(|(key, _)| key.starts_with(prefix))
-    .collect::<Vec<_>>();
-```
-`take_while` (not `filter`) is correct because entries below the prefix are contiguous — it also terminates the stream instead of scanning garbage. For `Event__created_at` (no prefix) the prefix is empty and `starts_with` is vacuously true. A belt-and-braces residual check on the hydrated event (`kinds.contains(&ev.kind)` etc.) in `execute_query` is also advisable.
-
-### CR-02: `filter.since` is never enforced — results include events older than `since`
-
-**File:** `spam/src/query/engine.rs:127-313` (contract defined at `spam/src/query/filter.rs:51-53`, `spam/src/query/router.rs:111-137`)
-**Issue:** `filter.rs` documents `since` as "pushed into scan bounds (D-03) — not a residual predicate," but `build_start_keys` only uses `since` for `ScanDirection::Forward`, and `execute_query` always scans `Reverse` (using `until` as the bound). Nothing in the merge loop or post-hydration filtering checks `since`, so the reverse scan walks arbitrarily far past it. Empirically proven: `kinds=[1], since=1715000000` returned all 7 kind-1 events, 5 of them older than `since`. Beyond wrong results, this also wastes scan/hydration work walking history the caller excluded.
-**Fix:** In `execute_query_internal`, treat `since` as a stop bound on the merged stream:
-```rust
-let since = filter.since.unwrap_or(0);
-// in the filtered_batch construction:
-if ts < since { return None; }
-// and after the batch: if the batch's oldest ts < since, break the loop —
-// everything further is older.
-if window_boundary.map_or(false, |(wb_ts, _)| wb_ts < since) { /* drain current batch then */ break; }
-```
-
-### CR-03: DUPSORT batch-boundary windowing in `execute_query` silently drops events — reintroduces the proven CR-01 (Phase 2) data-loss bug
-
-**File:** `spam/src/query/engine.rs:178-200` (windowing restart), contradicted by `spam/src/lmdb/scan.rs:157-180` and proven by `spam/tests/dupsort_resume_test.rs:331-425`
-**Issue:** The engine's windowing comment claims: *"Set the next start key's ts to prev_window_boundary.ts (NOT ts-1) so the scan restarts at ts=T and sees any remaining dups."* This is **directly contradicted** by the empirical proof in `tests/dupsort_resume_test.rs` (`test_old_code_reverse_drops_levid_nonvacuity`): heed 0.22.1's `rev_range` with `Bound::Included(boundary_key)` positions at the **smallest** dup of that key, yields only it, and steps to the previous key — dups between the smallest and the last-emitted are **never yielded**, so no exclusion filter can recover them. `scan_index_windowed` was specifically rewritten with key-granular windowing (drain the dup group, resume `Excluded`) to fix exactly this; `execute_query_internal` reimplements its own windowing loop using `scan_index_bounded` with the broken `Included`-restart pattern.
-
-Concrete loss: dup group `{5,6,7}` at `ts=T` (3 events, same prefix, same created_at), `batch_size` boundary lands after emitting levId 7. Restart at `prefix‖T` yields only levId 5; **levId 6 is silently dropped** from the query results. The fixture's dup groups are all size ≤ 2, so the `batch_size=2` over-fetch test (`test_execute_query_overfetch_backfill`) cannot catch this. Real strfry data routinely has ≥3 events with identical `(kind, created_at)`.
-**Fix:** Do not reimplement windowing on top of `Included` restarts. Either (a) extend `merge_prefixes`/`scan_index_bounded` to accept an exclusive `(key, lev_id)` resume boundary using the key-granular drain technique already proven in `collect_window` (drain the boundary dup group so each batch ends on a key boundary, then resume `Bound::Excluded`), or (b) have `merge_prefixes` use `scan_index_windowed`-style collection internally. Add a regression test mirroring `test_reverse_window_straddle_non_first_group_no_drop` but driving `execute_query_with_batch`.
-
-### CR-04: Stuck-window advance corrupts the exclusion boundary — events at `ts-1` with high levIds are wrongly excluded
-
-**File:** `spam/src/query/engine.rs:243-251`
-**Issue:** When a batch is fully excluded and the boundary hasn't advanced, the code does:
-```rust
-window_boundary = window_boundary.map(|(ts, lev)| (ts.saturating_sub(1), lev));
-```
-This moves the boundary ts to `ts-1` but **keeps the old levId**. On the next iteration the window-exclusion filter drops any event with `ts == wb_ts && lev_id >= wb_lev` — i.e. every event at `ts-1` whose levId is ≥ the stale levId is silently discarded even though it was never emitted. levIds are insertion-order counters with no correlation to `created_at`, so an event at `ts-1` with a higher levId (late-arriving backdated event) is entirely normal. Reachable via the cursor path: a cursor pointing into a dup group causes the first batch to be fully cursor-excluded, then the second identical batch triggers this stuck-advance.
-**Fix:** When advancing the ts, reset the levId component so nothing at the new ts is pre-excluded:
-```rust
-window_boundary = window_boundary.map(|(ts, _)| (ts.saturating_sub(1), u64::MAX));
-```
-(With `u64::MAX`, `lev_id >= wb_lev` matches nothing real at the new boundary ts.) This whole branch disappears if CR-03's fix (exclusive resume boundaries) is adopted.
-
-### CR-05: Hydration-skip misaligns the `zip` — events get the wrong `(created_at, lev_id)` keys and the page cursor is corrupted
-
-**File:** `spam/src/query/engine.rs:259-292` (enabled by the API shape of `spam/src/query/hydrate.rs:32-58`)
-**Issue:** `hydrate_lev_ids` skips undecodable payloads (by design, D-11), so its output can be **shorter** than the input `lev_ids`. The engine then zips positionally:
-```rust
-for ((ts, lev_id), decoded) in filtered_batch.iter().zip(hydrated.into_iter()) {
-```
-After the first skip, every subsequent event is paired with the **previous entry's** `(ts, lev_id)`. Consequences: (1) the `PageCursor` built from `valid.last()` carries the wrong `(created_at, lev_id)`, so the next page either re-emits or skips events; (2) the `(ts, lev_id)` ordering keys stored in `valid` are wrong; (3) the last `filtered_batch` entry is silently dropped (zip ends at the shorter iterator). The skip path is the *designed-for* corrupt-payload scenario — exactly when correctness should degrade gracefully, it instead corrupts pagination silently.
-**Fix:** Make `hydrate_lev_ids` return the association explicitly so misalignment is impossible:
-```rust
-pub fn hydrate_lev_ids(...) -> Result<Vec<(LevId, DecodedEvent)>, QueryError>
-```
-and join on `lev_id` in the engine (or return `Vec<Option<DecodedEvent>>` slot-for-slot). `latest_per_author` should be updated to the same contract.
-
-### CR-06: Multiple tag filters evaluated with OR semantics — NIP-01 requires AND across filter fields
-
-**File:** `spam/src/query/engine.rs:270-286` (scan-side contributor: `spam/src/query/router.rs:221-248`)
-**Issue:** `NostrFilter` is documented as "NIP-01 REQ filter — the query engine's input contract" (filter.rs:18). Under NIP-01, distinct filter fields (`#e`, `#p`, ...) are ANDed; only values *within* a field are ORed. The residual predicate sets `passes = true` as soon as **any one** `TagFilter` matches (`break 'outer` on first hit) — OR semantics. The router compounds this by building start keys for the union of all tag filters' values, scanning events that match any tag. A query for `{#e: [X], #p: [Y]}` therefore returns events that have X **or** are tagged to Y, instead of both. Silently wrong results for any multi-tag query.
-**Fix:** Scan on one tag filter (ideally the most selective) and require every other filter to match as a residual:
-```rust
-let passes = tags_filter.iter().all(|tf| {
-    decoded.event.tags.iter().any(|ev_tag| {
-        ev_tag.len() >= 2 && ev_tag[0] == tf.name
-            && tf.values.iter().any(|v| v == &ev_tag[1])
-    })
-});
-```
-In the router, build start keys from a single `TagFilter`'s values only (values within one filter are legitimately ORed/merged).
-
-### CR-07: `Event__tag` start key hex-decodes ANY even-length hex-looking value — diverges from strfry's documented 64-char rule, silently missing results for literal tag values
-
-**File:** `spam/src/query/router.rs:234-239`
-**Issue:** The code's own comment (router.rs:225-229) states strfry decodes **64-char hex** tag values (32-byte ids) to raw bytes and stores everything else as raw UTF-8. The implementation instead hex-decodes *any* value `decode_hex` accepts — any even-length string of `[0-9a-fA-F]`. A literal topic tag like `#t = "beef"`, `"face"`, `"deed"`, or `"decade"` is hex-decoded (`"beef"` → `0xBE 0xEF`) while strfry indexed it as raw UTF-8 (`0x62 0x65 0x65 0x66`). The start key lands at the wrong position in the index; with limit-bounded scans the real entries are typically outside the scanned window, so matching events are **silently missing** from results. Uppercase 64-char hex is also decoded, which likely diverges from strfry's lowercase-hex id rule. This violates the project's hard constraint that key-byte semantics must be byte-identical to strfry's.
-**Fix:** Restrict decoding to the documented rule and verify against strfry's actual `Event__tag` write path (pin the rule with a fixture golden vector containing a literal even-length-hex-looking tag value like `"beef"`):
-```rust
-let value_bytes: Vec<u8> = if value.len() == 64
-    && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-{
-    decode_hex(value).expect("validated lowercase hex")
+// build the reverse start bound as Excluded(prefix ‖ (ts + 1)) instead of Included(prefix ‖ ts)
+let upper = if ts == u64::MAX {
+    Bound::Included(resume_key)           // ts=MAX key cannot meaningfully exist; Included is safe
 } else {
-    value.as_bytes().to_vec()
+    // bound_key = prefix ‖ (ts + 1): SET_RANGE finds the first key >= it, steps back, and lands
+    // on the LAST dup of prefix‖ts — the full dup group is then walked descending (proven order).
+    Bound::Excluded(bound_key_with_ts_plus_one)
 };
 ```
 
+Apply the same treatment to `collect_bounded`'s Reverse arm (`scan_index_bounded` is used by
+`latest_per_author` — currently safe only because its start ts is `u64::MAX` — and by
+`merge_prefixes`, which inherits the bug whenever `until` is set). Add a fixture regression test:
+`kinds=[1], until=1700000256` must return 5 events including levId 8.
+
+### CR-02: Multi-stream over-fetch loop emits out of `(created_at DESC)` order across iterations — page cursor then duplicates/skips events across pages
+
+**File:** `src/query/engine.rs:203-383`
+
+**Issue:** The loop fetches one window per stream per iteration, sorts the **combined batch of
+that iteration only** (engine.rs:267-269), and appends survivors to `valid`. This is not a k-way
+merge: each stream's iteration-2 window contains entries older than *that stream's* iteration-1
+window, but possibly **newer than another stream's iteration-1 entries that were already emitted**.
+
+Concrete failure: `kinds=[1,2]`, stream A (kind 1) has 600 entries at ts 1000→900, stream B
+(kind 2) has 3 entries at ts 500, `limit=300` (or any limit the first iteration's survivors can't
+fill — residual drops, NIP-40 expiry, and cursor exclusions make multi-iteration common even with
+limit < 256). Iteration 1 emits A's ts 1000→~950 then B's ts 500. Iteration 2 emits A's
+ts ~950→900 — *after* the ts-500 entries. Consequences:
+
+- The returned page violates the documented D-10 `(created_at DESC, lev_id DESC)` contract.
+- The next-page cursor is built from `valid.last()` (e.g. ts≈900). On page 2, B's ts-500 entries
+  pass the cursor exclusion (`ts < cur_ts`) and are **re-emitted — duplicates across pages**.
+  Symmetrically, events can be skipped depending on where truncation lands.
+
+The fixture cannot expose this: all multi-stream tests either fit in one iteration or use a single
+stream with `batch_size` overrides.
+
+**Fix:** Implement a true incremental merge with a per-stream **frontier**: after fetching a
+window for each non-exhausted stream, only entries with
+`(ts, lev_id) >= max(low_watermark of every non-exhausted stream)` may be emitted (where a
+stream's low watermark is the sort key of the last entry in its current fetched window); buffer
+the remainder for the next round and refill only the stream(s) whose buffer ran dry. The
+`BinaryHeap` machinery in `merge.rs` is the right shape — extend it with windowed refill instead
+of maintaining a second, divergent merge implementation (see WR-04). Add a regression test with
+two synthetic streams of different time densities and a small `batch_size`, asserting global
+DESC order and exact page-1 ∪ page-2 == single-query prefix.
+
+### CR-03: Global `since_cutoff` terminates ALL streams when one stream passes below `since` — matching events from other streams silently omitted
+
+**File:** `src/query/engine.rs:272-303, 380`
+
+**Issue:** `since_cutoff` is set if **any** entry in the iteration's *combined* batch has
+`ts < since` (engine.rs:282-286), and `if valid.len() >= limit || since_cutoff { break; }`
+(engine.rs:380) then aborts the **entire** loop. Streams progress through time at unrelated
+rates: a sparse stream reaches pre-`since` territory while a dense stream still has unfetched
+entries `>= since`.
+
+Concrete failure: `kinds=[1,2], since=T, limit=300`. Kind-2 has only events at `ts < T`; kind-1
+has 300+ events at `ts >= T`. Iteration 1: kind-1 contributes 256 valid entries, kind-2's window
+contains a `ts < T` entry → `since_cutoff = true` → loop breaks after this batch. The remaining
+kind-1 events `>= since` are **never returned**, even though `limit` was not reached. No error,
+no warning — silent under-reporting. (The per-entry `ts < since` filter at engine.rs:282-287
+keeps the *returned* set correct; the defect is purely missing results.)
+
+**Fix:** Make the cutoff per-stream. Each stream's guarded batch is internally time-descending,
+so the first `ts < since` entry within a stream means *that stream* is done:
+
+```rust
+// inside the per-stream loop, after the prefix guard:
+let mut guarded = guarded;
+if let Some(pos) = guarded.iter().position(|(ts, _, _)| *ts < since) {
+    guarded.truncate(pos);
+    s.exhausted = true;   // only THIS stream is past since
+}
+```
+
+Remove `since_cutoff` from the outer break condition entirely; loop termination then falls out of
+all-streams-exhausted. Add a regression test with two kinds of different time ranges and a
+`since` between them.
+
 ## Warnings
 
-### WR-01: Duplicate filter values produce duplicate result events — no start-key or levId dedup anywhere
+### WR-01: `hydrate_lev_ids` hard-fails the entire query on a missing levId — guaranteed transient failures against a live strfry database
 
-**File:** `spam/src/query/router.rs:128-261`, `spam/src/query/merge.rs:103-157`, `spam/src/query/engine.rs:127-313`
-**Issue:** `build_start_keys` maps filter values 1:1 to start keys with no dedup; `merge_prefixes` merges identical streams candidate-by-candidate; the engine never dedups levIds. Caller-supplied duplicates (`authors: [pk1, pk1]`, repeated ids, overlapping tag values across filters) duplicate every result. Empirically proven: `authors=[pk1, pk1] limit=6` returned 3 events, each twice — also halving the effective page size. Filter values come from untrusted GraphQL callers in Phase 4.
-**Fix:** Dedup start keys in `build_start_keys` (e.g. sort + `Vec::dedup` before returning), and/or dedup emitted levIds in `merge_prefixes` as defense in depth.
+**File:** `src/query/hydrate.rs:54-56`
+**Issue:** The index scan and the payload lookup run in **separate** read transactions (by design,
+D-08). Against a live strfry, an event can be deleted between the two txns — strfry deletes events
+routinely (replaceable kinds 0/3/1xxxx overwrite, NIP-09 deletion requests, NIP-40 expiry pruning).
+A levId harvested from the index scan then misses in `EventPayload`, `get_event_payload` returns
+`LevIdNotFound`, and the **whole query fails**. The doc comment's premise ("a levId present in a
+real index scan must exist in EventPayload") only holds within a single txn — which this code
+deliberately does not use. This also takes down all buckets in `latest_per_author` (engine.rs:496).
+**Fix:** Treat `LevIdNotFound` (specifically — not other LMDB errors) like the decode-failure
+path: `tracing::warn!`, `*skip_count += 1`, omit the slot. The lev_id-join architecture (CR-05
+fix from the prior cycle) already makes absent slots safe for callers.
 
-### WR-02: Cursor can widen the time window beyond `filter.until`
+### WR-02: Unvalidated `filter.limit` flows into `Vec::with_capacity` — capacity-overflow panic / multi-GB allocation from caller input
 
-**File:** `spam/src/query/engine.rs:150-159`
-**Issue:** When a cursor is present, `until` is unconditionally replaced with `cursor.created_at`. A forged or stale cursor (untrusted, T-03-CUR) with `created_at > filter.until` makes the scan start *above* the filter's upper bound; the exclusion filter only drops entries above the cursor, not above `filter.until`, so events newer than `until` are returned — violating the filter contract. The doc comment ("out-of-range values yield empty/older pages") is wrong for this case: out-of-range yields *newer* pages.
-**Fix:** Clamp: `until: Some(filter.until.map_or(c.created_at, |u| u.min(c.created_at)))`.
+**File:** `src/query/engine.rs:200`, `src/query/merge.rs:163`
+**Issue:** `filter.limit` is caller-supplied `usize` with no engine-side ceiling;
+`Vec::with_capacity(limit)` with `limit = usize::MAX` panics with "capacity overflow", and any
+large value pre-allocates `limit * sizeof((u64, u64, DecodedEvent))` bytes up front. The comment
+says "Phase 4 enforces the hard ceiling before calling the engine" — Phase 4 does not exist yet,
+and the engine is the trust boundary for its own DoS claims (T-03-DOS). Defense-in-depth is absent.
+**Fix:** Clamp in the engine: `const MAX_LIMIT: usize = 1_000;` (or similar) and
+`let limit = filter.limit.clamp(1, MAX_LIMIT)` — or at minimum
+`Vec::with_capacity(limit.min(DEFAULT_WINDOW_SIZE))`.
 
-### WR-03: `MergeCandidate` Ord/Eq inconsistency violates the `Ord` contract
+### WR-03: T-03-DOS claim is false for residual-heavy filters — over-fetch loop walks and hydrates an entire index partition with no scan budget
 
-**File:** `spam/src/query/merge.rs:44-70`
-**Issue:** `#[derive(Eq, PartialEq)]` compares all four fields (including `key_bytes` and `stream_idx`), but the manual `Ord::cmp` compares only `(created_at, lev_id)`. Two candidates can be `cmp == Equal` yet `!=`, violating the documented consistency requirement of `Ord` (`a.cmp(b) == Equal` ⟺ `a == b`). With duplicate streams (WR-01) equal `(created_at, lev_id)` pairs across streams actually occur. `BinaryHeap` tolerates this today, but it is a latent logic hazard for any future use of these impls (sorting, dedup, maps).
-**Fix:** Make `Eq` match the ordering key — implement `PartialEq` manually over `(created_at, lev_id)`, or include the remaining fields as deterministic tie-breakers in `cmp`.
+**File:** `src/query/engine.rs:203-383`
+**Issue:** The loop terminates on `valid.len() >= limit` or stream exhaustion. A filter whose
+residual predicates drop everything — e.g. `kinds=[1]` plus a tag filter no kind-1 event satisfies
+(routing uses kinds; the tag is residual-only, engine.rs:358-369) — windows through and **hydrates
+every kind-1 event in the database** before returning empty. On a production relay that is
+millions of payload decodes for one query. The header comment "bounded by `limit`" (engine.rs:99)
+is incorrect for this class of input; this is a query-of-death vector, not merely a performance
+nit.
+**Fix:** Add a per-query budget (e.g. max total scanned entries, or max loop iterations derived
+from `limit` and `batch_size`); on budget exhaustion return the partial `valid` plus a resume
+cursor so callers can continue explicitly.
 
-### WR-04: Tag name silently truncated to first byte; empty tag name silently becomes `'_'`
+### WR-04: `merge_prefixes` is dead code — the engine reimplements merging differently (and incorrectly), while comments still describe merge.rs as the live path
 
-**File:** `spam/src/query/router.rs:233`
-**Issue:** `tag.name.as_bytes().first().copied().unwrap_or(b'_')` — a multi-character tag name (e.g. `"emoji"`) silently scans the `'e'` index prefix (strfry only indexes single-char tags, so the correct behavior is to reject or return empty *without scanning*); the residual then rejects everything, so the caller burns a full bounded scan + hydration to get a silently empty result. An empty tag name scans the literal `'_'` tag index — querying data the caller never asked about. Both should be loud, not silent.
-**Fix:** Validate `tag.name.len() == 1` in `build_start_keys` (or earlier, in Phase-4 input validation); skip with `tracing::warn!` like the malformed-hex path, producing zero start keys for that filter.
-
-### WR-05: `skip_count` is collected then discarded — QRY-04's skip-count contract never reaches callers
-
-**File:** `spam/src/query/engine.rs:168,257` and `spam/src/query/engine.rs:428-429`
-**Issue:** `hydrate_lev_ids` takes `&mut usize skip_count` specifically so callers can surface corrupt-payload skips (QRY-04 "skip-warn-count"). Both `execute_query` and `latest_per_author` accumulate it into a local and drop it — the count is observable nowhere except per-event `tracing::warn!` lines. Phase-4 resolvers cannot report degraded results, and the count also masks CR-05 (a nonzero skip count is exactly when the zip misaligns).
-**Fix:** Return the skip count (e.g. include it in the result tuple or a small `QueryStats` struct) so the GraphQL layer can expose it as an extension/diagnostic.
+**File:** `src/query/merge.rs:103-185`, `src/query/engine.rs:239-241`
+**Issue:** `merge_prefixes` (and `MergeCandidate`) are referenced only by merge.rs's own tests —
+verified by grep: no production call sites. The engine's `execute_query_internal` does its own
+sort-per-batch pseudo-merge instead, which is the root cause of CR-02. Comments in engine.rs
+("Redundant with merge.rs guard if called through merge_prefixes") and router.rs:289 imply
+merge_prefixes is in the execution path; it is not. Two divergent merge implementations — one
+correct-but-unused, one used-but-wrong — is exactly how CR-02 survived prior review cycles.
+`merge_prefixes` also inherits CR-01 via `scan_index_bounded` Reverse when `until` is set.
+**Fix:** Resolve in one direction as part of the CR-02 fix: extend merge.rs's heap merge with
+windowed per-stream refill and route the engine through it, then delete the engine's inline merge;
+or delete merge.rs. Update the stale comments either way.
 
 ## Info
 
-### IN-01: `limit == 0` contract contradiction between filter.rs and engine/merge
+### IN-01: Dead variable `stream_prefixes` built and immediately dropped
 
-**File:** `spam/src/query/filter.rs:59-61` vs `spam/src/query/engine.rs:134-138`, `spam/src/query/merge.rs:113-115`
-**Issue:** `filter.rs` documents `limit: 0` as "unbounded (D-04 engine side)"; the engine and merge clamp it to `DEFAULT_WINDOW_SIZE` (256). Phase-4 implementers reading the contract type will get 256, not unbounded.
-**Fix:** Update the `NostrFilter::limit` doc to state `0 → DEFAULT_WINDOW_SIZE`.
+**File:** `src/query/merge.rs:137-151`
+**Issue:** `stream_prefixes` is populated in the loop and then `drop(stream_prefixes)` with a
+comment admitting it was never needed (prefixes are consumed inline during guarded collection).
+**Fix:** Delete the vector and the `drop`.
 
-### IN-02: Duplicated hex-decoding helpers in engine.rs and router.rs
+### IN-02: Empty `if since_cutoff { }` block containing only comments
 
-**File:** `spam/src/query/engine.rs:450-471` vs `spam/src/query/router.rs:34-55,287-308`
-**Issue:** `decode_hex_32`/`nibble` in engine.rs re-implement router.rs's `decode_hex`/`nibble`/`decode_pubkey_warn` with slightly different signatures (Option vs Result). Two code paths to keep byte-identical.
-**Fix:** Make router's helpers `pub(crate)` and reuse them in engine.rs.
+**File:** `src/query/engine.rs:293-298`
+**Issue:** A conditional whose body is entirely comments ("We still process the survivors below
+before breaking") — dead code that obscures the actual control flow and will confuse the CR-03
+rework.
+**Fix:** Delete the block; move the comment to the `if valid.len() >= limit || since_cutoff`
+break site (or remove it entirely once CR-03 makes the cutoff per-stream).
 
-### IN-03: Vacuous test `assert!(true)` in merge.rs
+### IN-03: `skip_count` accumulated across the query but never surfaced
 
-**File:** `spam/src/query/merge.rs:329-339`
-**Issue:** `test_no_payload_imports_compile_time_proof` asserts `true` and claims to be a "compile-time proof" that no payload import exists. It proves nothing and would keep passing if someone added a payload import. Clippy flags it (`assertions_on_constants`).
-**Fix:** Delete the test and keep the D-06 note as a module comment, or replace with a real check (e.g. a CI grep).
+**File:** `src/query/engine.rs:201, 307`
+**Issue:** `execute_query_internal` threads `&mut skip_count` through every hydrate call but never
+logs, returns, or otherwise uses the total. Per-skip warns exist in hydrate.rs, but the per-query
+aggregate (useful for detecting payload-corruption trends) is computed and discarded.
+**Fix:** Either `tracing::debug!(skip_count, "query completed with skipped payloads")` before
+returning when `skip_count > 0`, or remove the accumulator.
 
-### IN-04: Clippy warnings in the new query files — CI is documented to run `clippy -- -D warnings`
+### IN-04: `MergeCandidate` Ord is inconsistent with its derived Eq
 
-**File:** `spam/src/query/engine.rs:151-153,261`, `spam/src/query/router.rs:35,332`, all five query files (module docs)
-**Issue:** New warnings introduced by this phase: `unnecessary_unwrap` (engine.rs:153 — `cursor.unwrap()` after `is_some()`), `useless_conversion` (engine.rs:261), unused `const PK2` in router tests (router.rs:332), `manual_is_multiple_of` (router.rs:35), and `empty_line_after_doc_comments` in all five files — the file-top `///` comments attach to the first `use` statement instead of the module (should be `//!`), so rustdoc module pages lose their documentation. CLAUDE.md specifies clippy runs with `-D warnings` in CI, where these fail the build.
-**Fix:** Convert file-header `///` blocks to `//!`; apply the clippy suggestions; remove or use `PK2`.
+**File:** `src/query/merge.rs:44-70`
+**Issue:** `#[derive(Eq, PartialEq)]` compares all four fields (including `key_bytes` and
+`stream_idx`), but `Ord::cmp` compares only `(created_at, lev_id)`. Two candidates can be
+`cmp == Equal` yet `!=`, violating the documented consistency requirement between `Ord` and `Eq`.
+Harmless for `BinaryHeap` today, but a latent trap for any future use in ordered collections.
+**Fix:** Implement `PartialEq`/`Eq` manually over `(created_at, lev_id)` to match `Ord` (lev_id
+is unique, so this is still a valid equivalence).
 
-### IN-05: `PageCursor::decode` decodes attacker-sized base64 before length check
+### IN-05: `collect_window` with `window_size = 0` returns an empty batch on a non-empty index — caller misreads it as stream exhaustion
 
-**File:** `spam/src/query/filter.rs:124-138`
-**Issue:** The base64 decode allocates and processes the full untrusted input before the 16-byte check. A valid 16-byte cursor is always exactly 24 base64 chars; a cheap pre-check bounds the work. Low risk (Phase-4 transport limits apply), but the fix is one line.
-**Fix:** `if s.len() != 24 { return Err(QueryError::CursorDecode { reason: ... }); }` before decoding.
-
-### IN-06: `SelectedIndex::Single("Event__id")` is misnamed — the ids arm produces one start key per id
-
-**File:** `spam/src/query/router.rs:63-72,90-91,140-171`
-**Issue:** `Single` is documented as "a single start_key spans the whole index," but the `Event__id` arm returns one key per id and requires the merge path exactly like `Multi`. Harmless today (the engine ignores the distinction), but the enum communicates a false invariant to future callers.
-**Fix:** Route `ids` as `Multi("Event__id")`, or rename/redocument the variants to describe what they actually distinguish.
+**File:** `src/lmdb/scan.rs:417-493`, callers at `src/lmdb/scan.rs:182-241, 276-323`
+**Issue:** With `window_size = 0`, the drain condition `results.len() >= window_size && last != key`
+fires on the very first item (`results.last()` is `None`), so the batch is empty and
+`scan_index_windowed` / the engine mark the stream exhausted — a silently-empty scan over a
+non-empty index. Only reachable via the public `scan_index_windowed`/`scan_index_one_window`
+parameters today, but it is a footgun for future callers.
+**Fix:** `let window_size = window_size.max(1);` at the top of `collect_window`, or
+`debug_assert!(window_size > 0)`.
 
 ---
 
-_Reviewed: 2026-06-11T16:49:16Z_
+_Reviewed: 2026-06-12T07:03:11Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
