@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (4 plans complete 2026-06-11; CR-01 gap closed — seek gate added, LMDB-06 correctness restored)
 - [x] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index (3 plans complete 2026-06-11; LMDB-07/08/09 satisfied)
-- [ ] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — plans executed 2026-06-12; gap-closure plans 03-05/06/07 executed 2026-06-12; re-verification found new gaps (3/5 must-haves: first-window Included bound, sort-per-batch merge, since_cutoff starvation)
+- [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — plans executed 2026-06-12; gap-closure plans 03-05/06/07 executed 2026-06-12; re-verification found new gaps (3/5 must-haves: first-window Included bound, sort-per-batch merge, since_cutoff starvation) (completed 2026-06-12)
 - [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
 - [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment
 
@@ -120,7 +120,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 9** *(gap closure — CR-02/CR-03 engine k-way merge; blocked on Wave 8: consumes the corrected scan bound)*
 
-- [ ] 03-09-PLAN.md — replace sort-per-batch with a windowed k-way merge (merge_windowed) routed through the engine for true (created_at DESC, lev_id DESC) order across iterations; per-stream since exhaustion instead of global since_cutoff; delete orphaned merge path + IN-01/02/03 cleanups (QRY-01,QRY-02 / CR-02,CR-03,WR-04,IN-01,IN-02,IN-03)
+- [x] 03-09-PLAN.md — replace sort-per-batch with a windowed k-way merge (merge_windowed) routed through the engine for true (created_at DESC, lev_id DESC) order across iterations; per-stream since exhaustion instead of global since_cutoff; delete orphaned merge path + IN-01/02/03 cleanups (QRY-01,QRY-02 / CR-02,CR-03,WR-04,IN-01,IN-02,IN-03)
 
 ### Phase 4: GraphQL API
 
@@ -161,6 +161,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 8/9 | In Progress|  |
+| 3. Query Engine | 9/9 | Complete   | 2026-06-12 |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
