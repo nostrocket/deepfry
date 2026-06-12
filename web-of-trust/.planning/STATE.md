@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: executing
-last_updated: "2026-06-12T13:12:13.382Z"
+status: verifying
+last_updated: "2026-06-12T13:22:23.247Z"
 last_activity: 2026-06-12 -- Phase 07 execution started
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
-  percent: 50
+  completed_plans: 6
+  percent: 75
 ---
 
 # Project State: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
@@ -21,20 +21,20 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 07 — relay-health-management
+**Current focus:** Phase 08 — frontier + timeout + observability (next)
 
 ## Current Position
 
-Phase: 07 (relay-health-management) — EXECUTING
-Plan: 2 of 2
-Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 07 execution started
+Phase: 07 (relay-health-management) — COMPLETE
+Plan: 2 of 2 (complete)
+Status: Phase 07 complete — Phase 08 ready to plan/execute
+Last activity: 2026-06-12 -- Phase 07 plan 02 executed: relay state machine rewrite (RELAY-01/02/03 + LOG-01/02/03)
 
 ## Performance Metrics
 
-- Phases complete (v1.2): 2 / 4
-- Requirements delivered (v1.2): 5 / 16 (VALID-01/02/03, FILTER-01, FILTER-02)
-- Plans complete (v1.2): 4 / 4
+- Phases complete (v1.2): 3 / 4
+- Requirements delivered (v1.2): 11 / 16 (VALID-01/02/03, FILTER-01/02, RELAY-01/02/03, LOG-01/02/03)
+- Plans complete (v1.2): 6 / 6
 
 ## Accumulated Context
 
@@ -55,6 +55,7 @@ Last activity: 2026-06-12 -- Phase 07 execution started
 | RELAY-03 added (2026-06-12) | Phase 6's filterCap reset-on-reconnect (WR-03) makes caps re-learned every batch: 50→25→12→10 cascade repeats, floor-capped relays re-marked dead forever, logs flooded. RELAY-03 persists caps across reconnects with probe-up/decay recovery |
 | LOG-01/02/03 added (2026-06-12) | Production logs dominated by per-relay noise (~100 reconnect lines/sweep, 6-line cap cascades, duplicate dead/timeout pairs). Folded into Phase 7 since all touch the relay state machine Phase 7 rewrites |
 | Phase 07-relay-health-management P01 | 2 | 2 tasks | 2 files |
+| Phase 07-relay-health-management P02 | 35 | 3 tasks | 3 files |
 
 ### Important Facts
 
@@ -99,3 +100,7 @@ None.
 - [Phase 06-02]: Caller manages sub.Unsub() per chunk — drainSubscription does not defer it, keeping per-chunk lifecycle explicit
 - [Phase 06-02]: Uses time.Since(subscribeStart) on Subscribe error return; no goroutine needed
 - [Phase 06-CR]: filterCap uses atomic.Int32 (not plain int) — concurrent access from NOTICE handler goroutine required this
+- [Phase 07-02]: Per-class counters use named atomic.Int32 fields (failTransport/failFilterRej/failSubFlap) not an array, matching Phase 6 filterCap pattern
+- [Phase 07-02]: markRelayDead is single log-line owner; FetchAndUpdateFollows callers must not emit WARN before calling it (LOG-03/D-15)
+- [Phase 07-02]: Probe-up flag probing atomic.Bool force-cleared via defer on all queryRelay exits including context cancel (Pitfall 3)
+- [Phase 07-02]: Forward relay confirmed exempt from markRelayDead routing (Pitfall 6) — self-contained failure path in ReconnectRelays
