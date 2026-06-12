@@ -72,7 +72,7 @@
 **Plans**: 2 plans
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Config layer: EjectionThresholds struct + per-class defaults/guard (D-06), EjectRelayURL move-to-ejected persistence (D-08), config unit tests (RELAY-02)
+- [x] 07-01-PLAN.md — Config layer: EjectionThresholds struct + per-class defaults/guard (D-06), EjectRelayURL move-to-ejected persistence (D-08), config unit tests (RELAY-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -99,5 +99,5 @@
 |-------|----------------|--------|-----------|
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
-| 7. Relay Health Management | 0/2 | Not started | - |
+| 7. Relay Health Management | 1/2 | In Progress|  |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |

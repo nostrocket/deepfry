@@ -26,7 +26,7 @@ Operational reliability and throughput improvements motivated by a 40-batch prod
 ### Relay Health Management
 
 - [ ] **RELAY-01**: The relay failure counter is no longer reset to zero on successful reconnect. On reconnect it is decayed (e.g. halved) so a relay that repeatedly connects-and-drops can still accumulate past `maxConsecutiveFailures` and be removed from the config.
-- [ ] **RELAY-02**: Relay failure reasons are classified into at least three buckets — transport error (connection lost), filter rejection (NOTICE or connection-drop on REQ), and subscription flap (connects but drops immediately on first subscription). Per-class ejection thresholds are configurable. A relay exceeding its threshold for a class is automatically removed from the config file and logged with the reason class.
+- [x] **RELAY-02**: Relay failure reasons are classified into at least three buckets — transport error (connection lost), filter rejection (NOTICE or connection-drop on REQ), and subscription flap (connects but drops immediately on first subscription). Per-class ejection thresholds are configurable. A relay exceeding its threshold for a class is automatically removed from the config file and logged with the reason class.
 - [ ] **RELAY-03**: Learned per-relay filter caps persist across reconnects instead of being reset (reverses the Phase 6 reset-on-reconnect decision). A recovery mechanism (e.g. periodic probe-up or slow decay) lets a relay that raised its limit regain a larger cap, but the 50→25→12→10 halving cascade is not re-run — and floor-capped relays are not re-marked dead — on every batch.
 
 ### Logging Noise
@@ -101,7 +101,7 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 | PERF-01 | Phase 8 | Pending |
 | PERF-02 | Phase 8 | Pending |
 | RELAY-01 | Phase 7 | Pending |
-| RELAY-02 | Phase 7 | Pending |
+| RELAY-02 | Phase 7 | Complete |
 | RELAY-03 | Phase 7 | Pending |
 | LOG-01 | Phase 7 | Pending |
 | LOG-02 | Phase 7 | Pending |
