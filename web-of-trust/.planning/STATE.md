@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: verifying
-last_updated: "2026-06-12T13:05:04.521Z"
-last_activity: "2026-06-12 -- Production log review: added RELAY-03 (filter-cap persistence) and LOG-01/02/03 (logging noise) to v1.2, folded into Phase 7"
+status: executing
+last_updated: "2026-06-12T13:12:13.382Z"
+last_activity: 2026-06-12 -- Phase 07 execution started
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 50
 ---
 
@@ -21,14 +21,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 07 — relay-health-management (next)
+**Current focus:** Phase 07 — relay-health-management
 
 ## Current Position
 
-Phase: 06 (filter-size-per-relay-cap-detection) — COMPLETE (verified 2026-06-11)
+Phase: 07 (relay-health-management) — EXECUTING
 Plan: 2 of 2
-Status: Phase verified — ready for Phase 07 (scope expanded: +RELAY-03, LOG-01/02/03)
-Last activity: 2026-06-12 -- Production log review: added RELAY-03 (filter-cap persistence) and LOG-01/02/03 (logging noise) to v1.2, folded into Phase 7
+Status: Ready to execute
+Last activity: 2026-06-12 -- Phase 07 execution started
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Last activity: 2026-06-12 -- Production log review: added RELAY-03 (filter-cap p
 | Phase 06 CR-01 fix | filterCap changed to atomic.Int32 after code review identified data race; CAS loop added to handleFilterNotice; filterCap reset on reconnect added (WR-03) |
 | RELAY-03 added (2026-06-12) | Phase 6's filterCap reset-on-reconnect (WR-03) makes caps re-learned every batch: 50→25→12→10 cascade repeats, floor-capped relays re-marked dead forever, logs flooded. RELAY-03 persists caps across reconnects with probe-up/decay recovery |
 | LOG-01/02/03 added (2026-06-12) | Production logs dominated by per-relay noise (~100 reconnect lines/sweep, 6-line cap cascades, duplicate dead/timeout pairs). Folded into Phase 7 since all touch the relay state machine Phase 7 rewrites |
+| Phase 07-relay-health-management P01 | 2 | 2 tasks | 2 files |
 
 ### Important Facts
 
