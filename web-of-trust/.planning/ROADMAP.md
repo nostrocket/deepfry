@@ -3,14 +3,14 @@
 **Milestone:** v1.2 — Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management
 **Created:** 2026-06-10
 **Granularity:** Coarse
-**Coverage:** 12/12 v1.2 requirements mapped
+**Coverage:** 16/16 v1.2 requirements mapped
 **Numbering:** Continues from v1.1 (last phase was Phase 4) — this milestone starts at Phase 5
 
 ## Phases
 
 - [x] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier (completed 2026-06-10)
 - [x] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns (completed 2026-06-11)
-- [ ] **Phase 7: Relay Health Management** - Persist and decay failure counters across reconnects, classify failure reasons into buckets, and auto-eject relays that exceed configurable per-class thresholds
+- [ ] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries
 - [ ] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric
 
 ## Phase Details
@@ -57,14 +57,17 @@
 
 ### Phase 7: Relay Health Management
 
-**Goal**: Relays that repeatedly fail are automatically removed from the config without manual intervention, and failure tracking survives reconnects
+**Goal**: Relays that repeatedly fail are automatically removed from the config without manual intervention, failure tracking and learned filter caps survive reconnects, and relay lifecycle logging is one line per state change instead of per-event spam
 **Depends on**: Phase 6
-**Requirements**: RELAY-01, RELAY-02
+**Requirements**: RELAY-01, RELAY-02, RELAY-03, LOG-01, LOG-02, LOG-03
 **Success Criteria** (what must be TRUE):
 
   1. A relay that connects and immediately drops (flapping) accumulates failure counts across reconnect cycles — the counter is decayed on reconnect (e.g. halved) rather than reset to zero, so repeated flapping eventually pushes the count past `maxConsecutiveFailures`.
   2. Failure events are classified into at least three buckets — transport error, filter rejection (NOTICE or connection-drop on REQ), and subscription flap — and per-class ejection thresholds are readable from config.
   3. When a relay's failure count for any class exceeds its configured threshold, it is removed from the config file and a log line records which relay was ejected and why.
+  4. A relay whose filter cap was halved to N keeps cap N after reconnecting — the 50→25→12→10 cascade does not re-run on the next batch — while a recovery mechanism (probe-up or decay) lets the cap grow back if the relay's limit was transient.
+  5. A reconnect sweep over ~100 relays produces one summary log line (counts of reconnected / removed / still dead), with per-relay lines only under the debug flag.
+  6. Per batch, a relay's filter-cap negotiation produces at most one log line stating the final outcome, and a relay entering the dead state produces exactly one line carrying failure class, count, and next retry — no duplicate `WARN: Connection timed out` + `marked dead` pair, and no "timed out" wording for filter-cap failures.
 
 **Plans**: TBD
 

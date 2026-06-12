@@ -16,7 +16,8 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - **VALID**: `updateFollowsFromEvent` uses `nostr.GetPublicKey` as a validator (semantically wrong — it's a private-key→public-key derivation); 19 garbage pubkeys already in DB re-enter every batch permanently. Fix validator to hex regex; purge bad nodes; stamp invalid pubkeys in `MarkAttempted` via UID to age them out.
 - **FILTER**: `batchSize` of 500 causes 40% of relays to reject or crash on every batch. Reduce to 100; parse NOTICE "filter item too large" to track per-relay caps; detect connection-drop-on-REQ pattern.
 - **PERF**: `GetStalePubkeys` queries stubs uniformly, yielding 0.76% event hit rate (99% wasted cycles). Reorder frontier by `count(~follows) DESC`; exponentially back off long-miss stubs after N failed attempts.
-- **RELAY-HEALTH**: Failure counter resets to 0 on reconnect, so flapping relays never graduate to "removed". Persist/decay failure count across reconnects; classify failure reasons; auto-eject relays exceeding configurable thresholds per failure class.
+- **RELAY-HEALTH**: Failure counter resets to 0 on reconnect, so flapping relays never graduate to "removed". Persist/decay failure count across reconnects; classify failure reasons; auto-eject relays exceeding configurable thresholds per failure class. Learned filter caps also reset on reconnect, re-running the halving cascade every batch — persist them.
+- **LOGGING**: Production logs dominated by per-relay noise — ~100 reconnect lines per sweep, 6-line cap-halving cascades per relay per batch, duplicate dead/timeout pairs. Aggregate to one-line-per-state-change summaries.
 - **TIMEOUT**: 44% of relays exceed the 30s EOSE timeout. Reduce to 15s; add EOSE-quorum early exit (cancel at ≥70% EOSE/errored).
 - **METRIC**: `staleRemaining` is always 0 due to off-by-one in metric formula.
 
@@ -47,6 +48,10 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - [ ] **PERF-02**: Pubkeys that return no event after N consecutive attempts have their `last_attempt` advanced exponentially so they are deprioritised without being permanently abandoned.
 - [ ] **RELAY-01**: Relay failure counter is persisted and decayed across reconnects instead of reset to 0, so relays that repeatedly connect-and-drop eventually exceed `maxConsecutiveFailures`.
 - [ ] **RELAY-02**: Failure reasons are classified (transport error, filter rejection, subscription flap); auto-ejection threshold and policy are configurable per failure class; ejected relays are written to config.
+- [ ] **RELAY-03**: Learned per-relay filter caps persist across reconnects (with probe-up/decay recovery) instead of being reset and re-learned every batch.
+- [ ] **LOG-01**: Reconnect sweep logs one summary line instead of one line per relay; per-relay detail debug-only.
+- [ ] **LOG-02**: Filter-cap negotiation logs at most one final-outcome line per relay per batch, not every halving step.
+- [ ] **LOG-03**: Relay death logged as a single line with failure class, count, and next retry — no duplicate WARN pair, no false "timed out" wording for filter-cap failures.
 - [ ] **TIMEOUT-01**: Per-batch relay query timeout reduced from 30s to 15s.
 - [ ] **TIMEOUT-02**: Batch relay context is cancelled once ≥70% of alive relays have sent EOSE or errored (EOSE-quorum early exit).
 - [ ] **METRIC-01**: `staleRemaining` in the crawler's progress log reflects actual remaining stale count in Dgraph, not 0.
@@ -84,6 +89,8 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 | v1.2 auto-ejection over manual relay removal | Hard-coded relay blacklists don't scale and require manual ops; classify failure reasons and auto-eject based on configurable thresholds | — Pending |
 | Reduce `batchSize` 500 → 100 | 40% of relay pool rejects 500-author filters; 100 stays within all known relay limits including StrFry default | — Pending |
 | Frontier ordered by follower count | High-follower stubs more likely to have kind-3 events; reduces wasted cycles from 99.24% | — Pending |
+| Persist learned filter caps across reconnects (RELAY-03) | Reverses Phase 6's reset-on-reconnect: re-learning the cap every batch re-runs the halving cascade, re-kills floor-capped relays, and floods logs | — Pending |
+| Logging noise (LOG-01/02/03) folded into Phase 7 | All three touch the relay state machine Phase 7 already rewrites; avoids touching the same code in two phases | — Pending |
 
 ## Evolution
 
@@ -103,4 +110,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-10 — milestone v1.2 (Crawler Reliability & Efficiency) started*
+*Last updated: 2026-06-12 — RELAY-03 + LOG-01/02/03 added to v1.2 (logging noise + filter-cap persistence, from production log review)*

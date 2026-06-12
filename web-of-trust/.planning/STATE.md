@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: active
-last_updated: "2026-06-11T16:40:00Z"
-last_activity: 2026-06-11 -- Phase 06 verified and complete
+last_updated: "2026-06-12T00:00:00Z"
+last_activity: 2026-06-12 -- RELAY-03 + LOG-01/02/03 added to v1.2, folded into Phase 7
 progress:
   total_phases: 4
   completed_phases: 2
@@ -27,13 +27,13 @@ progress:
 
 Phase: 06 (filter-size-per-relay-cap-detection) — COMPLETE (verified 2026-06-11)
 Plan: 2 of 2
-Status: Phase verified — ready for Phase 07
-Last activity: 2026-06-11 -- Completed quick task 260611-ott: crawler logic flow spec (fable_logic_flow.md)
+Status: Phase verified — ready for Phase 07 (scope expanded: +RELAY-03, LOG-01/02/03)
+Last activity: 2026-06-12 -- Production log review: added RELAY-03 (filter-cap persistence) and LOG-01/02/03 (logging noise) to v1.2, folded into Phase 7
 
 ## Performance Metrics
 
 - Phases complete (v1.2): 2 / 4
-- Requirements delivered (v1.2): 5 / 12 (VALID-01/02/03, FILTER-01, FILTER-02)
+- Requirements delivered (v1.2): 5 / 16 (VALID-01/02/03, FILTER-01, FILTER-02)
 - Plans complete (v1.2): 4 / 4
 
 ## Accumulated Context
@@ -52,6 +52,8 @@ Last activity: 2026-06-11 -- Completed quick task 260611-ott: crawler logic flow
 | Phase 06-filter-size-per-relay-cap-detection P01 | 117 | 2 tasks | 3 files |
 | Phase 06 P02 | 89 | 2 tasks | 2 files |
 | Phase 06 CR-01 fix | filterCap changed to atomic.Int32 after code review identified data race; CAS loop added to handleFilterNotice; filterCap reset on reconnect added (WR-03) |
+| RELAY-03 added (2026-06-12) | Phase 6's filterCap reset-on-reconnect (WR-03) makes caps re-learned every batch: 50→25→12→10 cascade repeats, floor-capped relays re-marked dead forever, logs flooded. RELAY-03 persists caps across reconnects with probe-up/decay recovery |
+| LOG-01/02/03 added (2026-06-12) | Production logs dominated by per-relay noise (~100 reconnect lines/sweep, 6-line cap cascades, duplicate dead/timeout pairs). Folded into Phase 7 since all touch the relay state machine Phase 7 rewrites |
 
 ### Important Facts
 
