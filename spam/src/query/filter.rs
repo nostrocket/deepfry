@@ -56,8 +56,9 @@ pub struct NostrFilter {
     /// Pushed into scan bounds (D-03) — not a residual predicate.
     pub until: Option<u64>,
 
-    /// Maximum number of events to return. `0` means unbounded (D-04 engine side).
-    /// Phase 4 enforces the hard ceiling before calling the engine.
+    /// Maximum number of events to return. `0` → uses `DEFAULT_WINDOW_SIZE` (256) as the
+    /// per-prefix scan limit (D-04 engine side). Phase 4 enforces the hard ceiling before
+    /// calling the engine.
     pub limit: usize,
 }
 
