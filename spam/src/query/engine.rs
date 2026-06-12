@@ -20,12 +20,11 @@
 ///   sets an upper bound + exclusion comparison — out-of-range values yield empty/older pages.
 
 use crate::lmdb::payload::DictCache;
-use crate::lmdb::scan::{scan_index_bounded, ScanDirection, DEFAULT_WINDOW_SIZE};
+use crate::lmdb::scan::{scan_index_bounded, scan_index_one_window, ScanDirection, DEFAULT_WINDOW_SIZE};
 use crate::lmdb::types::{DecodedEvent, LevId, NostrEvent};
 use crate::query::filter::{NostrFilter, PageCursor, QueryError};
 use crate::query::hydrate::hydrate_lev_ids;
-use crate::query::merge::merge_prefixes;
-use crate::query::router::{build_start_keys, select_index, SelectedIndex};
+use crate::query::router::{build_start_keys, created_at_from_key, select_index, SelectedIndex};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -77,22 +76,23 @@ fn index_short_name(selected: &SelectedIndex) -> &'static str {
 
 /// Execute a `NostrFilter` query returning up to `filter.limit` valid `DecodedEvent`s.
 ///
-/// ## Algorithm (D-07 over-fetch + backfill)
+/// ## Algorithm (D-07 over-fetch + backfill with key-granular exclusive-resume)
 ///
 /// 1. `select_index(filter)` → `SelectedIndex`; `build_start_keys(filter, &selected, Reverse)`.
-/// 2. If `cursor` is `Some`, replace the trailing `created_at(8 LE)` in each start_key with
-///    `cursor.created_at`, and drop any merge candidate whose `(created_at, lev_id)` ≥
-///    `(cursor.created_at, cursor.lev_id)` before hydration (D-11 `Bound::Excluded` semantics).
-/// 3. Pull a batch from `merge_prefixes`. Advance the scan window to just below the oldest
-///    `created_at` in the batch. Hydrate via `hydrate_lev_ids`. Drop `is_expired` events
-///    (QRY-05) and tag-value residual predicates. Push survivors into `valid`.
-/// 4. Stop when `valid.len() >= filter.limit` OR merge returns empty. Truncate to `limit`.
-/// 5. Cursor: if `valid.len() == limit` (more may exist), build `Some(PageCursor)` from the
-///    LAST emitted event's `(created_at, lev_id)`.
-///
-/// ## Ordering
-///
-/// Guaranteed by `merge_prefixes` (D-10 `(created_at, lev_id)` DESC). Not re-sorted here.
+///    If `cursor` is `Some`, use `cursor.created_at` as the `until` upper bound (D-11).
+/// 2. For each start_key, maintain per-stream `(resume_key, first_batch, prefix)` state.
+///    Per-batch loop:
+///    a. Call `scan_index_one_window` per stream (key-granular exclusive-resume — CR-03 fix).
+///       First call: `Bound::Included(resume_key)`. Subsequent: `Bound::Excluded(resume_key)`.
+///       Each window ends on a KEY boundary (dup group fully drained — no levId dropped).
+///    b. Apply CR-01 prefix guard per stream: `take_while(key.starts_with(prefix))`.
+///    c. K-way merge: sort merged_batch by `(created_at DESC, lev_id DESC)` (D-10).
+///    d. Apply cursor exclusion (D-11) + CR-02 `since` stop-bound.
+///    e. Hydrate via `hydrate_lev_ids`. CR-01 residual: drop events not matching filter kinds/
+///       authors/ids. Drop `is_expired` (QRY-05). Drop tag-value residual mismatch (QRY-02).
+///    f. Push survivors into `valid`. Stop at `valid.len() >= limit` or all streams exhausted.
+///       Also stop when `since_cutoff = true` (CR-02 — all further events are older than since).
+/// 3. Cursor: if `valid.len() == limit`, build `Some(PageCursor)` from last emitted `(ts, lev_id)`.
 ///
 /// ## Security
 ///
@@ -137,6 +137,9 @@ fn execute_query_internal(
         filter.limit
     };
 
+    // CR-02: read since so we can stop the scan when we've gone past it.
+    let since = filter.since.unwrap_or(0);
+
     let selected = select_index(filter);
     let short_name = index_short_name(&selected);
 
@@ -147,13 +150,14 @@ fn execute_query_internal(
     // Build start keys. When a cursor is present, use cursor.created_at as the upper bound
     // (replaces the filter.until-derived trailing bytes) so we start scanning from where we
     // left off rather than from the absolute `until` bound.
-    let initial_filter: NostrFilter;
-    let start_filter = if cursor.is_some() {
-        initial_filter = NostrFilter {
-            until: Some(cursor.unwrap().created_at),
+    // IN-04: removed cursor.unwrap() after is_some() check — use if-let instead.
+    let effective_filter: NostrFilter;
+    let start_filter = if let Some(c) = cursor {
+        effective_filter = NostrFilter {
+            until: Some(c.created_at),
             ..filter.clone()
         };
-        &initial_filter
+        &effective_filter
     } else {
         filter
     };
@@ -163,60 +167,110 @@ fn execute_query_internal(
         return Ok((vec![], None));
     }
 
+    // Per-stream state for key-granular exclusive-resume windowing (CR-03 fix).
+    //
+    // Each start_key becomes one stream. State = (resume_key, first_batch, prefix).
+    // - `resume_key`: the key to resume from on the next scan_index_one_window call.
+    //   Initially = the start_key. After each batch = batch.last().key (fully-drained boundary).
+    // - `first_batch`: true on the first call (Bound::Included), false after (Bound::Excluded).
+    // - `prefix`: start_key[..len-8] — CR-01 boundary guard. All returned keys must start
+    //   with this prefix; entries below it are from a different logical value-partition.
+    // - `exhausted`: true when scan_index_one_window returns an empty batch.
+    struct StreamState {
+        resume_key: Vec<u8>,
+        first_batch: bool,
+        prefix: Vec<u8>,
+        exhausted: bool,
+    }
+    let mut streams: Vec<StreamState> = base_start_keys
+        .into_iter()
+        .map(|key| {
+            let prefix_len = key.len().saturating_sub(8);
+            let prefix = key[..prefix_len].to_vec();
+            StreamState {
+                resume_key: key,
+                first_batch: true,
+                prefix,
+                exhausted: false,
+            }
+        })
+        .collect();
+
     // valid: (created_at, lev_id, DecodedEvent) — tracks sort key alongside event.
     let mut valid: Vec<(u64, LevId, DecodedEvent)> = Vec::with_capacity(limit);
     let mut skip_count: usize = 0;
 
-    // window_boundary: tracks the (ts, lev_id) of the LAST item in each scan batch.
-    // On each iteration:
-    //   - prev_window_boundary is used to (1) update the start key ts and (2) filter out
-    //     already-seen events at the same ts with lev_id >= prev_window_boundary.lev_id.
-    //   - window_boundary is updated from the current batch's last item for the next iteration.
-    //
-    // ## DUPSORT-correct windowing
-    //
-    // `scan_index_bounded` for Reverse with `Included(key)` bound positions the cursor at the
-    // SMALLEST dup of a DUPSORT key (CR-01). A batch ending at ts=T with lev_id=L may miss
-    // dups at ts=T with lev_id < L (already emitted), OR may re-emit the smallest dup.
-    // Solution:
-    // - Set the next start key's ts to `prev_window_boundary.ts` (NOT `ts-1`) so the scan
-    //   restarts at ts=T and sees any remaining dups.
-    // - Filter out items with (ts, lev_id) >= prev_window_boundary to drop re-emitted items.
-    // - Items at ts=T with lev_id < prev_window_boundary.lev_id are new and included.
-    let mut window_boundary: Option<(u64, LevId)> = None;
-    let mut current_start_keys = base_start_keys;
-
     loop {
-        // Capture the previous boundary BEFORE advancing the scan for this iteration.
-        // This is used to filter out already-seen events from the current batch.
-        let prev_window_boundary = window_boundary;
-
-        // Advance scan window: update start_key's trailing 8 bytes to prev_window_boundary.ts
-        // so the next scan starts at the same ts and can find remaining dups.
-        if let Some((wb_ts, _)) = prev_window_boundary {
-            if wb_ts == 0 {
-                break; // Already at the oldest possible bound.
-            }
-            current_start_keys = update_start_keys_ts(&current_start_keys, wb_ts);
-        }
-
-        let batch = merge_prefixes(env, short_name, &current_start_keys, batch_size)
-            .map_err(QueryError::Lmdb)?;
-
-        if batch.is_empty() {
+        // Check if all streams are exhausted.
+        if streams.iter().all(|s| s.exhausted) {
             break;
         }
 
-        // Update window_boundary from this batch's last item — used in the NEXT iteration.
-        if let Some((last_ts, last_lev, _)) = batch.last() {
-            window_boundary = Some((*last_ts, *last_lev));
+        // Collect one dup-group-complete window from each active stream.
+        //
+        // CR-03 fix: uses key-granular exclusive-resume (scan_index_one_window) instead of
+        // the old Included-restart (update_start_keys_ts). Each batch ends on a KEY boundary
+        // (collect_window drains the trailing dup group), and the next call uses
+        // Bound::Excluded(resume_key) so the boundary key is never re-scanned. This ensures
+        // no levId is dropped or re-emitted across window boundaries (proven in dupsort_resume_test.rs).
+        let mut merged_batch: Vec<(u64, LevId, Vec<u8>)> = Vec::new();
+        for s in &mut streams {
+            if s.exhausted {
+                continue;
+            }
+            let (batch, next_resume, next_first) = scan_index_one_window(
+                env,
+                short_name,
+                ScanDirection::Reverse,
+                &s.resume_key,
+                s.first_batch,
+                batch_size,
+            )
+            .map_err(QueryError::Lmdb)?;
+
+            s.resume_key = next_resume;
+            s.first_batch = next_first;
+
+            if batch.is_empty() {
+                s.exhausted = true;
+                continue;
+            }
+
+            // CR-01 prefix guard: apply take_while BEFORE pushing into merged_batch.
+            // (Redundant with merge.rs guard if called through merge_prefixes, but this
+            // engine path calls scan_index_one_window directly — guard must be here too.)
+            let prefix = &s.prefix;
+            let guarded: Vec<(u64, LevId, Vec<u8>)> = batch
+                .into_iter()
+                .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
+                .map(|(k, lev)| {
+                    let ts = created_at_from_key(&k);
+                    (ts, lev, k)
+                })
+                .collect();
+
+            if guarded.is_empty() {
+                // Prefix guard exhausted this stream (all entries below prefix).
+                s.exhausted = true;
+                continue;
+            }
+
+            merged_batch.extend(guarded);
         }
 
-        // Apply exclusion filters to the current batch:
-        // 1. Cursor exclusion: drop events at or above (cursor.created_at, cursor.lev_id).
-        // 2. Window exclusion: drop events at or above prev_window_boundary (already emitted
-        //    in the previous batch — handles DUPSORT boundary re-emission correctly).
-        let filtered_batch: Vec<(u64, LevId)> = batch
+        if merged_batch.is_empty() {
+            break;
+        }
+
+        // K-way merge: sort merged_batch by (created_at DESC, lev_id DESC) to maintain
+        // the correct total order (D-10) across multiple per-prefix streams.
+        merged_batch.sort_unstable_by(|(ts1, lev1, _), (ts2, lev2, _)| {
+            ts2.cmp(ts1).then(lev2.cmp(lev1))
+        });
+
+        // Apply cursor exclusion + CR-02 since stop-bound.
+        let mut since_cutoff = false;
+        let filtered_batch: Vec<(u64, LevId)> = merged_batch
             .into_iter()
             .filter_map(|(ts, lev_id, _key)| {
                 // Cursor exclusion: events at or above the page cursor are already-emitted.
@@ -225,30 +279,26 @@ fn execute_query_internal(
                         return None;
                     }
                 }
-                // Window exclusion: events at or above the previous batch's last item were
-                // already emitted (or are re-emitted DUPSORT duplicates from Included bound).
-                if let Some((wb_ts, wb_lev)) = prev_window_boundary {
-                    if ts > wb_ts || (ts == wb_ts && lev_id >= wb_lev) {
-                        return None;
-                    }
+                // CR-02 since stop-bound: events older than since are excluded.
+                if ts < since {
+                    since_cutoff = true;
+                    return None;
                 }
                 Some((ts, lev_id))
             })
             .collect();
 
+        // CR-02: if any event in this batch was below `since`, all subsequent events will
+        // be even older (we're scanning in reverse). Stop the loop.
+        if since_cutoff {
+            // Process whatever survived the since filter from this batch, then stop.
+            // (We still process the survivors below before breaking.)
+            // After the batch processing below, we'll break.
+        }
+
         if filtered_batch.is_empty() {
-            // All items were excluded (above cursor boundary or above prev_window_boundary).
-            // If window_boundary didn't advance (same as prev), we're stuck at a ts where
-            // all events have been emitted. Advance the window to ts-1 to move past it.
-            if window_boundary == prev_window_boundary {
-                // No progress: all items at this ts have been seen. Advance past this ts.
-                if let Some((stuck_ts, _)) = window_boundary {
-                    if stuck_ts == 0 {
-                        break;
-                    }
-                    current_start_keys = update_start_keys_ts(&current_start_keys, stuck_ts.saturating_sub(1));
-                    window_boundary = window_boundary.map(|(ts, lev)| (ts.saturating_sub(1), lev));
-                }
+            if since_cutoff {
+                break;
             }
             continue;
         }
@@ -257,17 +307,6 @@ fn execute_query_internal(
         let hydrated_pairs = hydrate_lev_ids(env, &lev_ids, dict_cache, &mut skip_count)?;
 
         // CR-05 fix: join hydrated events on lev_id rather than positional zip.
-        //
-        // `hydrate_lev_ids` now returns `Vec<(LevId, DecodedEvent)>`. A corrupt payload
-        // is skipped (the slot is absent), so the Vec may be shorter than `lev_ids`. Using
-        // `.zip()` here would misalign every event after the first skip — the authoritative
-        // (ts, lev_id) from `filtered_batch` would be paired with the WRONG DecodedEvent.
-        //
-        // Instead: build a HashMap<LevId, DecodedEvent> from the hydrated pairs, then
-        // iterate `filtered_batch` (which holds the authoritative ordering keys) and look
-        // up each lev_id. Missing entries (corrupt-payload skips) are simply skipped with
-        // `continue`, and the cursor is always built from `valid.last()` which holds the
-        // true last-emitted (ts, lev_id) from `filtered_batch` — never from the hydrated side.
         let mut hydrated_map: HashMap<LevId, DecodedEvent> =
             hydrated_pairs.into_iter().map(|(lid, ev)| (lid, ev)).collect();
 
@@ -281,6 +320,25 @@ fn execute_query_internal(
             // Drop NIP-40 expired events (QRY-05 / D-08).
             if is_expired(&decoded.event) {
                 continue;
+            }
+
+            // CR-01 residual: belt-and-braces post-hydration kind/author/id check.
+            // The merge prefix guard ensures no cross-prefix contamination, but a residual
+            // on the decoded event provides a second layer of correctness (belt-and-braces).
+            if let Some(kinds) = &filter.kinds {
+                if !kinds.contains(&decoded.event.kind) {
+                    continue;
+                }
+            }
+            if let Some(authors) = &filter.authors {
+                if !authors.iter().any(|a| a == &decoded.event.pubkey) {
+                    continue;
+                }
+            }
+            if let Some(ids) = &filter.ids {
+                if !ids.iter().any(|id| id == &decoded.event.id) {
+                    continue;
+                }
             }
 
             // Tag residual predicate: if filter has tags, verify the decoded event carries a
@@ -313,7 +371,7 @@ fn execute_query_internal(
             }
         }
 
-        if valid.len() >= limit {
+        if valid.len() >= limit || since_cutoff {
             break;
         }
     }
@@ -332,25 +390,6 @@ fn execute_query_internal(
 
     let events: Vec<DecodedEvent> = valid.into_iter().map(|(_, _, ev)| ev).collect();
     Ok((events, next_cursor))
-}
-
-/// Update start_keys' trailing 8 bytes (created_at LE) to `ts`.
-///
-/// Used for DUPSORT-correct windowing: the next batch restarts at the same ts as the
-/// previous batch's oldest entry, relying on lev_id exclusion filtering to drop
-/// already-seen dups at that ts (rather than using ts-1 which would skip remaining dups).
-fn update_start_keys_ts(keys: &[Vec<u8>], ts: u64) -> Vec<Vec<u8>> {
-    keys.iter()
-        .map(|k| {
-            if k.len() < 8 {
-                return k.clone();
-            }
-            let mut new_key = k.clone();
-            let offset = new_key.len() - 8;
-            new_key[offset..].copy_from_slice(&ts.to_le_bytes());
-            new_key
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -948,5 +987,248 @@ mod tests {
             "pk2 has no kind=2 events → must not appear in result (no bogus empty bucket)"
         );
         assert!(result.is_empty(), "result map must be empty");
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-01/CR-02/CR-03/CR-04/WR-01 regression tests (plan 03-06 gap closure)
+    // -----------------------------------------------------------------------
+
+    /// CR-01 end-to-end: execute_query(kinds=[2]) returns EXACTLY the 2 kind=2 events.
+    ///
+    /// Fixture kind=2 events (from Event__kind.json ordering_groups):
+    ///   levId=1  ts=1700000000  pk1 (E3 pk1 kind2 ts_base1)
+    ///   levId=9  ts=1710000000  pk1 (E4 pk1 kind2 ts_base2)
+    ///
+    /// Without the prefix guard in merge.rs, a reverse scan from kind=2||ts=u64::MAX walks
+    /// backward into kind=1 entries (levIds 4,5,6,7,8,10,11 at lower numeric kind value 1 which
+    /// is a lower LMDB key). This test catches CR-01 contamination end-to-end.
+    #[test]
+    fn test_execute_query_kind2_no_contamination() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+        let filter = NostrFilter {
+            kinds: Some(vec![2]),
+            limit: 20, // large enough to return all events if unguarded
+            ..Default::default()
+        };
+
+        let (events, cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("execute_query kinds=[2] must succeed");
+
+        // Must return exactly 2 kind=2 events (no contamination from kind=1).
+        assert_eq!(
+            events.len(),
+            2,
+            "kinds=[2] must return exactly 2 events (levIds 1,9); CR-01 contamination if != 2, got {}",
+            events.len()
+        );
+
+        // All returned events must be kind=2.
+        for ev in &events {
+            assert_eq!(
+                ev.event.kind,
+                2,
+                "all returned events must be kind=2 (no kind=1 contamination), got kind={}",
+                ev.event.kind
+            );
+        }
+
+        // Newest first: levId=9 (ts=1710000000) before levId=1 (ts=1700000000).
+        assert_eq!(events[0].event.created_at, 1710000000, "first kind=2 must be ts=1710000000 (levId=9)");
+        assert_eq!(events[1].event.created_at, 1700000000, "second kind=2 must be ts=1700000000 (levId=1)");
+
+        // Only 2 events in fixture for kind=2 → cursor should be None (no next page).
+        assert!(
+            cursor.is_none(),
+            "cursor must be None when fewer events than limit (all kind=2 returned): got cursor pointing to {:?}",
+            cursor
+        );
+    }
+
+    /// CR-02: execute_query(kinds=[1], since=1715000000) returns NO event older than since.
+    ///
+    /// Fixture kind=1 events (from Event__kind.json ordering_groups):
+    ///   levId=4   ts=1700000000 ← EXCLUDED (< since=1715000000)
+    ///   levId=5   ts=1700000255 ← EXCLUDED
+    ///   levId=6   ts=1700000255 ← EXCLUDED
+    ///   levId=7   ts=1700000256 ← EXCLUDED
+    ///   levId=8   ts=1700000256 ← EXCLUDED
+    ///   levId=10  ts=1710000000 ← EXCLUDED
+    ///   levId=11  ts=1720000000 ← INCLUDED (>= since=1715000000)
+    ///
+    /// Since=1715000000 should return only levId=11 (ts=1720000000).
+    #[test]
+    fn test_execute_query_since_stop_bound() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // since=1715000000 → only levId=11 (ts=1720000000) survives
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            since: Some(1715000000),
+            limit: 10,
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("execute_query with since must succeed");
+
+        // All returned events must have created_at >= since.
+        for ev in &events {
+            assert!(
+                ev.event.created_at >= 1715000000,
+                "since=1715000000: no event with ts={} (< 1715000000) should be returned (CR-02)",
+                ev.event.created_at
+            );
+        }
+
+        // Exactly 1 kind=1 event at ts >= 1715000000 (levId=11, ts=1720000000).
+        assert_eq!(
+            events.len(),
+            1,
+            "since=1715000000 must return exactly 1 kind=1 event (levId=11, ts=1720000000), got {}",
+            events.len()
+        );
+        assert_eq!(events[0].event.created_at, 1720000000, "the event must be ts=1720000000");
+
+        // Tighter bound test: since=1705000000 excludes levId=4 (ts=1700000000), rest survives.
+        let filter2 = NostrFilter {
+            kinds: Some(vec![1]),
+            since: Some(1705000000),
+            limit: 10,
+            ..Default::default()
+        };
+        let (events2, _) = execute_query(&env, &filter2, &cache, None)
+            .expect("tighter since must succeed");
+        for ev in &events2 {
+            assert!(
+                ev.event.created_at >= 1705000000,
+                "since=1705000000: no event with ts={} should be returned",
+                ev.event.created_at
+            );
+        }
+        // levId=4 (ts=1700000000) must NOT be present.
+        let lev4_present = events2.iter().any(|ev| ev.event.created_at == 1700000000);
+        assert!(!lev4_present, "levId=4 (ts=1700000000) must not appear when since=1705000000");
+    }
+
+    /// WR-01 end-to-end: execute_query(authors=[PK1, PK1]) returns each matching event exactly once.
+    ///
+    /// Without start-key dedup, authors=[PK1, PK1] produces two identical start keys, so
+    /// merge_prefixes scans the same PK1 prefix twice. Every PK1 event appears twice in
+    /// the merged result, doubling the output. With dedup, exactly one start key is
+    /// produced for PK1, and each event appears exactly once.
+    ///
+    /// Fixture: PK1 has 9 events total (kinds 1,1,2,2,255,256 and tagged variants).
+    #[test]
+    fn test_execute_query_duplicate_authors_no_doubling() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // Duplicate PK1 in authors → without dedup, would return each event twice.
+        let filter = NostrFilter {
+            authors: Some(vec![PK1.to_string(), PK1.to_string()]),
+            limit: 20, // large enough to reveal doubling if present
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query(&env, &filter, &cache, None)
+            .expect("execute_query with duplicate authors must succeed");
+
+        // Check no event id appears twice (no doubling).
+        let mut seen_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for ev in &events {
+            let id = ev.event.id.as_str();
+            assert!(
+                seen_ids.insert(id),
+                "event id {id} appears more than once — WR-01 duplicate filter doubling not fixed"
+            );
+        }
+
+        // All returned events must be from PK1.
+        for ev in &events {
+            assert_eq!(
+                ev.event.pubkey.as_str(),
+                PK1,
+                "all events must be from PK1"
+            );
+        }
+
+        // Fixture has 9 PK1 events — single-author filter with limit=20 should return all 9.
+        // (No NIP-40 expiry in fixture; no since/until filtering.)
+        assert_eq!(
+            events.len(),
+            9,
+            "PK1 has 9 events; duplicate authors=[PK1,PK1] must return exactly 9 (not 18)"
+        );
+    }
+
+    /// CR-03: dup-group straddle — a batch boundary splitting a dup group of size >=2 loses
+    /// no levId and emits no duplicates.
+    ///
+    /// The fixture has dup groups of size 2 at (kind=1, ts=1700000255) with levIds [5,6] and
+    /// (kind=1, ts=1700000256) with levIds [7,8].
+    ///
+    /// Using batch_size=1 forces a batch boundary inside a size-2 dup group. With the
+    /// old Included-restart windowing, one dup was dropped (proven by
+    /// tests/dupsort_resume_test.rs::test_old_code_reverse_drops_levid_nonvacuity).
+    /// With the new key-granular exclusive-resume (collect_window + Bound::Excluded),
+    /// all levIds are returned exactly once.
+    ///
+    /// This test verifies by collecting ALL kind=1 events with batch_size=1 and asserting:
+    /// - All 7 kind=1 levIds are present (none dropped).
+    /// - No levId appears twice (no re-emission).
+    #[test]
+    fn test_execute_query_dupgroup_straddle_no_drop() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // batch_size=1 forces the loop to issue many tiny windows, straddling dup groups
+        // at (kind=1, ts=1700000255, lev_ids=[5,6]) and (kind=1, ts=1700000256, lev_ids=[7,8]).
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            limit: 7, // all 7 kind=1 events
+            ..Default::default()
+        };
+
+        let (events, _cursor) = execute_query_with_batch(&env, &filter, &cache, None, 1)
+            .expect("execute_query_with_batch kind=1 batch_size=1 must succeed");
+
+        // Must return all 7 kind=1 events — no drops across dup-group boundaries.
+        assert_eq!(
+            events.len(),
+            7,
+            "batch_size=1 must return all 7 kind=1 events (no dup drop at straddle boundary); got {}",
+            events.len()
+        );
+
+        // Collect event ids and assert uniqueness (no re-emission).
+        let mut seen_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for ev in &events {
+            let id = ev.event.id.as_str();
+            assert!(
+                seen_ids.insert(id),
+                "event id {id} appears more than once — dup-group straddle re-emits levId (CR-03)"
+            );
+        }
+
+        // All returned events must be kind=1.
+        for ev in &events {
+            assert_eq!(
+                ev.event.kind, 1,
+                "CR-01 residual: only kind=1 events must be returned"
+            );
+        }
+
+        // Verify created_at non-increasing (D-10 total order preserved across batch boundaries).
+        let mut prev_ts = u64::MAX;
+        for ev in &events {
+            assert!(
+                ev.event.created_at <= prev_ts,
+                "created_at must be non-increasing across batch boundaries: {} after {}",
+                ev.event.created_at, prev_ts
+            );
+            prev_ts = ev.event.created_at;
+        }
     }
 }

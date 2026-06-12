@@ -241,6 +241,88 @@ pub fn scan_index_windowed(
 }
 
 // ---------------------------------------------------------------------------
+// Single-window scan with exclusive-resume state (for engine.rs)
+// ---------------------------------------------------------------------------
+
+/// Collect exactly one dup-group-complete window from a named `Event__*` index.
+///
+/// This is the per-stream primitive used by the engine's over-fetch loop. Unlike
+/// `scan_index_windowed` (which loops until the index is exhausted), this function
+/// collects a SINGLE window of at most `window_size` entries, drains the trailing
+/// dup group so the window ends on a KEY boundary, and returns the batch PLUS the
+/// resume key for the next call.
+///
+/// ## Resume semantics (CR-03 fix)
+///
+/// On the first call, `first_batch = true` → `Bound::Included(resume_key)` (the start key
+/// is included). On subsequent calls, `first_batch = false` → `Bound::Excluded(resume_key)`
+/// (the boundary key was fully drained in the previous batch; skip it entirely).
+///
+/// This is the PROVEN key-granular exclusive-resume pattern from `scan_index_windowed` /
+/// `collect_window`. A window never splits a dup group, so no levId is dropped or re-emitted
+/// across window boundaries in either direction.
+///
+/// ## Returns
+///
+/// `Ok((batch, next_resume_key, next_first_batch))` where:
+/// - `batch` — ≤ `window_size + one_dup_group_drain` entries in scan order.
+/// - `next_resume_key` — the last key in `batch` (or unchanged if batch was empty).
+///   Pass this back to the next call as `resume_key`.
+/// - `next_first_batch` — always `false` after the first call. Pass back as `first_batch`.
+///
+/// `Ok((vec![], resume_key, false))` if the stream is exhausted.
+///
+/// `Err(IndexError)` — LMDB or sub-DB error.
+pub fn scan_index_one_window(
+    env: &heed::Env,
+    short_name: &str,
+    direction: ScanDirection,
+    resume_key: &[u8],
+    first_batch: bool,
+    window_size: usize,
+) -> Result<(Vec<(Vec<u8>, LevId)>, Vec<u8>, bool), IndexError> {
+    let rtxn = env.read_txn()?;
+
+    let batch = match short_name {
+        "Event__id" | "Event__pubkey" | "Event__tag" => {
+            let db = open_index_string_uint64(env, &rtxn, short_name)?;
+            collect_window(&db, &rtxn, direction, resume_key, first_batch, window_size)?
+        }
+        "Event__kind" => {
+            let db = open_index_uint64_uint64(env, &rtxn, short_name)?;
+            collect_window(&db, &rtxn, direction, resume_key, first_batch, window_size)?
+        }
+        "Event__pubkeyKind" => {
+            let db = open_index_string_uint64_uint64(env, &rtxn, short_name)?;
+            collect_window(&db, &rtxn, direction, resume_key, first_batch, window_size)?
+        }
+        "Event__created_at" => {
+            let db = open_index_created_at(env, &rtxn)?;
+            collect_window(&db, &rtxn, direction, resume_key, first_batch, window_size)?
+        }
+        _ => {
+            return Err(IndexError::SubDbNotFound {
+                name: short_name.to_string(),
+            })
+        }
+    };
+
+    // Drop txn immediately — short-lived (D-08).
+    drop(rtxn);
+
+    if batch.is_empty() {
+        // Stream exhausted. Return unchanged resume_key so caller can detect empty.
+        return Ok((vec![], resume_key.to_vec(), false));
+    }
+
+    // The next call must use Excluded(last_key) so the fully-drained boundary key is
+    // not revisited. collect_window guarantees batch ends on a key boundary.
+    let next_resume_key = batch.last().unwrap().0.clone();
+
+    Ok((batch, next_resume_key, false))
+}
+
+// ---------------------------------------------------------------------------
 // Generic low-level helpers — comparator-agnostic
 // ---------------------------------------------------------------------------
 
