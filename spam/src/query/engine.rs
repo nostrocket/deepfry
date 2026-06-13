@@ -240,7 +240,13 @@ fn execute_query_internal(
         // k-way merge. Ordering is correct across all iterations (CR-02); per-stream since
         // exhaustion is enforced inside merge_windowed (CR-03).
         // No sort_unstable_by here — ordering comes from the merge (CR-02 fix).
-        let merge_batch = merge_windowed(env, short_name, &start_keys, batch_size, emit_limit, since)
+        //
+        // Fat-group intra-dup resume (QRY-05): pass round_boundary as the lev_id_floor so
+        // merge_windowed skips entries at (round_boundary.ts, lev_id >= round_boundary.lev)
+        // that were already emitted on previous pages/rounds. This lets the scan descend into
+        // lower lev_ids within the same fat created_at group — no DUPSORT cursor positioning
+        // needed (heed 0.22 does not expose MDB_GET_BOTH).
+        let merge_batch = merge_windowed(env, short_name, &start_keys, batch_size, emit_limit, since, round_boundary)
             .map_err(QueryError::Lmdb)?;
 
         // True-exhaustion signal: if merge returned fewer entries than we asked for,
@@ -357,36 +363,27 @@ fn execute_query_internal(
             break;
         }
 
-        // CR-02 fix: detect zero-progress rounds. When a single created_at second holds
-        // >= emit_limit events, round_until (timestamp-only) causes the merge to re-scan
-        // the same prefix every round. cursor-exclusion drops all of it, last_merged
-        // never changes, and the loop would spin to MAX_ROUNDS stranding everything below
-        // that timestamp. Break early instead of advancing to the identical boundary.
+        // CR-02 safety break: detect true zero-progress rounds (dead-code for fat groups
+        // after the lev_id_floor fix, but retained as a safety net).
         //
-        // When zero-progress is detected, advance deepest_scanned to skip PAST the stalled
-        // timestamp entirely (ts_L - 1, u64::MAX), so the caller's next page uses
-        // round_until = ts_L - 1 and finds events strictly below the fat timestamp.
+        // With the fat-group fix (passing round_boundary as lev_id_floor to merge_windowed),
+        // the floor filter drops already-emitted entries within the fat group, so the merge
+        // always returns new lower-lev_id entries. This means `last_merged != round_boundary`
+        // whenever there are entries remaining, and this break never fires for fat groups.
         //
-        // Un-emitted events AT ts_L beyond the emit_limit budget are architecturally
-        // unreachable: lev_id is a DUPSORT value, not part of the key, so per-value
-        // positioning within a dup group is not possible via key-range-only scans.
+        // The break can still fire if: (a) cursor-exclusion exactly matches last_merged
+        // but the floor filter still allows entries to pass (a pathological non-fat case),
+        // or (b) some future code path reaches this. Keep it as a safety exit.
         //
-        // Safety properties:
-        //   1. deepest_scanned was updated above (captures position scanned in THIS round).
-        //   2. The override below ensures a fresh page can advance past the stalled ts.
-        //   3. The existing `rounds >= MAX_ROUNDS` break is NOT removed — this is an
-        //      additional early exit only (T-03-11-DOS: total work strictly bounded).
+        // When it does fire, we set deepest_scanned to (ts-1, MAX) so the NEXT page's
+        // round_until points just below the stalled timestamp. This preserves the invariant
+        // that a cross-page cursor never strands reachable events.
         if last_merged == round_boundary {
-            // Override deepest_scanned to point just below the stalled timestamp so the
-            // next page can find events strictly below ts_L (e.g. below FAT_TS).
-            // u64::MAX as lev_id means "exclude nothing at ts_L-1" — all events at ts_L-1
-            // pass cursor-exclusion (lev_id >= u64::MAX never fires for real lev_ids).
+            // Safety override: advance past the stalled ts so the next page can continue.
             if let Some((stalled_ts, _)) = last_merged {
                 if stalled_ts > 0 {
                     deepest_scanned = Some((stalled_ts - 1, u64::MAX));
                 }
-                // stalled_ts == 0: keep existing deepest_scanned (already at ts=0, which
-                // is the start of the timeline; no lower boundary exists).
             }
             break;
         }
@@ -1985,29 +1982,60 @@ mod tests {
         );
     }
 
-    /// CR-02 regression: when a single created_at second holds >= emit_limit events,
-    /// paginating with limit smaller than that group must NOT stall — pagination converges.
+    /// Fat-group pagination (QRY-05): FAT_COUNT=260=emit_limit (the previously rigged boundary).
     ///
-    /// Without the CR-02 fix (no-progress break), round_until is timestamp-only (lev_id
-    /// discarded), so each round re-scans the top emit_limit entries at ts_L (the fat timestamp),
-    /// cursor-exclusion drops all of them, last_merged never changes, and the loop spins to
-    /// MAX_ROUNDS with zero progress. Everything below ts_L is permanently stranded.
+    /// This is the ORIGINAL test (previously rigged at FAT_COUNT==emit_limit where the no-progress
+    /// break happened to work correctly). It is now a legitimate regression guard: FAT_COUNT=260
+    /// is exactly at the lev_id_floor transition point where the floor drops all fat_ts entries
+    /// on the final round and the second attempt in refill_stream reaches BELOW_TS entries.
     ///
-    /// With the fix: last_merged == round_boundary triggers a break after the first stalled round.
-    /// The CR-01 deepest_scanned cursor allows the next page to continue past the fat timestamp.
-    ///
-    /// Setup: 300 events at timestamp 2_000_000_000 (> emit_limit=260 for limit=2), plus
-    /// 5 events at timestamp 1_999_999_999. Filter: kinds=[1], limit=2.
-    /// Full pagination with cursor must return ALL 305 events, no duplicates, and TERMINATE.
+    /// Setup: 260 events at FAT_TS (=emit_limit for limit=2), 5 below. TOTAL=265.
     #[test]
-    fn test_execute_query_fat_timestamp_pagination_no_stall() {
+    fn test_execute_query_fat_timestamp_pagination_at_limit_boundary() {
         // emit_limit for limit=2 is 2 + DEFAULT_WINDOW_SIZE(256) + 2 = 260.
-        // FAT_COUNT = emit_limit = 260: exactly at the threshold that triggers the stall.
-        // After all 260 fat-ts events are emitted (pages 1..130), page 131 hits cursor=(FAT_TS,1)
-        // which cursor-excludes ALL 260 fat-ts entries → last_merged == round_boundary → CR-02 break.
-        // The ts-advance override then skips to BELOW_TS so the 5 below events are reachable.
         const FAT_TS: u64 = 2_000_000_000;
-        const FAT_COUNT: u64 = 260; // = emit_limit; triggers the stall after all fat-ts events emitted
+        const FAT_COUNT: u64 = 260; // = emit_limit exactly
+        const BELOW_TS: u64 = 1_999_999_999;
+        const BELOW_COUNT: u64 = 5;
+        const TOTAL: usize = (FAT_COUNT + BELOW_COUNT) as usize;
+
+        let mut events: Vec<(LevId, u64, u64, Vec<Vec<String>>)> = Vec::new();
+        for i in 0..FAT_COUNT {
+            events.push(((i + 1) as LevId, FAT_TS, 1, vec![]));
+        }
+        for j in 0..BELOW_COUNT {
+            events.push(((FAT_COUNT + 1 + j) as LevId, BELOW_TS, 1, vec![]));
+        }
+        let (env, _tmp) = build_synthetic_kind_env(&events);
+        let cache = DictCache::new();
+        let filter = NostrFilter { kinds: Some(vec![1]), limit: 2, ..Default::default() };
+
+        let all_collected = paginate_all(&env, &filter, &cache, TOTAL + 20);
+        assert_eq!(all_collected.len(), TOTAL,
+            "FAT_COUNT=emit_limit: must collect all {} events; got {} (QRY-05 boundary regression)",
+            TOTAL, all_collected.len());
+        let unique: std::collections::HashSet<&str> = all_collected.iter().map(|s| s.as_str()).collect();
+        assert_eq!(unique.len(), TOTAL, "no duplicates across pages");
+    }
+
+    /// Fat-group pagination (QRY-05 / main fix): FAT_COUNT=300 > emit_limit=260.
+    ///
+    /// This is the de-rigged proof test. With FAT_COUNT > emit_limit, the OLD code stranded
+    /// the lowest (FAT_COUNT - emit_limit) events inside the fat group because the scan could
+    /// only reach the top emit_limit lev_ids per round. The lev_id_floor fix in merge_windowed
+    /// makes the floor advance per-round, exposing progressively lower lev_ids until the group
+    /// is fully drained, then continuing to BELOW_TS events.
+    ///
+    /// Setup: 300 events at FAT_TS (> emit_limit=260), 5 events at BELOW_TS. TOTAL=305.
+    /// Full cursor pagination must collect ALL 305 events, no duplicates, and TERMINATE.
+    ///
+    /// OLD CODE RESULT: collected 265 / 305 (40 stranded, as confirmed by 03-REVIEW.md).
+    /// EXPECTED: 305/305 collected.
+    #[test]
+    fn test_execute_query_fat_timestamp_pagination_exceeds_emit_limit() {
+        // emit_limit for limit=2 is 2 + DEFAULT_WINDOW_SIZE(256) + 2 = 260.
+        const FAT_TS: u64 = 2_000_000_000;
+        const FAT_COUNT: u64 = 300; // > emit_limit (260) — this is the stranding repro
         const BELOW_TS: u64 = 1_999_999_999;
         const BELOW_COUNT: u64 = 5;
         const TOTAL: usize = (FAT_COUNT + BELOW_COUNT) as usize;
@@ -2035,69 +2063,17 @@ mod tests {
             ..Default::default()
         };
 
-        // Full pagination: follow cursor until None. Collect all event ids.
-        let mut all_collected: Vec<String> = Vec::new();
-        let mut current_cursor: Option<PageCursor> = None;
-        let mut page_count = 0usize;
-        const MAX_PAGES: usize = 400; // safety: 305 events / limit=2 = ~153 pages; 400 is ample
+        // Full pagination: collect all events. Safety cap much larger than expected page count.
+        // 305 events / 2 per page ≈ 153 pages. Safety cap = 500 to detect infinite loops.
+        let all_collected = paginate_all(&env, &filter, &cache, 500);
 
-        loop {
-            assert!(
-                page_count <= MAX_PAGES,
-                "CR-02: pagination must terminate within {} pages — REGRESSION: fat-timestamp \
-                 stall detected; the loop never descended past ts={} (REVIEW CR-02)",
-                MAX_PAGES, FAT_TS
-            );
-
-            let cursor_ref = current_cursor.as_ref();
-            // Skip the first page if it's the initial call (no cursor), else use Some(cursor).
-            let (page_events, next_cursor) =
-                execute_query_with_batch(&env, &filter, &cache, cursor_ref, 2)
-                    .expect("CR-02: execute_query must not error during fat-timestamp pagination");
-
-            for ev in &page_events {
-                all_collected.push(ev.event.id.clone());
-            }
-
-            page_count += 1;
-
-            match next_cursor {
-                Some(c) => {
-                    current_cursor = Some(c);
-                }
-                None => {
-                    // cursor=None signals end of stream — stop.
-                    break;
-                }
-            }
-
-            // Terminate cleanly if we collected all expected events (safety net for off-by-one
-            // in edge cases where last page is empty with cursor=None).
-            if all_collected.len() >= TOTAL {
-                // Run one more page to confirm cursor is None (stream actually ended).
-                if let Some(c) = current_cursor.take() {
-                    let (last_page, last_cursor) =
-                        execute_query_with_batch(&env, &filter, &cache, Some(&c), 2)
-                            .expect("CR-02: final page check must not error");
-                    for ev in &last_page {
-                        all_collected.push(ev.event.id.clone());
-                    }
-                    assert!(
-                        last_cursor.is_none() || last_page.is_empty(),
-                        "CR-02: after collecting all events, stream must end (cursor=None or empty page)"
-                    );
-                }
-                break;
-            }
-        }
-
-        // All 305 events must be collected (no stranding below the fat timestamp).
+        // All 305 events must be collected (no stranding within or below the fat group).
         assert_eq!(
             all_collected.len(),
             TOTAL,
-            "CR-02: full pagination must return all {} events (fat-ts={} × {} + below × {}); \
-             got {} — REGRESSION: fat-timestamp stall stranded events below ts={} (REVIEW CR-02)",
-            TOTAL, FAT_TS, FAT_COUNT, BELOW_COUNT, all_collected.len(), FAT_TS
+            "QRY-05 fat-group fix: must collect all {} events (fat-ts={} × {} + below × {}); \
+             got {} — lev_id_floor not advancing correctly through fat group",
+            TOTAL, FAT_TS, FAT_COUNT, BELOW_COUNT, all_collected.len()
         );
 
         // No duplicates across pages.
@@ -2106,28 +2082,121 @@ mod tests {
         assert_eq!(
             unique.len(),
             TOTAL,
-            "CR-02: no duplicate events across pages (got {} unique of {} total)",
+            "QRY-05: no duplicate events across pages (got {} unique of {} total)",
             unique.len(),
             all_collected.len()
         );
 
-        // Verify DESC order (created_at non-increasing).
-        // We only check that FAT_TS events all precede BELOW_TS events in the collected list.
-        // The first TOTAL-BELOW_COUNT events should all be at FAT_TS.
-        // Note: within a tie at FAT_TS the order is lev_id DESC; we just verify ts monotonicity.
+        // All 300 fat-ts events present.
         let fat_ts_collected = all_collected
             .iter()
             .filter(|id| {
-                // lev_id is encoded as the last 16 hex chars of the zero-padded id.
-                // The fat-ts events have lev_ids 1..=300, so id like "00..001" through "00..300".
                 let lev_id_val: u64 = u64::from_str_radix(id.as_str(), 16).unwrap_or(0);
                 lev_id_val >= 1 && lev_id_val <= FAT_COUNT
             })
             .count();
         assert_eq!(
             fat_ts_collected, FAT_COUNT as usize,
-            "CR-02: all {} fat-timestamp events must be present in collected results",
+            "QRY-05: all {} fat-timestamp events must be collected (none stranded)",
             FAT_COUNT
         );
+
+        // All 5 below-ts events present.
+        let below_ts_collected = all_collected
+            .iter()
+            .filter(|id| {
+                let lev_id_val: u64 = u64::from_str_radix(id.as_str(), 16).unwrap_or(0);
+                lev_id_val >= FAT_COUNT + 1 && lev_id_val <= FAT_COUNT + BELOW_COUNT
+            })
+            .count();
+        assert_eq!(
+            below_ts_collected, BELOW_COUNT as usize,
+            "QRY-05: all {} below-fat-ts events must be reachable (no cross-ts stranding)",
+            BELOW_COUNT
+        );
+    }
+
+    /// Fat-group at created_at=0 non-termination test (QRY-05).
+    ///
+    /// A fat group at created_at=0 must not cause infinite pagination. With the old code:
+    ///   - No-progress break fires at ts=0 but deepest_scanned stays unchanged (ts=0 guard).
+    ///   - The same cursor (ts=0, lev_id=X) is re-emitted each page → infinite loop.
+    ///
+    /// With the lev_id_floor fix:
+    ///   - floor=(0, lev_floor) filters out all entries at ts=0 with lev_id >= lev_floor.
+    ///   - When all ts=0 entries are consumed, the second refill attempt finds nothing.
+    ///   - exhausted=true → loop breaks → cursor=None → pagination terminates.
+    ///
+    /// Setup: 10 events at created_at=0, lev_ids 1..=10. Filter: kinds=[1], limit=2.
+    /// Pagination must collect all 10 events and terminate (cursor=None after last page).
+    #[test]
+    fn test_execute_query_fat_timestamp_at_ts_zero_terminates() {
+        const FAT_COUNT: u64 = 10;
+
+        let events: Vec<(LevId, u64, u64, Vec<Vec<String>>)> = (1..=FAT_COUNT)
+            .map(|i| (i as LevId, 0u64, 1u64, vec![]))
+            .collect();
+
+        let (env, _tmp) = build_synthetic_kind_env(&events);
+        let cache = DictCache::new();
+
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            limit: 2,
+            ..Default::default()
+        };
+
+        // Paginate with safety cap = 20 (10 events / 2 per page = 5 pages expected).
+        let all_collected = paginate_all(&env, &filter, &cache, 20);
+
+        assert_eq!(
+            all_collected.len(),
+            FAT_COUNT as usize,
+            "QRY-05 ts=0: must collect all {} events at created_at=0; got {} (non-termination if panics at page_limit)",
+            FAT_COUNT,
+            all_collected.len()
+        );
+
+        let unique: std::collections::HashSet<&str> = all_collected.iter().map(|s| s.as_str()).collect();
+        assert_eq!(unique.len(), FAT_COUNT as usize, "QRY-05 ts=0: no duplicates");
+    }
+
+    /// Helper: paginate a filter to completion, collecting all event ids.
+    /// Panics if more than `max_pages` are needed (infinite loop detection).
+    fn paginate_all(
+        env: &heed::Env,
+        filter: &NostrFilter,
+        cache: &DictCache,
+        max_pages: usize,
+    ) -> Vec<String> {
+        let mut all_collected: Vec<String> = Vec::new();
+        let mut current_cursor: Option<PageCursor> = None;
+        let mut page_count = 0usize;
+
+        loop {
+            assert!(
+                page_count < max_pages,
+                "pagination exceeded {} pages — infinite loop or unexpected stranding (page_count={})",
+                max_pages, page_count
+            );
+
+            let cursor_ref = current_cursor.as_ref();
+            let (page_events, next_cursor) =
+                execute_query_with_batch(env, filter, cache, cursor_ref, 2)
+                    .expect("execute_query must not error during pagination");
+
+            for ev in &page_events {
+                all_collected.push(ev.event.id.clone());
+            }
+
+            page_count += 1;
+
+            match next_cursor {
+                Some(c) => { current_cursor = Some(c); }
+                None => { break; }
+            }
+        }
+
+        all_collected
     }
 }
