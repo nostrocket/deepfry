@@ -26,12 +26,25 @@ pub struct Config {
     /// Pinned hoytech/strfry git commit SHA corresponding to the Docker image above.
     /// Example: `"f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"`
     pub pinned_strfry_commit: String,
+
+    /// HTTP bind address for the GraphQL server. Default: 0.0.0.0:8080.
+    ///
+    /// Follows the `~/deepfry/lmdb2graphql.yaml` config convention.
+    /// Override in YAML as `bind_address: "127.0.0.1:9090"`.
+    #[serde(default = "default_bind_address")]
+    pub bind_address: String,
 }
 
 /// Default map_size: 10 TiB — matches `../config/strfry/strfry.conf mapsize = 10995116277760`.
 /// LMDB-04: map_size must be >= strfry's configured mapsize.
 fn default_map_size() -> usize {
     10_995_116_277_760
+}
+
+/// Default bind_address for the GraphQL HTTP server.
+/// Binds on all interfaces at port 8080 when omitted from YAML.
+fn default_bind_address() -> String {
+    "0.0.0.0:8080".to_string()
 }
 
 /// Load config from `~/deepfry/lmdb2graphql.yaml`.
@@ -109,6 +122,49 @@ pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
         assert_eq!(
             cfg.pinned_strfry_commit,
             "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+        );
+    }
+
+    /// Verify bind_address defaults to "0.0.0.0:8080" when omitted from YAML.
+    /// NEVER touches ~/deepfry/ — uses tempfile::tempdir() per CLAUDE.md.
+    #[test]
+    fn test_bind_address_default() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let config_path = dir.path().join("lmdb2graphql.yaml");
+
+        // YAML omits bind_address — expect the default
+        let yaml = r#"
+strfry_db_path: /app/strfry-db
+pinned_strfry_version: "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"
+pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+"#;
+        std::fs::write(&config_path, yaml).expect("write test config");
+
+        let cfg = load_from(&config_path).expect("load config");
+        assert_eq!(
+            cfg.bind_address, "0.0.0.0:8080",
+            "bind_address must default to 0.0.0.0:8080 when omitted from YAML"
+        );
+    }
+
+    /// Verify an explicit bind_address in YAML overrides the default.
+    #[test]
+    fn test_explicit_bind_address() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let config_path = dir.path().join("lmdb2graphql.yaml");
+
+        let yaml = r#"
+strfry_db_path: /app/strfry-db
+pinned_strfry_version: "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"
+pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+bind_address: "127.0.0.1:9090"
+"#;
+        std::fs::write(&config_path, yaml).expect("write test config");
+
+        let cfg = load_from(&config_path).expect("load config");
+        assert_eq!(
+            cfg.bind_address, "127.0.0.1:9090",
+            "explicit bind_address must override the default"
         );
     }
 
