@@ -175,12 +175,13 @@ impl Query {
         Ok(result)
     }
 
-    /// stats — event count, max levId, dbVersion (API-04/D-09).
+    /// stats — event count, max levId, dbVersion, pinnedStrfryVersion (API-04/D-09/OPS-04).
     ///
     /// Reads a short `read_txn` over `EventPayload` to collect:
     ///   - `event_count`: `mdb_stat.entries` (total events).
     ///   - `max_lev_id`: last key in `EventPayload` (monotonic insertion counter).
     ///   - `db_version`: from `AppState.meta.db_version` (verified by startup gate).
+    ///   - `pinned_strfry_version`: from `AppState.pinned_strfry_version` (OPS-04).
     ///
     /// T-03-RDONLY: uses only `read_txn()` and `.open()` (never `.create()`).
     /// D-08 short-txn: txn is opened, used, and dropped inside the spawn_blocking closure.
@@ -188,8 +189,11 @@ impl Query {
         let state = ctx.data_unchecked::<AppState>();
         let env = state.env.clone();
         let db_version = state.meta.db_version;
+        // OPS-04: clone before closure — follows the existing clone-before-spawn_blocking
+        // pattern (Pitfall 1). String is Clone; no Arc needed.
+        let pinned = state.pinned_strfry_version.clone();
 
-        tokio::task::spawn_blocking(move || read_stats(&env, db_version))
+        tokio::task::spawn_blocking(move || read_stats(&env, db_version, pinned))
             .await
             .map_err(|e| async_graphql::Error::new(format!("task error: {e}")))?
             .map_err(map_query_error)
@@ -299,16 +303,23 @@ pub fn build_nostr_filter(
 // Helper: read_stats — opens EventPayload, reads stat + last key (API-04/D-09)
 // ---------------------------------------------------------------------------
 
-/// Read event statistics from the `EventPayload` sub-DB (API-04/D-09/Pattern 8).
+/// Read event statistics from the `EventPayload` sub-DB (API-04/D-09/Pattern 8/OPS-04).
 ///
 /// Must be called inside a `spawn_blocking` closure (heed/LMDB is synchronous C FFI).
+///
+/// ## Parameters
+///
+/// - `env`: the read-only LMDB environment.
+/// - `db_version`: from `AppState.meta.db_version` (pre-verified by startup gate).
+/// - `pinned_strfry_version`: from `AppState.pinned_strfry_version` — threaded into
+///   `StatsResult` to surface the configured strfry image reference (OPS-04).
 ///
 /// ## Read-only invariants (T-03-RDONLY)
 ///
 /// - Uses `read_txn()` only — never `write_txn`.
 /// - Opens `EventPayload` with `.open()` (never `.create()`) — T-03-RDONLY.
 /// - The `RoTxn` is local to this function and dropped before returning (D-08 short-txn).
-fn read_stats(env: &heed::Env, db_version: u32) -> Result<StatsResult, QueryError> {
+fn read_stats(env: &heed::Env, db_version: u32, pinned_strfry_version: String) -> Result<StatsResult, QueryError> {
     use heed::types::Bytes;
     use heed::IntegerComparator;
 
@@ -372,6 +383,8 @@ fn read_stats(env: &heed::Env, db_version: u32) -> Result<StatsResult, QueryErro
         event_count,
         max_lev_id,
         db_version: db_version as i32,
+        // OPS-04: thread the configured pinned version into the response.
+        pinned_strfry_version,
     })
 }
 

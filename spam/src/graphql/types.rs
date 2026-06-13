@@ -105,16 +105,18 @@ pub struct AuthorGroup {
     pub events: Vec<Event>,
 }
 
-/// Result of the `stats` query (D-09, API-04).
+/// Result of the `stats` query (D-09, API-04, OPS-04).
 ///
 /// - `event_count`: total events in the `EventPayload` sub-DB (via `mdb_stat`).
 /// - `max_lev_id`: largest levId key in `EventPayload` (last key — monotonic).
 /// - `db_version`: strfry `Meta.dbVersion` (must be 3; verified at startup gate).
+/// - `pinned_strfry_version`: strfry image reference from config (OPS-04).
 ///
-/// async-graphql auto-renames:
-///   `event_count` → `eventCount`
-///   `max_lev_id` → `maxLevId`
-///   `db_version` → `dbVersion`
+/// async-graphql auto-renames snake_case fields to camelCase in the SDL:
+///   `event_count`           → `eventCount`
+///   `max_lev_id`            → `maxLevId`
+///   `db_version`            → `dbVersion`
+///   `pinned_strfry_version` → `pinnedStrfryVersion`
 #[derive(SimpleObject)]
 pub struct StatsResult {
     /// Total event count from `EventPayload` LMDB stat (renamed to `eventCount`).
@@ -127,6 +129,14 @@ pub struct StatsResult {
     /// strfry `Meta.dbVersion`. Must be 3; verified by startup gate (renamed to `dbVersion`).
     /// u32 stored as i32 (practical values are small; no overflow risk).
     pub db_version: i32,
+
+    /// Pinned strfry image reference from config (OPS-04, renamed to `pinnedStrfryVersion`).
+    ///
+    /// Populated from `AppState.pinned_strfry_version` (set from `cfg.pinned_strfry_version`
+    /// in main.rs). Surfaces the configured image reference alongside the detected on-disk
+    /// `dbVersion` so operators can spot version drift if the parent `dockurr/strfry` image
+    /// moves (T-05-02 — internal operational data, not a secret; loopback default governs exposure).
+    pub pinned_strfry_version: String,
 }
 
 /// Input filter for the `events()` query (API-01/02).
