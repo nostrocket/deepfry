@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-13T13:08:26.436Z"
-last_activity: 2026-06-13
+last_updated: "2026-06-13T13:46:08.284Z"
+last_activity: 2026-06-13 -- Phase 09 execution started
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
-  total_plans: 9
+  total_plans: 11
   completed_plans: 9
-  percent: 100
+  percent: 80
 ---
 
 # Project State: Web-of-Trust Crawler — v1.2 Crawler Reliability & Efficiency
@@ -21,14 +21,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 08 — frontier-prioritization-timeout-observability
+**Current focus:** Phase 09 — phase-8-hardening-resilience-follow-ups
 
 ## Current Position
 
-Phase: 08
-Plan: Not started
-Status: Executing Phase 08
-Last activity: 2026-06-13
+Phase: 09 (phase-8-hardening-resilience-follow-ups) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 09
+Last activity: 2026-06-13 -- Phase 09 execution started
 
 ## Performance Metrics
 
