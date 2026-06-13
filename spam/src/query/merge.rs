@@ -110,83 +110,144 @@ impl StreamState {
     }
 }
 
-/// Refill one stream by issuing a `scan_index_one_window` call, applying the prefix guard,
-/// applying per-stream `since` truncation (CR-03), and loading results into `stream.buffer`.
+/// Refill one stream by issuing `scan_index_one_window` call(s), applying the prefix guard,
+/// the intra-group lev_id floor (QRY-05 fat-group resume), and per-stream `since` truncation
+/// (CR-03), then loading surviving results into `stream.buffer`.
 ///
-/// After a refill, `stream.buf_pos` is reset to 0. If the window was empty or the prefix
-/// guard exhausted all entries, the stream is marked exhausted.
+/// After a refill, `stream.buf_pos` is reset to 0. If the stream is truly exhausted (empty
+/// scan result, prefix guard eliminates everything, or since truncates everything), the stream
+/// is marked exhausted.
+///
+/// ## lev_id_floor (fat-group resume)
+///
+/// When `lev_id_floor = Some((floor_ts, floor_lev))`, entries with
+/// `created_at == floor_ts && lev_id >= floor_lev` are dropped from the batch BEFORE
+/// any other filtering. This implements intra-DUPSORT-group resume: the caller has already
+/// emitted everything at floor_ts with lev_id >= floor_lev and wants only the remainder
+/// of that dup group (lev_id < floor_lev) plus everything at ts < floor_ts.
+///
+/// When the floor filter eliminates ALL entries in a window (e.g. the window only contained
+/// fat_ts entries all above the floor), this function issues ONE additional window to skip
+/// past the floor timestamp and reach entries at ts < floor_ts. This prevents false stream
+/// exhaustion when the floor falls exactly at a key boundary.
+///
+/// This approach avoids the need for heed `MDB_GET_BOTH` (value-level cursor positioning
+/// within a dup group), which heed 0.22.1 does not expose.
 fn refill_stream(
     env: &heed::Env,
     short_name: &str,
     stream: &mut StreamState,
     batch_size: usize,
     since: u64,
+    lev_id_floor: Option<(u64, LevId)>,
 ) -> Result<(), IndexError> {
     debug_assert!(stream.needs_refill(), "refill_stream called on a non-empty or exhausted stream");
 
-    let (batch, next_resume, next_first) = scan_index_one_window(
-        env,
-        short_name,
-        ScanDirection::Reverse,
-        &stream.resume_key,
-        stream.first_batch,
-        batch_size,
-    )?;
+    // Issue scan windows until we accumulate a non-empty buffer or confirm exhaustion.
+    // Normally one window suffices. The loop handles the rare case where the floor filter
+    // drops an entire window (all entries were at floor_ts with lev_id >= floor_lev) —
+    // we issue one more window to reach entries below floor_ts.
+    // Safety: bounded at 2 iterations. After at most one floor-only window, the resume_key
+    // advances past floor_ts so the second window returns entries at ts < floor_ts (or empty).
+    for _attempt in 0..2usize {
+        let (batch, next_resume, next_first) = scan_index_one_window(
+            env,
+            short_name,
+            ScanDirection::Reverse,
+            &stream.resume_key,
+            stream.first_batch,
+            batch_size,
+        )?;
 
-    stream.resume_key = next_resume;
-    stream.first_batch = next_first;
+        stream.resume_key = next_resume;
+        stream.first_batch = next_first;
 
-    if batch.is_empty() {
-        stream.exhausted = true;
-        stream.buffer = Vec::new();
-        stream.buf_pos = 0;
-        return Ok(());
-    }
+        if batch.is_empty() {
+            stream.exhausted = true;
+            stream.buffer = Vec::new();
+            stream.buf_pos = 0;
+            return Ok(());
+        }
 
-    // CR-01 prefix guard: take_while(starts_with(prefix)) in descending order —
-    // entries below the prefix are contiguous at a lower key, so take_while terminates cleanly.
-    let prefix = &stream.prefix;
-    let guarded: Vec<(u64, LevId, Vec<u8>)> = batch
-        .into_iter()
-        .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
-        .map(|(k, lev_id)| {
-            let ts = created_at_from_key(&k);
-            (ts, lev_id, k)
-        })
-        .collect();
+        // CR-01 prefix guard: take_while(starts_with(prefix)) in descending order —
+        // entries below the prefix are contiguous at a lower key, so take_while terminates cleanly.
+        let prefix = &stream.prefix;
+        let guarded: Vec<(u64, LevId, Vec<u8>)> = batch
+            .into_iter()
+            .take_while(|(k, _)| k.starts_with(prefix.as_slice()))
+            .map(|(k, lev_id)| {
+                let ts = created_at_from_key(&k);
+                (ts, lev_id, k)
+            })
+            .collect();
 
-    if guarded.is_empty() {
-        stream.exhausted = true;
-        stream.buffer = Vec::new();
-        stream.buf_pos = 0;
-        return Ok(());
-    }
+        if guarded.is_empty() {
+            stream.exhausted = true;
+            stream.buffer = Vec::new();
+            stream.buf_pos = 0;
+            return Ok(());
+        }
 
-    // CR-03 per-stream since exhaustion: the batch is in descending order. Find the first
-    // entry with ts < since and truncate there. The stream is then exhausted because all
-    // subsequent entries will also be < since (the scan is descending).
-    let truncated: Vec<(u64, LevId, Vec<u8>)> = if since > 0 {
-        let cutoff = guarded.iter().position(|(ts, _, _)| *ts < since);
-        if let Some(idx) = cutoff {
-            let trimmed = guarded[..idx].to_vec();
-            stream.exhausted = true; // no more entries >= since from this stream
-            trimmed
+        // Fat-group intra-dup resume (QRY-05 / fat-group fix): when lev_id_floor is set,
+        // drop entries at floor_ts with lev_id >= floor_lev. The batch is in descending
+        // (ts DESC, lev_id DESC) order. These entries cluster at the head of the batch
+        // when floor_ts == the scan starting timestamp. All other entries (ts < floor_ts
+        // or ts == floor_ts with lev_id < floor_lev) pass through unchanged.
+        let guarded: Vec<(u64, LevId, Vec<u8>)> = if let Some((floor_ts, floor_lev)) = lev_id_floor {
+            guarded
+                .into_iter()
+                .filter(|(ts, lev_id, _)| {
+                    // Keep: ts different from floor, or lev_id strictly below the floor.
+                    *ts != floor_ts || *lev_id < floor_lev
+                })
+                .collect()
         } else {
             guarded
-        }
-    } else {
-        guarded
-    };
+        };
 
-    if truncated.is_empty() {
-        // since truncated the entire window; stream is already marked exhausted above
-        // (if since > 0 and all entries were < since, cutoff == Some(0) → trimmed is empty)
-        stream.buffer = Vec::new();
+        if guarded.is_empty() {
+            // Floor filter eliminated all entries in this window. The resume_key was already
+            // advanced by scan_index_one_window (to the last key in the batch, i.e. floor_ts).
+            // Loop once more: next call uses Excluded(floor_ts) and reaches ts < floor_ts.
+            // If the second attempt also returns empty, the outer loop exits and we fall
+            // through to marking exhausted below.
+            continue;
+        }
+
+        // CR-03 per-stream since exhaustion: the batch is in descending order. Find the first
+        // entry with ts < since and truncate there. The stream is then exhausted because all
+        // subsequent entries will also be < since (the scan is descending).
+        let truncated: Vec<(u64, LevId, Vec<u8>)> = if since > 0 {
+            let cutoff = guarded.iter().position(|(ts, _, _)| *ts < since);
+            if let Some(idx) = cutoff {
+                let trimmed = guarded[..idx].to_vec();
+                stream.exhausted = true; // no more entries >= since from this stream
+                trimmed
+            } else {
+                guarded
+            }
+        } else {
+            guarded
+        };
+
+        if truncated.is_empty() {
+            // since truncated the entire window; stream is already marked exhausted above
+            // (if since > 0 and all entries were < since, cutoff == Some(0) → trimmed is empty)
+            stream.buffer = Vec::new();
+            stream.buf_pos = 0;
+            return Ok(());
+        }
+
+        stream.buffer = truncated;
         stream.buf_pos = 0;
         return Ok(());
     }
 
-    stream.buffer = truncated;
+    // Fell through the loop (both attempts resulted in floor-filtered empty batches).
+    // This means the index is truly exhausted or all remaining entries are at floor_ts
+    // with lev_id >= floor_lev. Mark exhausted.
+    stream.exhausted = true;
+    stream.buffer = Vec::new();
     stream.buf_pos = 0;
     Ok(())
 }
@@ -228,6 +289,10 @@ fn refill_stream(
 /// - `emit_limit`: maximum number of triples to return.
 /// - `since`: per-stream lower bound. Streams are exhausted when their next entry is < since.
 ///   Pass `0` for no lower bound.
+/// - `lev_id_floor`: optional intra-DUPSORT-group resume bound for fat-group pagination
+///   (QRY-05). When `Some((floor_ts, floor_lev))`, entries with `created_at == floor_ts &&
+///   lev_id >= floor_lev` are filtered out, exposing entries with lev_id < floor_lev at the
+///   same timestamp. Pass `None` for the first page (no floor). See `refill_stream` for detail.
 ///
 /// ## Returns
 ///
@@ -242,6 +307,7 @@ pub fn merge_windowed(
     batch_size: usize,
     emit_limit: usize,
     since: u64,
+    lev_id_floor: Option<(u64, LevId)>,
 ) -> Result<Vec<(u64, LevId, Vec<u8>)>, IndexError> {
     if start_keys.is_empty() || emit_limit == 0 {
         return Ok(vec![]);
@@ -265,7 +331,7 @@ pub fn merge_windowed(
 
     // Initial fill: load the first window for each stream.
     for s in &mut streams {
-        refill_stream(env, short_name, s, batch_size, since)?;
+        refill_stream(env, short_name, s, batch_size, since, lev_id_floor)?;
     }
 
     // Seed the BinaryHeap with the first candidate from each non-empty stream.
@@ -293,7 +359,7 @@ pub fn merge_windowed(
 
         // Refill the stream if its buffer is drained and it is not exhausted.
         if streams[idx].needs_refill() {
-            refill_stream(env, short_name, &mut streams[idx], batch_size, since)?;
+            refill_stream(env, short_name, &mut streams[idx], batch_size, since, lev_id_floor)?;
         }
 
         // Push the next head of this stream into the heap (if any remains).
@@ -350,7 +416,8 @@ pub fn merge_prefixes(
     // for backward compat with the old merge_prefixes single-pass behavior, use a large enough
     // batch_size so each stream materializes in one go (scan_limit is the per-stream bound).
     // merge_windowed's frontier then merges them correctly.
-    merge_windowed(env, short_name, start_keys, scan_limit, emit_limit, 0)
+    // lev_id_floor=None: merge_prefixes is a first-page, no-cursor call; no intra-group floor.
+    merge_windowed(env, short_name, start_keys, scan_limit, emit_limit, 0, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -556,8 +623,8 @@ mod tests {
         let start_keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
         assert_eq!(start_keys.len(), 2, "two kinds → two start_keys");
 
-        // batch_size=2, since=0 (no lower bound), large emit cap
-        let results = merge_windowed(&env, "Event__kind", &start_keys, 2, 20, 0)
+        // batch_size=2, since=0 (no lower bound), large emit cap, no intra-group floor
+        let results = merge_windowed(&env, "Event__kind", &start_keys, 2, 20, 0, None)
             .expect("merge_windowed must not error");
 
         assert!(!results.is_empty(), "must emit at least some results");
@@ -608,8 +675,8 @@ mod tests {
         let start_keys = build_start_keys(&f, &selected, ScanDirection::Reverse);
         assert_eq!(start_keys.len(), 2, "two kinds → two start_keys");
 
-        // since=1715000000: only kind=1/levId=11 (ts=1720000000) survives
-        let results = merge_windowed(&env, "Event__kind", &start_keys, 10, 20, 1715000000)
+        // since=1715000000: only kind=1/levId=11 (ts=1720000000) survives; no intra-group floor
+        let results = merge_windowed(&env, "Event__kind", &start_keys, 10, 20, 1715000000, None)
             .expect("merge_windowed with since must not error");
 
         // Exactly 1 event: kind=1/levId=11 (ts=1720000000)
