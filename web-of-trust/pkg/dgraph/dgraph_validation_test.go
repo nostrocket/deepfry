@@ -244,4 +244,3 @@ func TestWritePathRejectsGarbage(t *testing.T) {
 		}
 	}
 }
-

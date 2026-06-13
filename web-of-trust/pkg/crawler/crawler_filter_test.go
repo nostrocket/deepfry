@@ -515,7 +515,7 @@ func TestProbeRejection_ExemptFromEjection(t *testing.T) {
 			ejectionThresholds: map[failureClass]int32{
 				classFilterRej: 3,
 			},
-			onConnectFail: func(url string) { calls++ },
+			onConnectFail:   func(url string) { calls++ },
 			filterBatchSize: 100,
 		}
 		c.relays = []*relayState{rs}

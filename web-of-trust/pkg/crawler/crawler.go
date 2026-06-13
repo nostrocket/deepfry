@@ -842,9 +842,10 @@ func (c *Crawler) handleCapRejection(rs *relayState, relayURL string, batchCap i
 // not an inline copy).
 //
 // Priority: filterRejectionError → classFilterRej (threshold 3);
-//            subscriptionError   → classSubFlap   (threshold 5);
-//            transportError      → classTransport  (threshold 10);
-//            unknown             → classTransport  (conservative fallback, D-07).
+//
+//	subscriptionError   → classSubFlap   (threshold 5);
+//	transportError      → classTransport  (threshold 10);
+//	unknown             → classTransport  (conservative fallback, D-07).
 func classifyRelayError(err error) failureClass {
 	var filterErr *filterRejectionError
 	if errors.As(err, &filterErr) {
