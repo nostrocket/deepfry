@@ -57,11 +57,14 @@ func (c *Client) Close() error {
 }
 
 // EnsureSchema sets the schema needed for this module.
+// Phase 8 adds next_attempt and miss_count predicates (D-01, additive only).
 func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int @index(int) .
 last_db_update: int @index(int) .
 last_attempt: int @index(int) .
+next_attempt: int @index(int) .
+miss_count: int .
 follows: [uid] @reverse .
 
 type Profile {
@@ -70,6 +73,8 @@ type Profile {
   kind3CreatedAt
   last_db_update
   last_attempt
+  next_attempt
+  miss_count
 }`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
