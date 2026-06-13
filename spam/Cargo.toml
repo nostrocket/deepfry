@@ -40,9 +40,18 @@ async-graphql = { version = "7.2.1", features = ["tracing"] }
 async-graphql-axum = "7.2.1"
 axum = "0.8.9"
 tokio = { version = "1.52.3", features = ["full"] }
+# tower-http: WR-02-LAYER. axum's DefaultBodyLimit relies on the Bytes/String extractors
+# and does NOT bite on the async-graphql `.post_service(...)` Tower-service path (confirmed
+# by tests/body_limit_test.rs). RequestBodyLimitLayer enforces the cap at the body-stream /
+# Content-Length level regardless of extractor, returning 413 before the body is buffered.
+tower-http = { version = "0.6", features = ["limit"] }
 
 [dev-dependencies]
 tempfile = "3"
+# WR-02-LAYER: drive the axum Router as a tower Service in the body-limit integration test.
+# `tower::util::ServiceExt::oneshot` issues a single request; `http-body-util` builds the body.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [build-dependencies]
 cc = "1"

@@ -24,11 +24,11 @@
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::GraphQL;
 use axum::{
-    extract::DefaultBodyLimit,
     response::{Html, IntoResponse},
     routing::get,
     Router,
 };
+use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::graphql::schema::AppSchema;
 
@@ -42,8 +42,8 @@ use crate::graphql::schema::AppSchema;
 /// NOT a free `axum::routing::post_service` function).
 /// WR-02: cap the request body at 256 KiB. Without this, a client can POST an arbitrarily
 /// large query/variables document (e.g. a multi-MB `authors` array or a giant query string),
-/// which axum buffers — a trivial memory/CPU amplification vector. A query document large
-/// enough to be legitimate does not approach this ceiling.
+/// which the server buffers — a trivial memory/CPU amplification vector. A query document
+/// large enough to be legitimate does not approach this ceiling.
 const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
 
 pub fn build_router(schema: AppSchema) -> Router {
@@ -52,9 +52,13 @@ pub fn build_router(schema: AppSchema) -> Router {
             "/graphql",
             get(graphiql).post_service(GraphQL::new(schema)),
         )
-        // WR-02: application-level request body cap (the async-graphql Tower service path
-        // does not otherwise get a meaningful body limit here).
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+        // WR-02-LAYER: enforce the body cap with tower-http's RequestBodyLimitLayer rather
+        // than axum's DefaultBodyLimit. DefaultBodyLimit relies on the Bytes/String extractors
+        // and does NOT bite on the async-graphql `.post_service(...)` Tower-service path — an
+        // oversized POST returned 200 OK in tests/body_limit_test.rs. RequestBodyLimitLayer
+        // enforces at the Content-Length / body-stream level regardless of extractor, returning
+        // 413 Payload Too Large before the body is buffered.
+        .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
 }
 
 /// GraphiQL playground handler — returns the GraphiQL v2 HTML page (GET /graphql).
