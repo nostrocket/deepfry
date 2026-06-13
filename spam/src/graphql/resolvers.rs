@@ -605,4 +605,48 @@ mod tests {
             .expect("dbVersion must be an integer");
         assert_eq!(db_version, 3, "dbVersion must be 3 (verified by startup gate)");
     }
+
+    // -----------------------------------------------------------------------
+    // Test 7 (OPS-04): stats query returns pinnedStrfryVersion alongside dbVersion
+    // -----------------------------------------------------------------------
+
+    /// Execute a full stats query including pinnedStrfryVersion (OPS-04).
+    ///
+    /// Verifies the stats resolver threads AppState.pinned_strfry_version into the
+    /// returned StatsResult, and that async-graphql auto-renames it to `pinnedStrfryVersion`
+    /// in the SDL. Also confirms dbVersion is unchanged (additive change, no regression).
+    #[tokio::test]
+    async fn test_stats_pinned_strfry_version() {
+        let (env, _tmp) = open_test_env();
+        let app_state = make_app_state(env);
+        let schema = build_schema(app_state);
+
+        let res = schema
+            .execute("{ stats { dbVersion pinnedStrfryVersion } }")
+            .await;
+
+        assert!(
+            res.errors.is_empty(),
+            "stats query with pinnedStrfryVersion must return no errors; got: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().expect("response data must serialize");
+
+        // dbVersion must still be 3 — additive change must not regress existing fields.
+        let db_version = data["stats"]["dbVersion"]
+            .as_i64()
+            .expect("dbVersion must be an integer");
+        assert_eq!(db_version, 3, "dbVersion must be 3 (regression check for OPS-04)");
+
+        // pinnedStrfryVersion must equal the configured value set in make_app_state.
+        let pinned = data["stats"]["pinnedStrfryVersion"]
+            .as_str()
+            .expect("pinnedStrfryVersion must be a string");
+        assert_eq!(
+            pinned,
+            "test-pinned",
+            "pinnedStrfryVersion must equal AppState.pinned_strfry_version (OPS-04)"
+        );
+    }
 }
