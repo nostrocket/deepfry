@@ -111,4 +111,4 @@
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
-| 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete   | 2026-06-13 |
+| 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete    | 2026-06-13 |
