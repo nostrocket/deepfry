@@ -128,7 +128,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 11** *(gap closure — REVIEW CR-01/CR-02 cursor stranding; blocked on Wave 10: shares engine.rs)*
 
-- [ ] 03-11-PLAN.md — close REVIEW CR-01 (empty-valid budget cap → false EOF: add deepest_scanned fallback cursor) + CR-02 (fat-timestamp pagination stall: detect no-progress and break) in execute_query_internal; add two regression tests the 11-event fixture missed (QRY-01, QRY-05 / REVIEW CR-01,CR-02; WR-03 budget preserved)
+- [x] 03-11-PLAN.md — close REVIEW CR-01 (empty-valid budget cap → false EOF: add deepest_scanned fallback cursor) + CR-02 (fat-timestamp pagination stall: detect no-progress and break) in execute_query_internal; add two regression tests the 11-event fixture missed (QRY-01, QRY-05 / REVIEW CR-01,CR-02; WR-03 budget preserved)
 
 ### Phase 4: GraphQL API
 
@@ -169,6 +169,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
-| 3. Query Engine | 9/9 | Complete   | 2026-06-12 |
+| 3. Query Engine | 11/11 | Complete   | 2026-06-13 |
 | 4. GraphQL API | 0/TBD | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
