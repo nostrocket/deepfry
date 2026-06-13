@@ -144,7 +144,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. Queries exceeding the hard limit ceiling are capped, not rejected; cursor pagination on `(created_at, lev_id)` allows traversal without scanning the full DB
   6. The GraphQL schema exposes no mutations
 
-**Plans**: TBD
+**Plans**: 2 plans (2 waves)
+
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Add GraphQL crates (async-graphql/-axum, axum, tokio), `bind_address` config field, and all GraphQL schema types (Event/EventsPage/AuthorGroup/StatsResult + EventFilterInput/TagFilterInput) + DecodedEvent→Event mapping (API-01..API-05)
+
+**Wave 2** *(blocked on Wave 1: shares src/lib.rs + consumes 04-01 types)*
+
+- [ ] 04-02-PLAN.md — AppState + query-only schema (EmptyMutation), the three resolvers (events/latestPerAuthor/stats) composing the Phase-3 engine via spawn_blocking, limit/perAuthor clamps, error mapping, axum router (POST /graphql + GraphiQL), and main.rs server startup after the gates (API-01..API-06)
 
 ### Phase 5: Hardening & Docker Packaging
 
@@ -170,5 +178,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
-| 4. GraphQL API | 0/TBD | Not started | - |
+| 4. GraphQL API | 0/2 | Not started | - |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
