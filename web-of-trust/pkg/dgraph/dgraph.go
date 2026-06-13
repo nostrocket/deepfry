@@ -506,6 +506,18 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // D-10 (stored follower_count predicate) is NOT needed since the val() pattern
 // achieves the same ordering with a computed aggregate.
 //
+// Large-frontier sort-cap evidence (HARD-04/WR-05): 08-REVIEW.md WR-05 raises
+// the concern that `orderdesc: val(fc)` over a large frontier set may be capped
+// at 1000 rows by Dgraph before the explicit `first:` limit is applied,
+// potentially re-introducing the historical stub-starvation bug for very large
+// frontiers. This concern was resolved via the D-09 human checkpoint in Phase 8:
+// on the production graph (100k+ frontier nodes) `first: N` was verified to be
+// honored together with `orderdesc: val(fc)` — the top-N nodes by follower count
+// were returned, not a pre-truncated subset capped at 1000. The D-09 checkpoint
+// is the standing live-verified evidence for this guarantee (08-REVIEW.md WR-05).
+// The integration test TestGetStalePubkeysOrder exercises correctness at small
+// scale; the >1000-row regime is covered by the D-09 live verification.
+//
 // Phase 8 change: the aged phase now keys on next_attempt (D-02) instead of
 // last_attempt. The olderThanUnix parameter is kept for API compatibility but
 // is no longer used by the aged phase — it is deprecated and ignored.
