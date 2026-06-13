@@ -137,7 +137,9 @@ func New(cfg Config) (*Crawler, error) {
 	// D-06: one-time backfill of next_attempt for existing attempted nodes.
 	// Non-fatal: a failed backfill leaves those nodes selectable until their
 	// next_attempt is set; the crawler can still run.
-	if count, err := dgClient.BackfillNextAttempt(ctx); err != nil {
+	// TODO(09-02): replace 86400 with int64(cfg.MissBackoff.HitRefreshCadence.Seconds())
+	// once MissBackoff is threaded through crawler.Config (plan 09-02).
+	if count, err := dgClient.BackfillNextAttempt(ctx, 86400); err != nil {
 		log.Printf("WARN: BackfillNextAttempt failed (non-fatal, crawler will continue): %v", err)
 	} else {
 		log.Printf("BackfillNextAttempt: seeded %d nodes with initial next_attempt", count)
