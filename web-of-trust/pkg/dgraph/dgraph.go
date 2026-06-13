@@ -506,6 +506,18 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // D-10 (stored follower_count predicate) is NOT needed since the val() pattern
 // achieves the same ordering with a computed aggregate.
 //
+// Large-frontier sort-cap evidence (HARD-04/WR-05): 08-REVIEW.md WR-05 raises
+// the concern that `orderdesc: val(fc)` over a large frontier set may be capped
+// at 1000 rows by Dgraph before the explicit `first:` limit is applied,
+// potentially re-introducing the historical stub-starvation bug for very large
+// frontiers. This concern was resolved via the D-09 human checkpoint in Phase 8:
+// on the production graph (100k+ frontier nodes) `first: N` was verified to be
+// honored together with `orderdesc: val(fc)` — the top-N nodes by follower count
+// were returned, not a pre-truncated subset capped at 1000. The D-09 checkpoint
+// is the standing live-verified evidence for this guarantee (08-REVIEW.md WR-05).
+// The integration test TestGetStalePubkeysOrder exercises correctness at small
+// scale; the >1000-row regime is covered by the D-09 live verification.
+//
 // Phase 8 change: the aged phase now keys on next_attempt (D-02) instead of
 // last_attempt. The olderThanUnix parameter is kept for API compatibility but
 // is no longer used by the aged phase — it is deprecated and ignored.
@@ -660,17 +672,28 @@ func (c *Client) MarkAttempted(
 				}
 			} else {
 				// No lowercase duplicate — update the pubkey field in place.
-				// Do NOT stamp last_attempt or next_attempt: the recovered node
-				// must re-enter the fresh frontier to be crawled with the
-				// corrected pubkey.
+				//
+				// NOTE (HARD-02): The recovery txn and the hit/miss stamp txn
+				// below are INDEPENDENT operations: recovery deliberately does NOT
+				// stamp last_attempt/next_attempt so the corrected node re-enters
+				// the fresh frontier and is crawled under its canonical pubkey.
+				// MarkAttempted is retry-safe: recovery is idempotent (re-resolving
+				// an already-corrected pubkey finds the lowercase form and takes the
+				// duplicate/no-op path above), and stamping is an upsert.
+				//
+				// IMPORTANT: txn.Discard(ctx) is called INLINE after Mutate (not
+				// via defer) because this branch runs inside a for-loop — a defer
+				// inside a loop fires at function return, not at iteration end,
+				// accumulating undiscarded txns until MarkAttempted returns (WR-02).
 				txn := c.dg.NewTxn()
 				mu := &api.Mutation{
 					SetNquads: []byte(fmt.Sprintf("<%s> <pubkey> %q .\n", garbageUID, lower)),
 					CommitNow: true,
 				}
-				if _, err := txn.Mutate(ctx, mu); err != nil {
-					txn.Discard(ctx)
-					log.Printf("WARN: recover uppercase pubkey %q (uid %s) to %q failed: %v", pk, garbageUID, lower, err)
+				_, mutErr := txn.Mutate(ctx, mu)
+				txn.Discard(ctx) // always inline — closes both success and error paths
+				if mutErr != nil {
+					log.Printf("WARN: recover uppercase pubkey %q (uid %s) to %q failed: %v", pk, garbageUID, lower, mutErr)
 				} else {
 					log.Printf("INFO: recovered uppercase pubkey %q (uid %s) → %q", pk, garbageUID, lower)
 				}
@@ -805,59 +828,79 @@ func (c *Client) resolveUIDsWithMissCount(
 //
 // For each node with last_attempt set but no next_attempt, it writes:
 //
-//	next_attempt = last_attempt + 86400 (24h)
+//	next_attempt = last_attempt + hitRefreshCadence (seconds)
 //	miss_count   = 0
 //
+// The operation is paginated: it queries and commits in batchSize windows so
+// that a large legacy frontier (>gRPC message cap) is backfilled incrementally
+// without a single oversized query or mutation (HARD-01/WR-03). Because the
+// @filter(NOT has(next_attempt)) predicate shrinks the result set as rows are
+// stamped, the loop re-queries offset 0 each window — committed rows drop out
+// of the filter, so the next offset:0 page is always the next un-stamped batch.
+//
 // The operation is idempotent: a second run finds zero candidates (nodes with
-// next_attempt already set are excluded from the query). Returns the count of
-// nodes updated.
-func (c *Client) BackfillNextAttempt(ctx context.Context) (int, error) {
-	// Query nodes that have last_attempt but no next_attempt.
-	query := `
-	{
-		nodes(func: has(last_attempt)) @filter(NOT has(next_attempt)) {
-			uid
-			last_attempt
+// next_attempt already set are excluded from the query). Returns the total count
+// of nodes updated across all windows.
+func (c *Client) BackfillNextAttempt(ctx context.Context, hitRefreshCadence int64) (int, error) {
+	type nodeRow struct {
+		UID         string `json:"uid"`
+		LastAttempt int64  `json:"last_attempt"`
+	}
+
+	total := 0
+	for {
+		// Query one page of nodes that have last_attempt but no next_attempt.
+		// Always offset:0 — each committed window removes its rows from the
+		// filtered set, so the next iteration starts from a fresh offset:0 page.
+		query := fmt.Sprintf(`
+		{
+			nodes(func: has(last_attempt), first: %d, offset: 0) @filter(NOT has(next_attempt)) {
+				uid
+				last_attempt
+			}
+		}`, batchSize)
+
+		txn := c.dg.NewReadOnlyTxn()
+		resp, err := txn.Query(ctx, query)
+		txn.Discard(ctx) // inline discard — not deferred — so it fires every iteration (HARD-01)
+		if err != nil {
+			return total, fmt.Errorf("backfill query failed: %w", err)
 		}
-	}`
 
-	txn := c.dg.NewReadOnlyTxn()
-	resp, err := txn.Query(ctx, query)
-	txn.Discard(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("backfill query failed: %w", err)
-	}
+		var result struct {
+			Nodes []nodeRow `json:"nodes"`
+		}
+		if err := json.Unmarshal(resp.Json, &result); err != nil {
+			return total, fmt.Errorf("backfill unmarshal failed: %w", err)
+		}
+		if len(result.Nodes) == 0 {
+			// No more un-stamped nodes — backfill complete.
+			break
+		}
 
-	var result struct {
-		Nodes []struct {
-			UID         string `json:"uid"`
-			LastAttempt int64  `json:"last_attempt"`
-		} `json:"nodes"`
-	}
-	if err := json.Unmarshal(resp.Json, &result); err != nil {
-		return 0, fmt.Errorf("backfill unmarshal failed: %w", err)
-	}
-	if len(result.Nodes) == 0 {
-		return 0, nil
-	}
+		// Build nquads for this page: next_attempt = last_attempt + hitRefreshCadence,
+		// miss_count = 0.
+		var nquads strings.Builder
+		for _, n := range result.Nodes {
+			nquads.WriteString(fmt.Sprintf("<%s> <next_attempt> \"%d\" .\n",
+				n.UID, n.LastAttempt+hitRefreshCadence))
+			nquads.WriteString(fmt.Sprintf("<%s> <miss_count> \"0\" .\n", n.UID))
+		}
 
-	// Build nquads: next_attempt = last_attempt + 24h, miss_count = 0.
-	const hitRefreshSec = 86400 // 24h in seconds
-	var nquads strings.Builder
-	for _, n := range result.Nodes {
-		nquads.WriteString(fmt.Sprintf("<%s> <next_attempt> \"%d\" .\n",
-			n.UID, n.LastAttempt+hitRefreshSec))
-		nquads.WriteString(fmt.Sprintf("<%s> <miss_count> \"0\" .\n", n.UID))
-	}
+		// Commit this page's stamps as a separate CommitNow mutation (per-window
+		// discipline mirrors AddFollowers chunking — avoids unbounded mutation).
+		muTxn := c.dg.NewTxn()
+		mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
+		_, mutErr := muTxn.Mutate(ctx, mu)
+		muTxn.Discard(ctx) // inline discard — not deferred — so it fires every iteration
+		if mutErr != nil {
+			return total, fmt.Errorf("backfill mutation failed: %w", mutErr)
+		}
 
-	muTxn := c.dg.NewTxn()
-	defer muTxn.Discard(ctx)
-	mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
-	if _, err := muTxn.Mutate(ctx, mu); err != nil {
-		return 0, fmt.Errorf("backfill mutation failed: %w", err)
+		total += len(result.Nodes)
 	}
 
-	return len(result.Nodes), nil
+	return total, nil
 }
 
 // CountPubkeys returns the total number of pubkeys in the graph.
