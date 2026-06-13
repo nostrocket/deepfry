@@ -1,9 +1,20 @@
 ---
 phase: 08-frontier-prioritization-timeout-observability
 verified: 2026-06-13T00:00:00Z
-status: human_needed
+status: passed
 score: 9/9 must-haves verified
 overrides_applied: 0
+human_verification_resolved: true
+human_verification_note: >
+  The 3 runtime items below were verified LIVE on the production host and
+  explicitly approved by the user during this phase's two blocking human-verify
+  checkpoints (08-01 D-09 ordering check; 08-02 live-host crawl). Evidence:
+  ~12–14s batches, staleRemaining ~594.9k (changing), BackfillNextAttempt
+  idempotent (seeded 0 on restart), and an orchestrator DQL query confirming
+  0 stranded last_attempt-without-next_attempt nodes (368,359 has_last ≈
+  368,360 has_next). Verifier flagged human_needed only because it cannot run
+  the live crawler itself; the human verification did occur. Status promoted to
+  passed on that basis.
 human_verification:
   - test: "Run crawler against live Dgraph + relays for several batches and confirm batches complete well under 30s (target ~12–15s). Verify the live log line shows staleRemaining as a real non-zero number, not 0."
     expected: "Batches complete noticeably faster than 30s; staleRemaining is a real changing value (live run observed ~594.9k per SUMMARY)."
@@ -20,7 +31,7 @@ human_verification:
 
 **Phase Goal:** Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric.
 **Verified:** 2026-06-13
-**Status:** human_needed (all 9 automated must-haves verified; 3 behavioral checks require a live run)
+**Status:** passed (9/9 automated must-haves verified; the 3 behavioral checks were verified live and user-approved at the phase's blocking checkpoints — see `human_verification_note`)
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
