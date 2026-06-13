@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 03-query-engine-10-PLAN.md
-last_updated: "2026-06-13T07:30:00.000Z"
-last_activity: 2026-06-13 -- Phase 03 plan 10 complete; VERIFICATION truth #5 flipped FAILED → VERIFIED
+status: verifying
+stopped_at: Completed 03-query-engine-11-PLAN.md
+last_updated: "2026-06-13T07:47:00.000Z"
+last_activity: "2026-06-13 -- Phase 03 plan 11 complete; CR-01/CR-02 cursor stranding BLOCKERs closed; 108 tests pass"
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 17
-  completed_plans: 17
-  percent: 45
+  completed_phases: 3
+  total_plans: 18
+  completed_plans: 18
+  percent: 60
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 03 (query-engine) — COMPLETE
-Plan: 10 of 10
-Status: Phase 03 complete; all 5 VERIFICATION truths now VERIFIED
-Last activity: 2026-06-13 -- Phase 03 plan 10 complete; VERIFICATION truth #5 flipped FAILED → VERIFIED
+Phase: 03 (query-engine) — COMPLETE (gap closure done)
+Plan: 11 of 11
+Status: Phase complete — CR-01/CR-02 BLOCKERs closed; VERIFICATION truth #5 fully satisfied
+Last activity: 2026-06-13 -- Phase 03 plan 11 complete; CR-01/CR-02 cursor stranding BLOCKERs closed; 108 tests pass
 
 Progress: [██████░░░░] 60% (Phases 1+2+3 complete; Phase 4 next)
 
@@ -63,6 +63,7 @@ Progress: [██████░░░░] 60% (Phases 1+2+3 complete; Phase 4 n
 | Phase 03-query-engine P08 | 5min | 2 tasks | 1 files |
 | Phase 03-query-engine P09 | 6min | 2 tasks | 2 files |
 | Phase 03-query-engine P10 | 20min | 2 tasks | 3 files |
+| Phase 03-query-engine P11 | 30min | 2 tasks | 1 file |
 
 ## Accumulated Context
 
@@ -97,6 +98,7 @@ Recent decisions affecting current work:
 - [Phase ?]: decode_hex/nibble pub(crate) in router.rs; engine.rs decode_hex_32 delegates to shared helper; local nibble removed
 - [Phase 03-query-engine]: CR-01 closed: Reverse scan Bound::Excluded(ts+1) for finite start keys — heed 0.22.1 rev_range Included positions at smallest dup then steps away; Excluded(ts+1) lands on largest dup of the boundary timestamp
 - [Phase 03-query-engine P10]: Bounded round-loop with MAX_ROUNDS=8; partial-result cursor returned when budget-capped with reachable events; VERIFICATION truth #5 VERIFIED; 106 tests pass (90 lib + 16 integration)
+- [Phase 03-query-engine P11]: CR-01 closed: deepest_scanned fallback cursor returns Some() when valid empty + !exhausted. CR-02 closed: no-progress break with ts-advance override (deepest_scanned = stalled_ts-1 / u64::MAX) ensures events below fat timestamp reachable. 108 tests pass.
 
 ### Pending Todos
 
@@ -121,7 +123,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-13T07:30:00.000Z
+Last session: 2026-06-13T07:48:27.628Z
 Stopped at: Completed 03-query-engine-10-PLAN.md
 Resume: execute Phase 04 — GraphQL API
 Resume file: None
