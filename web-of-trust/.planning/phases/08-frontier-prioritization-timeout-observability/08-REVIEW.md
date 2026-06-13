@@ -19,7 +19,18 @@ findings:
   info: 4
   total: 11
 status: issues_found
+resolution:
+  resolved_in_phase: [CR-01, WR-01, WR-06]
+  deferred_to_followup: [WR-02, WR-03, WR-04, WR-05, IN-01, IN-02, IN-03, IN-04]
+  followup_todo: .planning/todos/pending/phase08-code-review-hardening-followups.md
+  updated: 2026-06-13
 ---
+
+> **Resolution (2026-06-13, during phase execution):**
+> - **CR-01** FIXED — `fix(08): correct BackoffInterval premature cap on non-aligned configs`; overflow guard now compares the running product against cap (`result > (cap-1)/ratio`), with non-power-aligned regression tests.
+> - **WR-01** FIXED — `staleRemaining` clamped with `max(0, totalStale-len(pubkeys))`.
+> - **WR-06** FIXED — corrected the post-cancel-drain comment to document the intentional lossy 70%-quorum trade-off.
+> - **WR-02, WR-03, WR-04, WR-05, IN-01..04** DEFERRED to a gap-closure pass (they touch live-verified runtime / the VALID-03 block and need live re-verification). Tracked in `.planning/todos/pending/phase08-code-review-hardening-followups.md`. WR-05 was verified live via the D-09 checkpoint; only its test coverage is outstanding.
 
 # Phase 8: Code Review Report
 
