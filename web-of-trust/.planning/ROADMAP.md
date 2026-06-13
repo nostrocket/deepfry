@@ -113,7 +113,7 @@
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete    | 2026-06-13 |
-| 9. Phase 8 Hardening & Resilience Follow-ups | 0/0 | Not started | - |
+| 9. Phase 8 Hardening & Resilience Follow-ups | 0/2 | Planned | - |
 
 ### Phase 9: Phase 8 Hardening & Resilience Follow-ups
 
@@ -128,8 +128,12 @@
   4. The >1000-row frontier sort-cap regime is covered — either an integration test exercises a frontier larger than the order-by sort cap (proving top-N is honored, not pre-truncated), or the live-verified guarantee from the D-09 checkpoint is documented as the standing evidence (WR-05).
   5. A transient Dgraph gRPC error (`codes.Unavailable`, EOF, deadline-exceeded) in the main crawl loop logs a WARN and retries with backoff rather than terminating the process; genuinely fatal/unrecoverable errors still exit loudly (RESIL-01).
 
-**Plans**: 0 plans (run `/gsd-plan-phase 9` to break down)
+**Plans**: 2 plans
 
-Plans:
+**Wave 1**
 
-- [ ] TBD (run /gsd-plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — Dgraph layer: paginated BackfillNextAttempt + IN-03 cadence param (HARD-01/WR-03), MarkAttempted recovery-txn hygiene + docs (HARD-02/WR-02), large-frontier sort-cap test/doc (HARD-04/WR-05)
+
+**Wave 2** *(blocked on Wave 1 — new BackfillNextAttempt signature)*
+
+- [ ] 09-02-PLAN.md — Crawler + main resilience: bounded forwardEvent publish (HARD-03/WR-04), BackfillNextAttempt caller update (HARD-01/IN-03), transient-vs-fatal Dgraph error classification + backoff retry in main loop (RESIL-01), live-host re-verification checkpoint
