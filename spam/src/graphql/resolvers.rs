@@ -439,6 +439,7 @@ mod tests {
             env,
             dict_cache: Arc::new(DictCache::new()),
             meta,
+            pinned_strfry_version: "test-pinned".to_string(),
         }
     }
 

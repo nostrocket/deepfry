@@ -27,6 +27,9 @@ use super::resolvers::Query;
 /// - `dict_cache: Arc<DictCache>` — `DictCache` contains `RwLock` and is not `Clone`;
 ///   must be Arc-wrapped to share across `spawn_blocking` closures (Pitfall 1 / Pattern 2).
 /// - `meta: MetaRecord` — plain clone; carries `db_version` for the `stats` resolver (D-09).
+/// - `pinned_strfry_version: String` — the strfry image reference from config, surfaced by
+///   the `stats` resolver so operators can detect version drift (OPS-04).
+///   `String` is `Clone`; the struct's `#[derive(Clone)]` handles it automatically.
 #[derive(Clone)]
 pub struct AppState {
     /// The opened strfry LMDB environment (read-only). Cheap to clone (internal refcount).
@@ -39,6 +42,11 @@ pub struct AppState {
     /// Parsed Meta record from LMDB — carries `db_version` for the `stats` resolver (D-09).
     /// The startup gate has already verified `db_version == 3` before this is constructed.
     pub meta: MetaRecord,
+
+    /// Pinned strfry image reference (e.g. `dockurr/strfry@sha256:...`) from config (OPS-04).
+    /// Surfaced through the `stats` GraphQL query as `pinnedStrfryVersion` so operators can
+    /// spot drift if the parent image moves. Populated from `cfg.pinned_strfry_version` in main.rs.
+    pub pinned_strfry_version: String,
 }
 
 /// Query-only schema type alias (API-06, D-10).
