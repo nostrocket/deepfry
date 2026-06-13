@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -102,6 +103,8 @@ type Crawler struct {
 	filterBatchSize int
 	// Phase 7: per-class ejection thresholds from config (D-06)
 	ejectionThresholds map[failureClass]int32
+	// Phase 8: EOSE-quorum fraction (D-12/D-13). 0 disables early exit.
+	quorum float64
 }
 
 type Config struct {
@@ -113,6 +116,8 @@ type Config struct {
 	FilterBatchSize    int
 	OnConnectFail      func(url string)
 	EjectionThresholds config.EjectionThresholds // Phase 7
+	// Phase 8: EOSE quorum fraction (D-12). 0 disables early exit (full-timeout preserved).
+	RelayEOSEQuorum float64
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -127,6 +132,15 @@ func New(cfg Config) (*Crawler, error) {
 	if err := dgClient.EnsureSchema(ctx); err != nil {
 		dgClient.Close()
 		return nil, fmt.Errorf("failed to ensure schema: %w", err)
+	}
+
+	// D-06: one-time backfill of next_attempt for existing attempted nodes.
+	// Non-fatal: a failed backfill leaves those nodes selectable until their
+	// next_attempt is set; the crawler can still run.
+	if count, err := dgClient.BackfillNextAttempt(ctx); err != nil {
+		log.Printf("WARN: BackfillNextAttempt failed (non-fatal, crawler will continue): %v", err)
+	} else {
+		log.Printf("BackfillNextAttempt: seeded %d nodes with initial next_attempt", count)
 	}
 
 	// Connect to all relays
@@ -179,6 +193,7 @@ func New(cfg Config) (*Crawler, error) {
 		debug:           cfg.Debug,
 		onConnectFail:   cfg.OnConnectFail,
 		filterBatchSize: cfg.FilterBatchSize,
+		quorum:          cfg.RelayEOSEQuorum,
 		ejectionThresholds: map[failureClass]int32{
 			classTransport: int32(cfg.EjectionThresholds.Transport),
 			classFilterRej: int32(cfg.EjectionThresholds.FilterRej),
@@ -386,9 +401,28 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 	}
 }
 
+// quorumReached returns true when the done count has reached the ceil of
+// (q * queried), indicating that enough relays have responded (EOSE or error)
+// to cancel the batch early (D-13/D-14).
+//
+// Returns false when:
+//   - q <= 0 (quorum disabled, full-timeout behaviour preserved — T-08-EARLY)
+//   - queried == 0 (no relays launched; ceil of 0 == 0 would fire immediately)
+//   - done < ceil(q * queried) (threshold not yet reached)
+//
+// This is an exported-by-test seam (internal package) so tests can verify the
+// threshold math without launching real relays (WR-05 precedent).
+func quorumReached(done, queried int32, q float64) bool {
+	if q <= 0 || queried == 0 {
+		return false
+	}
+	threshold := math.Ceil(float64(queried) * q)
+	return float64(done) >= threshold
+}
+
 // FetchAndUpdateFollows queries relays for kind 3 events for the given pubkeys
-// and updates the database. Returns the number of pubkeys that had events.
-func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) (int, error) {
+// and updates the database. Returns the set of pubkeys that had events (hits).
+func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) (map[string]struct{}, error) {
 
 	// Extract pubkey strings from the map
 	authors := make([]string, 0, len(pubkeys))
@@ -424,6 +458,17 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
+	// Count alive relays being launched for the quorum denominator (D-14).
+	var queriedRelays int32
+	for _, rs := range c.relays {
+		if rs.alive {
+			queriedRelays++
+		}
+	}
+
+	// Per-batch EOSE-quorum counter (D-13). Function-local — not shared across batches.
+	var done atomic.Int32
+
 	// Launch goroutines for each alive relay
 	for _, rs := range c.relays {
 		if !rs.alive {
@@ -435,6 +480,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			err := c.queryRelay(relayQueryContext, rs, filter, eventsChan)
 			if err != nil {
 				errorsChan <- relayError{url: rs.url, err: err}
+				// D-14: errors count toward quorum (move batch forward, not stall it).
+				if quorumReached(done.Add(1), queriedRelays, c.quorum) {
+					if c.debug {
+						log.Printf("EOSE quorum reached (error path), cancelling relay query context")
+					}
+					cancel()
+				}
 				return
 			}
 			// D-02: successful query resets all class counters to 0 and increments streak.
@@ -442,6 +494,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			rs.failFilterRej.Store(0)
 			rs.failSubFlap.Store(0)
 			rs.successStreak.Add(1)
+			// D-13: EOSE (success path) also counts toward quorum.
+			if quorumReached(done.Add(1), queriedRelays, c.quorum) {
+				if c.debug {
+					log.Printf("EOSE quorum reached (success path), cancelling relay query context")
+				}
+				cancel()
+			}
 		}(rs)
 	}
 
@@ -456,30 +515,34 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	processedEventIDs := make(map[string]struct{})
 	// Track unique pubkeys that had events returned
 	pubkeysWithEvents := make(map[string]struct{})
+	// relayQueryDone tracks whether the relay query context has already fired.
+	// Once set, we nil out its channel in the select so the case does not spin.
+	relayQueryDoneCh := relayQueryContext.Done()
 	// Process events from all relays using a switch loop
 	for {
 		select {
-		case <-relayQueryContext.Done():
-			// The relay query context was cancelled (timeout or external cancellation)
+		case <-relayQueryDoneCh:
+			// The relay query context was cancelled — either by the 15s timeout
+			// (DeadlineExceeded) or by the EOSE-quorum early exit (Canceled).
+			// In both cases, continue draining events already buffered in
+			// eventsChan; do not return an error. The post-cancel drain is safe
+			// because eventsChan is buffered and goroutines send before closing.
 			if c.debug {
 				log.Printf("Relay query context cancelled while processing events: %v", relayQueryContext.Err())
-			}
-			// Don't return error if it's just relay timeout - we can still process events we already got
-			if relayQueryContext.Err() == context.DeadlineExceeded {
-				if c.debug {
+				if relayQueryContext.Err() == context.DeadlineExceeded {
 					log.Printf("Relay query timeout reached, but continuing to process received events")
 				}
-				// Continue processing events that were already received
-			} else {
-				return len(pubkeysWithEvents), relayQueryContext.Err()
 			}
+			// Nil the channel so this case does not spin on subsequent iterations;
+			// the loop will exit only when eventsChan closes.
+			relayQueryDoneCh = nil
 
 		case <-relayContext.Done():
-			// The main context was cancelled (external cancellation)
+			// The main context was cancelled (external cancellation — e.g. SIGINT).
 			if c.debug {
 				log.Printf("Main context cancelled while processing events: %v", relayContext.Err())
 			}
-			return len(pubkeysWithEvents), relayContext.Err()
+			return pubkeysWithEvents, relayContext.Err()
 
 		case event, ok := <-eventsChan:
 			c.dbUpdateMutex.Lock()
@@ -489,7 +552,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 					log.Printf("Processed follows for %d pubkeys across %d relays", len(processedEventIDs), len(c.relays))
 				}
 				c.dbUpdateMutex.Unlock()
-				return len(pubkeysWithEvents), nil
+				return pubkeysWithEvents, nil
 			}
 
 			if event == nil {
@@ -531,7 +594,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// Process the event using original context (no relay timeout)
 			if err := c.updateFollowsFromEvent(relayContext, event); err != nil {
 				c.dbUpdateMutex.Unlock()
-				return len(pubkeysWithEvents), fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
+				return pubkeysWithEvents, fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
 			}
 			processedEventIDs[event.ID] = struct{}{}
 			c.dbUpdateMutex.Unlock()
