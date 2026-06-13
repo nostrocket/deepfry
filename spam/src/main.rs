@@ -86,12 +86,27 @@ async fn main() -> anyhow::Result<()> {
     let schema = build_schema(app_state);
     let router = build_router(schema);
 
-    // Bind address from config (bind_address added in Plan 04-01 with default 0.0.0.0:8080).
+    // Bind address from config (bind_address; default 127.0.0.1:8080 loopback — CR-01).
     let listener = tokio::net::TcpListener::bind(&cfg.bind_address)
         .await
         .context("bind HTTP listener")?;
 
-    tracing::info!(addr = %listener.local_addr()?, "GraphQL server listening");
+    let local_addr = listener.local_addr()?;
+
+    // CR-01: this endpoint serves the entire strfry corpus with no authentication,
+    // full introspection, and a GraphiQL playground. Binding a non-loopback address
+    // exposes all of that to any host that can route to the box. Warn loudly so the
+    // exposure is never silent — operators must consciously opt into wide binds.
+    if !local_addr.ip().is_loopback() {
+        tracing::warn!(
+            addr = %local_addr,
+            "GraphQL server bound to a NON-LOOPBACK address — the unauthenticated, \
+             full-introspection endpoint is reachable from any host that can route here. \
+             Bind 127.0.0.1 unless wider exposure is intentional (CR-01)."
+        );
+    }
+
+    tracing::info!(addr = %local_addr, "GraphQL server listening");
 
     axum::serve(listener, router)
         .await

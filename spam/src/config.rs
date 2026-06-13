@@ -27,10 +27,16 @@ pub struct Config {
     /// Example: `"f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"`
     pub pinned_strfry_commit: String,
 
-    /// HTTP bind address for the GraphQL server. Default: 0.0.0.0:8080.
+    /// HTTP bind address for the GraphQL server. Default: 127.0.0.1:8080 (loopback).
+    ///
+    /// CR-01: Defaults to loopback so the unauthenticated full-DB GraphQL endpoint is
+    /// never silently exposed on every interface. lmdb2graphql is an internal DeepFry
+    /// sidecar (co-located with strfry); the Docker compose network publishes the port
+    /// explicitly. Operators must opt into wider exposure by setting `bind_address` in
+    /// YAML. main.rs emits a `tracing::warn!` when a non-loopback address is bound.
     ///
     /// Follows the `~/deepfry/lmdb2graphql.yaml` config convention.
-    /// Override in YAML as `bind_address: "127.0.0.1:9090"`.
+    /// Override in YAML as `bind_address: "0.0.0.0:8080"` to widen exposure.
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
 }
@@ -42,9 +48,15 @@ fn default_map_size() -> usize {
 }
 
 /// Default bind_address for the GraphQL HTTP server.
-/// Binds on all interfaces at port 8080 when omitted from YAML.
+///
+/// CR-01: Binds loopback (127.0.0.1:8080) when omitted from YAML, forcing operators to
+/// explicitly opt into wider exposure. The endpoint serves the entire strfry corpus with
+/// no authentication, full introspection, and a GraphiQL playground — a default-public
+/// (0.0.0.0) bind would expose all of that to any host that can route to the box. The
+/// DeepFry deployment model co-locates this sidecar with strfry; the compose network maps
+/// the published port explicitly.
 fn default_bind_address() -> String {
-    "0.0.0.0:8080".to_string()
+    "127.0.0.1:8080".to_string()
 }
 
 /// Load config from `~/deepfry/lmdb2graphql.yaml`.
@@ -125,7 +137,8 @@ pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
         );
     }
 
-    /// Verify bind_address defaults to "0.0.0.0:8080" when omitted from YAML.
+    /// Verify bind_address defaults to "127.0.0.1:8080" (loopback) when omitted from YAML.
+    /// CR-01: loopback default prevents silent public exposure of the unauthenticated endpoint.
     /// NEVER touches ~/deepfry/ — uses tempfile::tempdir() per CLAUDE.md.
     #[test]
     fn test_bind_address_default() {
@@ -142,8 +155,8 @@ pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
 
         let cfg = load_from(&config_path).expect("load config");
         assert_eq!(
-            cfg.bind_address, "0.0.0.0:8080",
-            "bind_address must default to 0.0.0.0:8080 when omitted from YAML"
+            cfg.bind_address, "127.0.0.1:8080",
+            "bind_address must default to 127.0.0.1:8080 (loopback) when omitted from YAML (CR-01)"
         );
     }
 
