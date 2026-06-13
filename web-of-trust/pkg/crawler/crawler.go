@@ -118,6 +118,8 @@ type Config struct {
 	EjectionThresholds config.EjectionThresholds // Phase 7
 	// Phase 8: EOSE quorum fraction (D-12). 0 disables early exit (full-timeout preserved).
 	RelayEOSEQuorum float64
+	// MissBackoff provides the hit-refresh cadence for BackfillNextAttempt (HARD-01/IN-03).
+	MissBackoff config.MissBackoffParams
 }
 
 func New(cfg Config) (*Crawler, error) {
@@ -137,9 +139,8 @@ func New(cfg Config) (*Crawler, error) {
 	// D-06: one-time backfill of next_attempt for existing attempted nodes.
 	// Non-fatal: a failed backfill leaves those nodes selectable until their
 	// next_attempt is set; the crawler can still run.
-	// TODO(09-02): replace 86400 with int64(cfg.MissBackoff.HitRefreshCadence.Seconds())
-	// once MissBackoff is threaded through crawler.Config (plan 09-02).
-	if count, err := dgClient.BackfillNextAttempt(ctx, 86400); err != nil {
+	cadenceSec := int64(cfg.MissBackoff.HitRefreshCadence.Seconds())
+	if count, err := dgClient.BackfillNextAttempt(ctx, cadenceSec); err != nil {
 		log.Printf("WARN: BackfillNextAttempt failed (non-fatal, crawler will continue): %v", err)
 	} else {
 		log.Printf("BackfillNextAttempt: seeded %d nodes with initial next_attempt", count)
@@ -238,7 +239,11 @@ func (c *Crawler) forwardEvent(ctx context.Context, event *nostr.Event) {
 	if c.forwardRelay == nil || !c.forwardRelay.alive {
 		return
 	}
-	err := c.forwardRelay.conn.Publish(ctx, *event)
+	// Wrap publish in a short bounded context (c.timeout) so a hung forward
+	// relay cannot stall the single-threaded drain loop (HARD-03/WR-04).
+	pubCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	err := c.forwardRelay.conn.Publish(pubCtx, *event)
 	if err != nil {
 		log.Printf("WARN: Failed to forward event %s to %s: %v", event.ID, c.forwardRelay.url, err)
 		if c.forwardRelay.conn != nil {
