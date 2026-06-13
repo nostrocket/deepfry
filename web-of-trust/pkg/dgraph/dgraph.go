@@ -588,11 +588,29 @@ func (c *Client) collectStale(
 	return nil
 }
 
-// MarkAttempted stamps last_attempt = ts on every given pubkey. It records that
-// the crawler tried to fetch the pubkey's kind-3, regardless of whether an event
-// came back, so that un-fetchable pubkeys age out of the stale frontier instead
-// of being retried every loop.
-func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) error {
+// MarkAttempted stamps last_attempt = ts on every given pubkey and applies
+// hit/miss backoff stamping per PERF-02 (D-03/D-04). It records that the
+// crawler tried to fetch the pubkey's kind-3 so that un-fetchable pubkeys age
+// out via next_attempt instead of being retried every loop.
+//
+// hits: set of pubkeys that returned a kind-3 event this batch (D-05).
+//   - HIT (pubkey in hits): next_attempt = ts + params.HitRefreshCadence, miss_count = 0 (D-03)
+//   - MISS (pubkey not in hits): next_attempt = ts + BackoffInterval(currentMiss, ...), miss_count++ (D-04)
+//
+// The VALID-03 recover-or-purge gate (Phase 5) is preserved intact: invalid
+// pubkeys are recovered (uppercase→lowercase) or purged before reaching the
+// stamp path. Recovered nodes are NOT stamped (they re-enter the frontier).
+//
+// params carries the config-driven backoff values so pkg/dgraph does not need
+// to import pkg/config (avoids import cycle). Use DefaultBackoffParams() if
+// config is not yet wired.
+func (c *Client) MarkAttempted(
+	ctx context.Context,
+	pubkeys []string,
+	ts int64,
+	hits map[string]struct{},
+	params BackoffParams,
+) error {
 	if len(pubkeys) == 0 {
 		return nil
 	}
@@ -601,7 +619,7 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 	// For each invalid pubkey, attempt to recover it (uppercase→lowercase) or
 	// purge it (unrecoverable garbage) so it stops re-entering the stale
 	// frontier. Valid pubkeys are collected into the `valid` slice for the
-	// existing last_attempt stamp path.
+	// hit/miss stamp path.
 	valid := make([]string, 0, len(pubkeys))
 	for _, pk := range pubkeys {
 		if isValidHexPubkey(pk) {
@@ -642,8 +660,9 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 				}
 			} else {
 				// No lowercase duplicate — update the pubkey field in place.
-				// Do NOT stamp last_attempt: the recovered node must re-enter
-				// the fresh frontier to be crawled with the corrected pubkey.
+				// Do NOT stamp last_attempt or next_attempt: the recovered node
+				// must re-enter the fresh frontier to be crawled with the
+				// corrected pubkey.
 				txn := c.dg.NewTxn()
 				mu := &api.Mutation{
 					SetNquads: []byte(fmt.Sprintf("<%s> <pubkey> %q .\n", garbageUID, lower)),
@@ -680,14 +699,32 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 		return nil
 	}
 
-	uids, err := c.ResolvePubkeysToUIDs(ctx, valid) // map[pubkey]uid, in clusterscan.go
+	// Resolve UIDs and current miss_count in a single companion query so we
+	// can apply the geometric backoff schedule per pubkey (D-04).
+	nodeInfo, err := c.resolveUIDsWithMissCount(ctx, valid)
 	if err != nil {
 		return fmt.Errorf("resolve pubkeys for mark-attempted failed: %w", err)
 	}
 
 	var nquads strings.Builder
-	for _, uid := range uids {
-		nquads.WriteString(fmt.Sprintf("<%s> <last_attempt> \"%d\" .\n", uid, ts))
+	for _, n := range nodeInfo {
+		// Stamp last_attempt for all valid pubkeys (preserves existing aging
+		// semantics and truthfulness of the field).
+		nquads.WriteString(fmt.Sprintf("<%s> <last_attempt> \"%d\" .\n", n.UID, ts))
+
+		if _, isHit := hits[n.Pubkey]; isHit {
+			// HIT (D-03): pubkey returned a kind-3 event — reset backoff.
+			nquads.WriteString(fmt.Sprintf("<%s> <next_attempt> \"%d\" .\n",
+				n.UID, ts+int64(params.HitRefreshCadence.Seconds())))
+			nquads.WriteString(fmt.Sprintf("<%s> <miss_count> \"0\" .\n", n.UID))
+		} else {
+			// MISS (D-04): no event returned — advance backoff geometrically.
+			interval := BackoffInterval(n.MissCount, params.Base, params.Ratio, params.Cap)
+			nquads.WriteString(fmt.Sprintf("<%s> <next_attempt> \"%d\" .\n",
+				n.UID, ts+int64(interval.Seconds())))
+			nquads.WriteString(fmt.Sprintf("<%s> <miss_count> \"%d\" .\n",
+				n.UID, n.MissCount+1))
+		}
 	}
 	if nquads.Len() == 0 {
 		return nil
@@ -700,6 +737,127 @@ func (c *Client) MarkAttempted(ctx context.Context, pubkeys []string, ts int64) 
 		return fmt.Errorf("mark attempted failed: %w", err)
 	}
 	return nil
+}
+
+// pubkeyNode is a compact result row for resolveUIDsWithMissCount.
+type pubkeyNode struct {
+	UID      string
+	Pubkey   string
+	MissCount int
+}
+
+// resolveUIDsWithMissCount queries uid, pubkey, and miss_count for each
+// given pubkey in a single read-only transaction. Pubkeys not found in
+// Dgraph are omitted from the result.
+func (c *Client) resolveUIDsWithMissCount(
+	ctx context.Context,
+	pubkeys []string,
+) ([]pubkeyNode, error) {
+	if len(pubkeys) == 0 {
+		return nil, nil
+	}
+
+	quoted := make([]string, len(pubkeys))
+	for i, pk := range pubkeys {
+		quoted[i] = fmt.Sprintf("%q", pk)
+	}
+	query := fmt.Sprintf(`
+	{
+		nodes(func: eq(pubkey, [%s])) {
+			uid
+			pubkey
+			miss_count
+		}
+	}`, strings.Join(quoted, ", "))
+
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pubkeys with miss_count failed: %w", err)
+	}
+
+	var result struct {
+		Nodes []struct {
+			UID       string `json:"uid"`
+			Pubkey    string `json:"pubkey"`
+			MissCount int    `json:"miss_count"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal pubkeys with miss_count failed: %w", err)
+	}
+
+	out := make([]pubkeyNode, len(result.Nodes))
+	for i, n := range result.Nodes {
+		out[i] = pubkeyNode{
+			UID:      n.UID,
+			Pubkey:   n.Pubkey,
+			MissCount: n.MissCount,
+		}
+	}
+	return out, nil
+}
+
+// BackfillNextAttempt seeds next_attempt and miss_count for existing attempted
+// nodes that predate the Phase 8 PERF-02 predicates (D-06).
+//
+// For each node with last_attempt set but no next_attempt, it writes:
+//
+//	next_attempt = last_attempt + 86400 (24h)
+//	miss_count   = 0
+//
+// The operation is idempotent: a second run finds zero candidates (nodes with
+// next_attempt already set are excluded from the query). Returns the count of
+// nodes updated.
+func (c *Client) BackfillNextAttempt(ctx context.Context) (int, error) {
+	// Query nodes that have last_attempt but no next_attempt.
+	query := `
+	{
+		nodes(func: has(last_attempt)) @filter(NOT has(next_attempt)) {
+			uid
+			last_attempt
+		}
+	}`
+
+	txn := c.dg.NewReadOnlyTxn()
+	resp, err := txn.Query(ctx, query)
+	txn.Discard(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("backfill query failed: %w", err)
+	}
+
+	var result struct {
+		Nodes []struct {
+			UID         string `json:"uid"`
+			LastAttempt int64  `json:"last_attempt"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return 0, fmt.Errorf("backfill unmarshal failed: %w", err)
+	}
+	if len(result.Nodes) == 0 {
+		return 0, nil
+	}
+
+	// Build nquads: next_attempt = last_attempt + 24h, miss_count = 0.
+	const hitRefreshSec = 86400 // 24h in seconds
+	var nquads strings.Builder
+	for _, n := range result.Nodes {
+		nquads.WriteString(fmt.Sprintf("<%s> <next_attempt> \"%d\" .\n",
+			n.UID, n.LastAttempt+hitRefreshSec))
+		nquads.WriteString(fmt.Sprintf("<%s> <miss_count> \"0\" .\n", n.UID))
+	}
+
+	muTxn := c.dg.NewTxn()
+	defer muTxn.Discard(ctx)
+	mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
+	if _, err := muTxn.Mutate(ctx, mu); err != nil {
+		return 0, fmt.Errorf("backfill mutation failed: %w", err)
+	}
+
+	return len(result.Nodes), nil
 }
 
 // CountPubkeys returns the total number of pubkeys in the graph.

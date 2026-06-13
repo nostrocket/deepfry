@@ -374,3 +374,244 @@ _:fu <next_attempt> "%d" .
 			futurePk, futureTime, nowUnix)
 	}
 }
+
+// queryNodeBackoff reads uid, miss_count, next_attempt, and last_attempt for
+// a node identified by pubkey. Returns zero values if the node is absent.
+func queryNodeBackoff(t *testing.T, c *Client, pubkey string) (uid string, missCount int, nextAttempt int64, lastAttempt int64) {
+	t.Helper()
+	ctx := context.Background()
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+
+	q := fmt.Sprintf(`{ node(func: eq(pubkey, %q)) { uid miss_count next_attempt last_attempt } }`, pubkey)
+	resp, err := txn.Query(ctx, q)
+	if err != nil {
+		t.Fatalf("queryNodeBackoff(%q) query failed: %v", pubkey, err)
+	}
+
+	var parsed struct {
+		Node []struct {
+			UID         string `json:"uid"`
+			MissCount   int    `json:"miss_count"`
+			NextAttempt int64  `json:"next_attempt"`
+			LastAttempt int64  `json:"last_attempt"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
+		t.Fatalf("queryNodeBackoff(%q) unmarshal failed: %v", pubkey, err)
+	}
+	if len(parsed.Node) == 0 {
+		return "", 0, 0, 0
+	}
+	n := parsed.Node[0]
+	return n.UID, n.MissCount, n.NextAttempt, n.LastAttempt
+}
+
+// TestMarkAttemptedHitMiss verifies the PERF-02 hit/miss stamping logic:
+//   - A HIT pubkey: next_attempt = ts + hitRefreshCadence (24h), miss_count = 0
+//   - A MISS pubkey: next_attempt = ts + BackoffInterval(prevMiss, ...), miss_count++
+//
+// Two rounds are exercised: round 1 produces initial miss counts; round 2
+// verifies the geometric schedule advances, and a hit resets the counter.
+func TestMarkAttemptedHitMiss(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+	hitPk := fmt.Sprintf("%064x", now+3000)
+	missPk := fmt.Sprintf("%064x", now+3001)
+
+	// Insert both nodes as fresh stubs (no last_attempt).
+	mustMutate(t, c, fmt.Sprintf(
+		`_:h <pubkey> %q .
+_:h <dgraph.type> "Profile" .
+_:m <pubkey> %q .
+_:m <dgraph.type> "Profile" .
+`, hitPk, missPk))
+
+	defer func() {
+		hitUID, _, _, _ := queryNodeBackoff(t, c, hitPk)
+		missUID, _, _, _ := queryNodeBackoff(t, c, missPk)
+		var toDelete []string
+		if hitUID != "" {
+			toDelete = append(toDelete, hitUID)
+		}
+		if missUID != "" {
+			toDelete = append(toDelete, missUID)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	params := DefaultBackoffParams() // base=2h, ratio=2, cap=168h, hitCadence=24h
+	ts := time.Now().Unix()
+	hits := map[string]struct{}{hitPk: {}}
+
+	// Round 1: hitPk is a hit, missPk is a miss (prevMiss = 0).
+	if err := c.MarkAttempted(ctx, []string{hitPk, missPk}, ts, hits, params); err != nil {
+		t.Fatalf("round-1 MarkAttempted failed: %v", err)
+	}
+
+	// Assert hit: miss_count == 0, next_attempt == ts + 24h.
+	_, hitMiss, hitNext, hitLast := queryNodeBackoff(t, c, hitPk)
+	if hitMiss != 0 {
+		t.Errorf("HIT miss_count: got %d, want 0", hitMiss)
+	}
+	wantHitNext := ts + int64(params.HitRefreshCadence.Seconds())
+	if hitNext != wantHitNext {
+		t.Errorf("HIT next_attempt: got %d, want %d (diff %d)", hitNext, wantHitNext, hitNext-wantHitNext)
+	}
+	if hitLast != ts {
+		t.Errorf("HIT last_attempt: got %d, want %d", hitLast, ts)
+	}
+
+	// Assert miss round 1: miss_count == 1, next_attempt == ts + 2h (BackoffInterval(0, 2h, 2, 168h)).
+	_, miss1Count, miss1Next, miss1Last := queryNodeBackoff(t, c, missPk)
+	if miss1Count != 1 {
+		t.Errorf("MISS round-1 miss_count: got %d, want 1", miss1Count)
+	}
+	wantMiss1Interval := BackoffInterval(0, params.Base, params.Ratio, params.Cap)
+	wantMiss1Next := ts + int64(wantMiss1Interval.Seconds())
+	if miss1Next != wantMiss1Next {
+		t.Errorf("MISS round-1 next_attempt: got %d, want %d", miss1Next, wantMiss1Next)
+	}
+	if miss1Last != ts {
+		t.Errorf("MISS round-1 last_attempt: got %d, want %d", miss1Last, ts)
+	}
+
+	// Round 2: missPk is again a miss (prevMiss = 1 → interval = 4h).
+	ts2 := ts + 1
+	emptyHits := map[string]struct{}{}
+	if err := c.MarkAttempted(ctx, []string{missPk}, ts2, emptyHits, params); err != nil {
+		t.Fatalf("round-2 MarkAttempted failed: %v", err)
+	}
+
+	_, miss2Count, miss2Next, _ := queryNodeBackoff(t, c, missPk)
+	if miss2Count != 2 {
+		t.Errorf("MISS round-2 miss_count: got %d, want 2", miss2Count)
+	}
+	wantMiss2Interval := BackoffInterval(1, params.Base, params.Ratio, params.Cap)
+	wantMiss2Next := ts2 + int64(wantMiss2Interval.Seconds())
+	if miss2Next != wantMiss2Next {
+		t.Errorf("MISS round-2 next_attempt: got %d, want %d", miss2Next, wantMiss2Next)
+	}
+}
+
+// TestBackfillNextAttempt verifies BackfillNextAttempt (D-06):
+//   - A node with last_attempt but no next_attempt gets next_attempt = last_attempt + 24h, miss_count = 0.
+//   - A node that already has next_attempt is NOT touched.
+//   - A never-attempted node (no last_attempt) gets neither predicate.
+//   - A second run updates 0 nodes (idempotent).
+func TestBackfillNextAttempt(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+	// needsBackfill: has last_attempt, no next_attempt — the backfill target.
+	needsPk := fmt.Sprintf("%064x", now+4000)
+	// alreadyHas: has both last_attempt and next_attempt — must not be touched.
+	alreadyPk := fmt.Sprintf("%064x", now+4001)
+	// neverAttempted: no last_attempt, no next_attempt — never-attempted frontier node.
+	neverPk := fmt.Sprintf("%064x", now+4002)
+
+	ts := time.Now().Unix()
+	existingNextAttempt := ts + 7200 // the already-has node's current next_attempt (must not change)
+
+	mustMutate(t, c, fmt.Sprintf(
+		`_:n <pubkey> %q .
+_:n <dgraph.type> "Profile" .
+_:n <last_attempt> "%d" .
+_:a <pubkey> %q .
+_:a <dgraph.type> "Profile" .
+_:a <last_attempt> "%d" .
+_:a <next_attempt> "%d" .
+_:f <pubkey> %q .
+_:f <dgraph.type> "Profile" .
+`, needsPk, ts, alreadyPk, ts, existingNextAttempt, neverPk))
+
+	defer func() {
+		uids, err := c.ResolvePubkeysToUIDs(ctx, []string{needsPk, alreadyPk, neverPk})
+		if err != nil {
+			t.Logf("cleanup resolve failed: %v", err)
+			return
+		}
+		toDelete := make([]string, 0, len(uids))
+		for _, uid := range uids {
+			toDelete = append(toDelete, uid)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	// Run backfill — should update exactly needsPk.
+	updated, err := c.BackfillNextAttempt(ctx)
+	if err != nil {
+		t.Fatalf("BackfillNextAttempt failed: %v", err)
+	}
+	// At minimum 1 node was updated (needsPk); may be more from existing DB state.
+	if updated < 1 {
+		t.Errorf("BackfillNextAttempt updated %d nodes; want >= 1", updated)
+	}
+
+	// needsPk must now have next_attempt = last_attempt + 86400, miss_count = 0.
+	_, needsMiss, needsNext, needsLast := queryNodeBackoff(t, c, needsPk)
+	wantNext := needsLast + 86400
+	if needsNext != wantNext {
+		t.Errorf("needsPk next_attempt: got %d, want %d (last_attempt=%d)", needsNext, wantNext, needsLast)
+	}
+	if needsMiss != 0 {
+		t.Errorf("needsPk miss_count: got %d, want 0", needsMiss)
+	}
+
+	// alreadyPk: next_attempt must remain unchanged.
+	_, _, alreadyNext, _ := queryNodeBackoff(t, c, alreadyPk)
+	if alreadyNext != existingNextAttempt {
+		t.Errorf("alreadyPk next_attempt changed from %d to %d; must be untouched by backfill",
+			existingNextAttempt, alreadyNext)
+	}
+
+	// neverPk: must have neither last_attempt nor next_attempt.
+	_, neverMiss, neverNext, neverLast := queryNodeBackoff(t, c, neverPk)
+	if neverNext != 0 {
+		t.Errorf("neverPk should have no next_attempt, got %d", neverNext)
+	}
+	if neverLast != 0 {
+		t.Errorf("neverPk should have no last_attempt, got %d", neverLast)
+	}
+	if neverMiss != 0 {
+		t.Errorf("neverPk should have no miss_count, got %d", neverMiss)
+	}
+
+	// Idempotency: a second run should find 0 candidates for needsPk (it now has next_attempt).
+	// We can't easily assert "exactly 0" on a live DB, but we CAN assert needsPk
+	// is not touched again (its next_attempt stays the same).
+	_, err = c.BackfillNextAttempt(ctx)
+	if err != nil {
+		t.Fatalf("BackfillNextAttempt (2nd run) failed: %v", err)
+	}
+	_, _, needsNext2, _ := queryNodeBackoff(t, c, needsPk)
+	if needsNext2 != needsNext {
+		t.Errorf("BackfillNextAttempt not idempotent for needsPk: next_attempt changed from %d to %d on 2nd run",
+			needsNext, needsNext2)
+	}
+}

@@ -77,7 +77,9 @@ _:blob <dgraph.type> "Profile" .
 	}
 
 	// Call MarkAttempted with all three garbage pubkeys.
-	if err := c.MarkAttempted(ctx, []string{upper, shortHex, relayBlob}, time.Now().Unix()); err != nil {
+	// empty hits map: all are misses (irrelevant here — we test recovery/purge).
+	if err := c.MarkAttempted(ctx, []string{upper, shortHex, relayBlob}, time.Now().Unix(),
+		map[string]struct{}{}, DefaultBackoffParams()); err != nil {
 		t.Fatalf("MarkAttempted failed: %v", err)
 	}
 

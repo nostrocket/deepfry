@@ -155,7 +155,11 @@ mainLoop:
 		for pk := range pubkeys {
 			batchKeys = append(batchKeys, pk)
 		}
-		if err := dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix()); err != nil {
+		// TODO(Plan-02): replace empty hits map with actual hitSet from FetchAndUpdateFollows
+		// once that function returns (map[string]struct{}, error) instead of (int, error).
+		// DefaultBackoffParams() will also be replaced with config-driven params from cfg.MissBackoff.
+		emptyHits := map[string]struct{}{}
+		if err := dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), emptyHits, dgraph.DefaultBackoffParams()); err != nil {
 			log.Printf("Warning: failed to mark batch attempted: %v", err)
 		}
 
