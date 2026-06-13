@@ -7,7 +7,9 @@
 ///   until `limit` valid events are collected (D-07), then returns them in
 ///   `(created_at DESC, lev_id DESC)` order (D-10). When the round budget stops the loop early
 ///   before `limit` survivors accumulate, a partial-result resume cursor is still returned from
-///   `valid.last()` so that remaining reachable events are never stranded (D-11).
+///   `valid.last()` (or from the `deepest_scanned` fallback when `valid` is empty — CR-01 fix)
+///   so that remaining reachable events are never stranded (D-11). The no-progress break
+///   (CR-02 fix) prevents infinite stalling when a fat timestamp holds >= emit_limit events.
 ///
 /// - [`latest_per_author`]: returns ≤ `per_author` newest events per requested pubkey, grouped
 ///   by pubkey, each bucket `created_at DESC` (QRY-03 / D-12).
@@ -180,12 +182,20 @@ fn execute_query_internal(
     //   (= MAX_ROUNDS × (2×limit + DEFAULT_WINDOW_SIZE)). The `rounds >= MAX_ROUNDS` break
     //   is unconditional — a residual/expiry-heavy filter cannot spin the loop unbounded.
     //
-    // Partial-result cursor: when the budget cap (rounds >= MAX_ROUNDS) stops the loop
-    //   before valid.len() == limit, a resume cursor is STILL built from valid.last() (if
-    //   any events were collected). This ensures reachable events are never permanently
-    //   stranded — the caller can always page to the remainder. The cursor is omitted only
-    //   when the merge was truly exhausted (exhausted = true) AND valid is under-full,
-    //   meaning no more matching events exist at all.
+    // CR-01 fix (deepest_scanned fallback cursor): when the budget cap (rounds >= MAX_ROUNDS)
+    //   or the CR-02 no-progress break stops the loop and `valid` IS empty, a resume cursor is
+    //   still built from `deepest_scanned` (the deepest (ts, lev_id) the merge ever scanned).
+    //   This prevents a false end-of-stream signal when reachable events exist below the horizon.
+    //   A cursor is omitted only when `exhausted` is true (true end of stream) or nothing was
+    //   ever scanned (genuinely empty index region).
+    //
+    // CR-02 fix (no-progress break): when `last_merged == round_boundary` after a round, the
+    //   merge re-scanned the same timestamp prefix and made zero forward progress. This happens
+    //   when a single created_at second holds >= emit_limit events (fat timestamp) — lev_id is
+    //   dropped from round_until so the same top-N entries are re-emitted each round and
+    //   cursor-exclusion drops all of them. The loop breaks immediately instead of spinning to
+    //   MAX_ROUNDS (WR-03 DoS bound still holds: `rounds >= MAX_ROUNDS` is NOT removed — the
+    //   no-progress break is an ADDITIONAL earlier exit).
     let emit_limit = limit.saturating_add(DEFAULT_WINDOW_SIZE).saturating_add(limit);
 
     // valid: (created_at, lev_id, DecodedEvent) — tracks sort key alongside event.
@@ -199,6 +209,13 @@ fn execute_query_internal(
     let mut round_boundary: Option<(u64, LevId)> = cursor_boundary;
     let mut rounds: usize = 0;
     let mut exhausted = false;
+    // CR-01 fix: track the deepest (created_at, lev_id) position the merge has actually scanned
+    // across all rounds, regardless of whether any survivors were collected. Used as the fallback
+    // resume cursor when the budget cap fires before any survivor accumulates (valid is empty but
+    // !exhausted — matching events exist below the horizon). Without this, the cursor builder fell
+    // through to `else { None }` on an empty `valid`, causing a false end-of-stream signal that
+    // permanently stranded reachable events.
+    let mut deepest_scanned: Option<(u64, LevId)> = None;
 
     loop {
         // Rebuild effective_filter.until from the current round boundary.
@@ -327,10 +344,32 @@ fn execute_query_internal(
             }
         }
 
+        // CR-01 fix: update deepest_scanned from last_merged BEFORE the break-decision so it
+        // reflects the position scanned in THIS round, including the round that triggers a break.
+        if let Some(lm) = last_merged {
+            deepest_scanned = Some(lm);
+        }
+
         rounds += 1;
 
         // Break when: enough results, merge truly exhausted, or round budget reached.
         if valid.len() >= limit || exhausted || rounds >= MAX_ROUNDS {
+            break;
+        }
+
+        // CR-02 fix: detect zero-progress rounds. When a single created_at second holds
+        // >= emit_limit events, round_until (timestamp-only) causes the merge to re-scan
+        // the same prefix every round. cursor-exclusion drops all of it, last_merged
+        // never changes, and the loop would spin to MAX_ROUNDS stranding everything below
+        // that timestamp. Break early instead of advancing to the identical boundary.
+        //
+        // This is safe because:
+        //   1. deepest_scanned was updated above (captures the current boundary).
+        //   2. The CR-01 cursor branch returns a Some(deepest_scanned) cursor, allowing
+        //      the caller's next page to resume and eventually descend past the fat ts.
+        //   3. The existing `rounds >= MAX_ROUNDS` break is NOT removed — this is an
+        //      additional early exit only (T-03-11-DOS: total work strictly bounded).
+        if last_merged == round_boundary {
             break;
         }
 
@@ -347,12 +386,19 @@ fn execute_query_internal(
     }
 
     // Build next-page cursor:
-    // - If valid.len() == limit → cursor from valid.last() (existing behavior; more events likely).
-    // - ELSE IF valid.len() > 0 && !exhausted → STILL build a cursor from valid.last().
-    //   This is the partial-result cursor: the budget cap (MAX_ROUNDS) stopped the loop early
-    //   before the merge was truly exhausted, meaning reachable events remain below the page
-    //   boundary. Never return None when reachable events may still exist.
-    // - ELSE (exhausted and under-full, OR valid empty) → None (true end of stream).
+    // - If valid.len() == limit → cursor from valid.last() (standard full-page case).
+    // - ELSE IF valid is non-empty && !exhausted → partial-result cursor from valid.last().
+    //   The budget cap (MAX_ROUNDS) or no-progress break stopped the loop early before the
+    //   merge was truly exhausted; reachable events remain below the page boundary.
+    // - ELSE IF valid is EMPTY && !exhausted → CR-01 fix: fallback cursor from deepest_scanned.
+    //   The budget cap fired before any survivor accumulated (all scanned entries were dropped by
+    //   residual/expiry/cursor-exclusion). Return a resume cursor at the deepest scanned merge
+    //   position so the caller can page past the residual-heavy region. Without this branch the
+    //   old code fell to `else { None }`, returning a false end-of-stream and permanently
+    //   stranding every matching event below the budget horizon.
+    // - ELSE (exhausted, OR valid empty with nothing scanned) → None (true end of stream).
+    //   `exhausted` means the merge truly had no more entries; deepest_scanned is None only when
+    //   the index region was genuinely empty (nothing was ever returned from merge_windowed).
     let next_cursor = if valid.len() == limit {
         valid.last().map(|(ts, lev_id, _)| PageCursor {
             created_at: *ts,
@@ -364,6 +410,14 @@ fn execute_query_internal(
         valid.last().map(|(ts, lev_id, _)| PageCursor {
             created_at: *ts,
             lev_id: *lev_id,
+        })
+    } else if valid.is_empty() && !exhausted {
+        // CR-01 fix: budget cap (or no-progress break) fired before any survivor accumulated.
+        // Return a resume cursor at the deepest scanned position so the caller can continue
+        // paging past the residual-heavy / fat-timestamp region instead of seeing a false EOF.
+        deepest_scanned.map(|(ts, lev_id)| PageCursor {
+            created_at: ts,
+            lev_id,
         })
     } else {
         None
