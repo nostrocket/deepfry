@@ -20,8 +20,8 @@ Operational reliability and throughput improvements motivated by a 40-batch prod
 
 ### Frontier Prioritization
 
-- [ ] **PERF-01**: `GetStalePubkeys` orders the stale frontier by incoming follower count (`count(~follows)`) descending so pubkeys with many followers are queried first; these are more likely to have kind-3 events on major relays, improving event hit rate.
-- [ ] **PERF-02**: Pubkeys that return no kind-3 event after N consecutive crawl attempts have their `last_attempt` advanced by an exponentially increasing interval (e.g. 1h → 4h → 16h → …, capped at a configurable max). They are never permanently abandoned — the interval eventually expires — but they stop consuming batch capacity on every cycle.
+- [x] **PERF-01**: `GetStalePubkeys` orders the stale frontier by incoming follower count (`count(~follows)`) descending so pubkeys with many followers are queried first; these are more likely to have kind-3 events on major relays, improving event hit rate.
+- [x] **PERF-02**: Pubkeys that return no kind-3 event after N consecutive crawl attempts have their `last_attempt` advanced by an exponentially increasing interval (e.g. 1h → 4h → 16h → …, capped at a configurable max). They are never permanently abandoned — the interval eventually expires — but they stop consuming batch capacity on every cycle.
 
 ### Relay Health Management
 
@@ -39,9 +39,9 @@ Production logs are dominated by per-relay, per-event lines: ~100 `Reconnected t
 
 ### Timeout & Observability
 
-- [ ] **TIMEOUT-01**: The per-batch relay query timeout is reduced from 30s to 15s. Relays that do not send EOSE within 15s are cancelled.
-- [ ] **TIMEOUT-02**: The batch relay context is cancelled early once ≥70% of alive relays have either sent EOSE or returned an error — without waiting for the full timeout. This reduces average batch time when fast relays have already covered the data.
-- [ ] **METRIC-01**: The `staleRemaining` value in the crawler's progress log reflects the actual count of stale pubkeys remaining in Dgraph after the batch (a separate `CountStalePubkeys` query before the batch, minus `len(pubkeys)`) — not zero due to the current off-by-one in `cmd/crawler/main.go`.
+- [x] **TIMEOUT-01**: The per-batch relay query timeout is reduced from 30s to 15s. Relays that do not send EOSE within 15s are cancelled.
+- [x] **TIMEOUT-02**: The batch relay context is cancelled early once ≥70% of alive relays have either sent EOSE or returned an error — without waiting for the full timeout. This reduces average batch time when fast relays have already covered the data.
+- [x] **METRIC-01**: The `staleRemaining` value in the crawler's progress log reflects the actual count of stale pubkeys remaining in Dgraph after the batch (a separate `CountStalePubkeys` query before the batch, minus `len(pubkeys)`) — not zero due to the current off-by-one in `cmd/crawler/main.go`.
 
 ## v1.1 Requirements (Complete)
 
@@ -98,17 +98,17 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 | VALID-03 | Phase 5 | Complete |
 | FILTER-01 | Phase 6 | Pending |
 | FILTER-02 | Phase 6 | Complete |
-| PERF-01 | Phase 8 | Pending |
-| PERF-02 | Phase 8 | Pending |
+| PERF-01 | Phase 8 | Complete |
+| PERF-02 | Phase 8 | Complete |
 | RELAY-01 | Phase 7 | Complete |
 | RELAY-02 | Phase 7 | Complete |
 | RELAY-03 | Phase 7 | Complete |
 | LOG-01 | Phase 7 | Complete |
 | LOG-02 | Phase 7 | Complete |
 | LOG-03 | Phase 7 | Complete |
-| TIMEOUT-01 | Phase 8 | Pending |
-| TIMEOUT-02 | Phase 8 | Pending |
-| METRIC-01 | Phase 8 | Pending |
+| TIMEOUT-01 | Phase 8 | Complete |
+| TIMEOUT-02 | Phase 8 | Complete |
+| METRIC-01 | Phase 8 | Complete |
 
 **Coverage:**
 
