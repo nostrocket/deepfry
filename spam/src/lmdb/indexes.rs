@@ -66,6 +66,16 @@ pub enum IndexError {
 
     #[error("Sub-DB '{name}' not found in strfry env — is this the right LMDB directory?")]
     SubDbNotFound { name: String },
+
+    /// WR-07: a key in a sub-DB was not the expected width (e.g. an `EventPayload`
+    /// IntegerKey that is not exactly 8 bytes). Signals a structural surprise from the
+    /// externally-owned strfry DB rather than masking it as a zero/empty result.
+    #[error("malformed key in sub-DB '{name}': expected {expected} bytes, got {actual}")]
+    MalformedKey {
+        name: String,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------

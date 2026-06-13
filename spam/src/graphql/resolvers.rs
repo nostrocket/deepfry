@@ -336,20 +336,36 @@ fn read_stats(env: &heed::Env, db_version: u32) -> Result<StatsResult, QueryErro
     let stat = db
         .stat(&rtxn)
         .map_err(|e| QueryError::Lmdb(crate::lmdb::indexes::IndexError::Heed(e)))?;
-    let event_count = stat.entries as i64;
+    // WR-07: saturate the usize → i64 cast rather than wrapping. An entry count above
+    // i64::MAX (practically unreachable) would otherwise become negative.
+    let event_count: i64 = i64::try_from(stat.entries).unwrap_or(i64::MAX);
 
     // max_lev_id: last (largest) IntegerKey in EventPayload.
     // `db.last()` returns the last entry in key order; for IntegerComparator keys,
     // that is the largest native-endian u64 levId (the most recently inserted event).
-    let max_lev_id: i64 = db
+    let max_lev_id: i64 = match db
         .last(&rtxn)
         .map_err(|e| QueryError::Lmdb(crate::lmdb::indexes::IndexError::Heed(e)))?
-        .map(|(k, _)| {
-            // k is a &[u8] of exactly 8 bytes (IntegerComparator key).
-            let arr: [u8; 8] = k.try_into().unwrap_or([0u8; 8]);
-            u64::from_ne_bytes(arr) as i64
-        })
-        .unwrap_or(0);
+    {
+        Some((k, _)) => {
+            // WR-07: a non-8-byte last key is a structural surprise from the externally-owned
+            // strfry DB (treated as a private API). Treat it as an internal error rather than
+            // `unwrap_or([0u8; 8])`, which would report `max_lev_id = 0` — indistinguishable
+            // from an empty DB and masking corruption on a stats/health endpoint.
+            let arr: [u8; 8] = k.try_into().map_err(|_| {
+                QueryError::Lmdb(crate::lmdb::indexes::IndexError::MalformedKey {
+                    name: EVENT_PAYLOAD_DB_NAME.to_string(),
+                    expected: 8,
+                    actual: k.len(),
+                })
+            })?;
+            // WR-07: saturate the u64 → i64 cast (a real levId above i64::MAX, ≈9.2e18,
+            // would otherwise become negative). Practically unreachable but explicit.
+            i64::try_from(u64::from_ne_bytes(arr)).unwrap_or(i64::MAX)
+        }
+        // Empty DB — no entries, max_lev_id is genuinely 0.
+        None => 0,
+    };
 
     // rtxn is dropped here — short-txn invariant satisfied (D-08).
     Ok(StatsResult {
