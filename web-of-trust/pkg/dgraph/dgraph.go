@@ -495,7 +495,20 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // GetStalePubkeys returns up to `limit` pubkeys that need (re)crawling, as a map
 // of pubkey -> kind3CreatedAt. It prioritises the uncrawled frontier (pubkeys
 // never attempted) and only then tops up with previously-attempted pubkeys
-// whose last_attempt is older than olderThanUnix.
+// whose next_attempt timestamp is in the past.
+//
+// Both phases are ordered by descending follower count (PERF-01, D-08).
+// D-09 verification: `orderdesc: count(~follows)` in the `func:` line is NOT
+// supported by Dgraph v25 (rejects "Expected val(). Got count() with order.").
+// The workaround uses a `var` block to compute `count(~follows)` into an
+// aggregation variable `fc`, then uses `val(fc)` as the orderdesc key — this
+// is semantically equivalent and verified working on the production graph.
+// D-10 (stored follower_count predicate) is NOT needed since the val() pattern
+// achieves the same ordering with a computed aggregate.
+//
+// Phase 8 change: the aged phase now keys on next_attempt (D-02) instead of
+// last_attempt. The olderThanUnix parameter is kept for API compatibility but
+// is no longer used by the aged phase — it is deprecated and ignored.
 //
 // IMPORTANT: never-attempted nodes are selected by an explicit `NOT has(last_attempt)`
 // query with an explicit `first:`. Do NOT use `orderasc: last_attempt` to surface
@@ -504,15 +517,19 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // already-crawled accounts and never a single stub).
 func (c *Client) GetStalePubkeys(
 	ctx context.Context,
-	olderThanUnix int64,
+	olderThanUnix int64, // deprecated as of Phase 8; aged phase now uses lt(next_attempt, now)
 	limit int,
 ) (map[string]int64, error) {
 	out := make(map[string]int64, limit)
 
 	// Phase 1: the uncrawled frontier — pubkeys we have never attempted.
+	// Ordered by descending follower count (PERF-01) via val() aggregation (D-09 fix).
 	frontierQuery := fmt.Sprintf(`
 	{
-		frontier(func: has(pubkey), first: %d) @filter(NOT has(last_attempt)) {
+		var(func: has(pubkey)) @filter(NOT has(last_attempt)) {
+			fc as count(~follows)
+		}
+		frontier(func: uid(fc), first: %d, orderdesc: val(fc)) {
 			pubkey
 			kind3CreatedAt
 		}
@@ -521,16 +538,20 @@ func (c *Client) GetStalePubkeys(
 		return nil, err
 	}
 
-	// Phase 2: top up with previously-attempted pubkeys that have aged out.
+	// Phase 2: top up with previously-attempted pubkeys whose next_attempt
+	// is in the past (D-02). Ordered by descending follower count (PERF-01).
 	if remaining := limit - len(out); remaining > 0 {
+		nowUnix := time.Now().Unix()
 		agedQuery := fmt.Sprintf(`
 		{
-			aged(func: has(last_attempt), first: %d, orderasc: last_attempt)
-			@filter(lt(last_attempt, %d)) {
+			var(func: has(next_attempt)) @filter(lt(next_attempt, %d)) {
+				ac as count(~follows)
+			}
+			aged(func: uid(ac), first: %d, orderdesc: val(ac)) {
 				pubkey
 				kind3CreatedAt
 			}
-		}`, remaining, olderThanUnix)
+		}`, nowUnix, remaining)
 		if err := c.collectStale(ctx, agedQuery, "aged", out); err != nil {
 			return nil, err
 		}
@@ -713,6 +734,55 @@ func (c *Client) CountPubkeys(ctx context.Context) (int, error) {
 	}
 
 	return result.Count[0].Count, nil
+}
+
+// CountStalePubkeys returns the total number of pubkeys that are eligible for
+// crawling: frontier (never-attempted) plus aged-eligible (next_attempt in the
+// past). This matches the selection semantics of GetStalePubkeys so that
+// staleRemaining is honest (METRIC-01, D-16).
+//
+// Uses a single read-only transaction with two named count blocks.
+func (c *Client) CountStalePubkeys(ctx context.Context) (int, error) {
+	nowUnix := time.Now().Unix()
+	query := fmt.Sprintf(`
+	{
+		frontier(func: has(pubkey)) @filter(NOT has(last_attempt)) {
+			count(uid)
+		}
+		aged(func: has(next_attempt)) @filter(lt(next_attempt, %d)) {
+			count(uid)
+		}
+	}`, nowUnix)
+
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+
+	resp, err := txn.Query(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("count stale pubkeys failed: %w", err)
+	}
+
+	var result struct {
+		Frontier []struct {
+			Count int `json:"count"`
+		} `json:"frontier"`
+		Aged []struct {
+			Count int `json:"count"`
+		} `json:"aged"`
+	}
+
+	if err := json.Unmarshal(resp.Json, &result); err != nil {
+		return 0, fmt.Errorf("unmarshal stale pubkey count failed: %w", err)
+	}
+
+	var frontierCount, agedCount int
+	if len(result.Frontier) > 0 {
+		frontierCount = result.Frontier[0].Count
+	}
+	if len(result.Aged) > 0 {
+		agedCount = result.Aged[0].Count
+	}
+	return frontierCount + agedCount, nil
 }
 
 // GetKind3CreatedAt returns the kind3CreatedAt unix timestamp for the given
