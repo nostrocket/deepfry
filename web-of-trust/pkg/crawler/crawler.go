@@ -556,24 +556,11 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// CR-02: markRelayDead is called only here (single-threaded dispatcher) and
 			// in ReconnectRelays (main loop) — never from per-relay goroutines. This
 			// makes c.relays mutation single-threaded, eliminating the data race.
-			var filterErr *filterRejectionError
-			var subErr *subscriptionError
-			var transErr *transportError
-			switch {
-			case errors.As(re.err, &filterErr):
-				// WR-01: filter-cap rejections (at-cap and floor-reached) are routed to
-				// classFilterRej (threshold 3), never classTransport (threshold 10).
-				c.markRelayDead(re.url, classFilterRej)
-			case errors.As(re.err, &subErr):
-				c.markRelayDead(re.url, classSubFlap)
-			case errors.As(re.err, &transErr):
-				c.markRelayDead(re.url, classTransport)
-			default:
-				if c.debug {
-					log.Printf("Relay %s: unclassified error: %v", re.url, re.err)
-				}
-				c.markRelayDead(re.url, classTransport) // treat unknown as transport
+			class := classifyRelayError(re.err)
+			if class == classTransport && isUnclassified(re.err) && c.debug {
+				log.Printf("Relay %s: unclassified error: %v", re.url, re.err)
 			}
+			c.markRelayDead(re.url, class)
 		}
 	}
 }
@@ -677,38 +664,7 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			// 500ms of Subscribe, treat as a filter-rejection and halve the cap.
 			if time.Since(subscribeStart) < 500*time.Millisecond &&
 				(strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "failed to write")) {
-				old := rs.filterCap.Load()
-				if old > 10 {
-					newVal := old / 2
-					if newVal < 10 {
-						newVal = 10
-					}
-					rs.filterCap.Store(newVal)
-					rs.successStreak.Store(0)
-					rs.probing.Store(false)
-					if isProbing {
-						// D-11: probe rejection — cap reverted, streak reset, no ejection count.
-						// Returns nil so this relay stays alive; the probe exemption means a probe
-						// rejection is not a failure event and does not count toward ejection.
-						// Remaining authors are picked up next cycle via staleness.
-						log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
-						return nil
-					}
-					// CR-01: at-cap rejection — return a filterRejectionError so the single-threaded
-					// FetchAndUpdateFollows dispatcher classifies and marks the relay dead via
-					// classFilterRej (threshold 3). Do NOT continue the loop — the connection is
-					// closed and must not be reused. Remaining authors are picked up next cycle.
-					// IN-04/LOG-03: demote the cap-halving detail to debug; the dead-state log line
-					// is emitted by the dispatcher, not here.
-					if c.debug {
-						log.Printf("Relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)
-					}
-					return &filterRejectionError{err: fmt.Errorf("relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)}
-				}
-				// filterCap is already at floor=10 — return filterRejectionError (not transportError)
-				// so the dispatcher routes to classFilterRej (threshold 3), not classTransport (threshold 10).
-				// WR-01: floor-reached must never return transportError.
-				return &filterRejectionError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
+				return c.handleCapRejection(rs, relayURL, batchCap, isProbing)
 			}
 			// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
 			cleanErr := cleanSubscribeError(err)
@@ -843,6 +799,71 @@ func cleanSubscribeError(err error) string {
 		}
 	}
 	return msg
+}
+
+// handleCapRejection processes a connection-drop-on-REQ that was attributed as a
+// filter-cap rejection (occurred within 500ms of Subscribe, "not connected" or
+// "failed to write" error text). It halves the cap, resets the streak, clears the
+// probing flag, and returns:
+//   - nil if isProbing (D-11: probe rejection is not a failure event)
+//   - *filterRejectionError if !isProbing and cap was above floor (at-cap rejection)
+//   - *filterRejectionError if cap was already at floor (WR-01: floor-reached must
+//     not return transportError)
+//
+// This is the testable seam for Test D (WR-05): tests call handleCapRejection
+// directly with a constructed relayState to assert the returned error type and the
+// relay's post-rejection state without needing a live relay Subscribe call.
+func (c *Crawler) handleCapRejection(rs *relayState, relayURL string, batchCap int, isProbing bool) error {
+	old := rs.filterCap.Load()
+	if old > 10 {
+		newVal := old / 2
+		if newVal < 10 {
+			newVal = 10
+		}
+		rs.filterCap.Store(newVal)
+		rs.successStreak.Store(0)
+		rs.probing.Store(false)
+		if isProbing {
+			log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
+			return nil
+		}
+		if c.debug {
+			log.Printf("Relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)
+		}
+		return &filterRejectionError{err: fmt.Errorf("relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)}
+	}
+	// filterCap is already at floor=10.
+	return &filterRejectionError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
+}
+
+// classifyRelayError maps a queryRelay error to the appropriate failureClass for
+// markRelayDead. It drives the FetchAndUpdateFollows dispatcher and is the seam
+// exercised by Task 2 tests (WR-05 — tests drive the real classification logic,
+// not an inline copy).
+//
+// Priority: filterRejectionError → classFilterRej (threshold 3);
+//            subscriptionError   → classSubFlap   (threshold 5);
+//            transportError      → classTransport  (threshold 10);
+//            unknown             → classTransport  (conservative fallback, D-07).
+func classifyRelayError(err error) failureClass {
+	var filterErr *filterRejectionError
+	if errors.As(err, &filterErr) {
+		return classFilterRej
+	}
+	var subErr *subscriptionError
+	if errors.As(err, &subErr) {
+		return classSubFlap
+	}
+	return classTransport // transportError or unknown
+}
+
+// isUnclassified returns true when the error is not one of the three typed relay
+// error kinds — used to gate the debug log for unknown errors in the dispatcher.
+func isUnclassified(err error) bool {
+	var fe *filterRejectionError
+	var se *subscriptionError
+	var te *transportError
+	return !errors.As(err, &fe) && !errors.As(err, &se) && !errors.As(err, &te)
 }
 
 // handleFilterNotice inspects a relay NOTICE message and halves the relay's

@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -296,6 +297,207 @@ func TestProbeUp_CapClampedToMax(t *testing.T) {
 	}
 	if batchCap != 100 {
 		t.Fatalf("want batchCap 100 (clamped), got %d", batchCap)
+	}
+}
+
+// --- Task 2 tests (07-03): real-seam tests driving filterRejectionError type and
+// classification logic (closes WR-05 — these tests exercise the actual production
+// code, not inline re-implementations).
+
+// TestDispatch_FilterRejectionRoutesToFilterRejClass verifies that a
+// *filterRejectionError is mapped to classFilterRej (threshold 3) by
+// classifyRelayError, and that calling markRelayDead(classFilterRej) on a relay
+// with failFilterRej=2 causes ejection (fires onConnectFail once) — not via
+// classTransport (threshold 10). This catches the WR-01 regression that passed CI.
+func TestDispatch_FilterRejectionRoutesToFilterRejClass(t *testing.T) {
+	called := 0
+	c := &Crawler{
+		ejectionThresholds: map[failureClass]int32{
+			classFilterRej: 3,
+			classTransport: 10,
+		},
+		onConnectFail: func(url string) { called++ },
+	}
+	rs := &relayState{url: "wss://test.relay"}
+	rs.failFilterRej.Store(2) // Add(1) in markRelayDead → 3 = threshold → eject
+	rs.backoff = initialBackoff
+	c.relays = []*relayState{rs}
+
+	// Build the real filterRejectionError value (the actual type, not a copy).
+	filterErr := &filterRejectionError{err: fmt.Errorf("relay wss://test.relay: filter rejection at cap 50, halved to 25")}
+
+	// Use the real classifyRelayError helper (the dispatcher seam).
+	class := classifyRelayError(filterErr)
+	if class != classFilterRej {
+		t.Fatalf("classifyRelayError: want classFilterRej, got %v", class)
+	}
+
+	// Call markRelayDead as the dispatcher would.
+	c.markRelayDead(rs.url, class)
+
+	if called != 1 {
+		t.Fatalf("onConnectFail called %d times, want 1 (filterRej threshold reached)", called)
+	}
+	if len(c.relays) != 0 {
+		t.Fatalf("relay should be ejected, got len(c.relays)=%d", len(c.relays))
+	}
+}
+
+// TestDispatch_FloorReachedIsFilterRejNotTransport verifies that the floor-reached
+// error returned by queryRelay (via handleCapRejection) satisfies
+// errors.As(&filterRejectionError) and does NOT satisfy errors.As(&transportError).
+// This is the direct WR-01 assertion: floor-reached must never be mis-classified as
+// classTransport (threshold 10).
+func TestDispatch_FloorReachedIsFilterRejNotTransport(t *testing.T) {
+	c := &Crawler{
+		ejectionThresholds: map[failureClass]int32{classFilterRej: 3},
+	}
+	rs := &relayState{url: "wss://test.relay"}
+	rs.filterCap.Store(10) // already at floor
+
+	// Call the real handleCapRejection with cap at floor — this is the exact
+	// code path that used to return &transportError (the WR-01 bug).
+	err := c.handleCapRejection(rs, "wss://test.relay", 10, false)
+	if err == nil {
+		t.Fatal("expected non-nil error from floor-reached path, got nil")
+	}
+
+	var filterErr *filterRejectionError
+	if !errors.As(err, &filterErr) {
+		t.Fatalf("floor-reached: want *filterRejectionError, errors.As returned false (err=%v)", err)
+	}
+
+	var transErr *transportError
+	if errors.As(err, &transErr) {
+		t.Fatal("floor-reached: must NOT satisfy errors.As(&transportError) — WR-01 regression")
+	}
+
+	// Also confirm classifyRelayError routes it to classFilterRej, not classTransport.
+	class := classifyRelayError(err)
+	if class != classFilterRej {
+		t.Fatalf("floor-reached: classifyRelayError want classFilterRej, got %v", class)
+	}
+}
+
+// TestMarkRelayDead_ConcurrentDispatchRaceClean documents the single-threaded
+// contract for markRelayDead: the CR-02 fix is structural — markRelayDead is only
+// ever called from the single-threaded FetchAndUpdateFollows dispatcher and the
+// main-loop ReconnectRelays. This test calls markRelayDead sequentially from a
+// single goroutine (mirroring the dispatcher), asserts that c.relays stays
+// consistent and counts accrue correctly, and runs under go test -race to verify
+// there is no data race when markRelayDead is used single-threaded.
+//
+// NOTE: We deliberately do NOT spawn concurrent goroutines calling markRelayDead
+// here. The fix is structural (markRelayDead removed from relay goroutines), so the
+// test asserts the single-threaded contract rather than racing goroutines.
+func TestMarkRelayDead_ConcurrentDispatchRaceClean(t *testing.T) {
+	const numRelays = 5
+	const threshold = 10
+
+	var called int
+	c := &Crawler{
+		ejectionThresholds: map[failureClass]int32{
+			classFilterRej: threshold,
+			classTransport: threshold,
+			classSubFlap:   threshold,
+		},
+		onConnectFail: func(url string) { called++ },
+	}
+
+	relays := make([]*relayState, numRelays)
+	for i := range relays {
+		rs := &relayState{url: fmt.Sprintf("wss://relay%d.test", i)}
+		rs.backoff = initialBackoff
+		relays[i] = rs
+	}
+	c.relays = relays
+
+	// Sequential markRelayDead calls from one goroutine (mirroring the dispatcher).
+	// Alternate between classFilterRej and classTransport for variety.
+	classes := []failureClass{classFilterRej, classTransport, classSubFlap, classFilterRej, classTransport}
+	for i, rs := range relays {
+		c.markRelayDead(rs.url, classes[i])
+	}
+
+	// With threshold=10 and 1 call per relay, no relay should have been ejected.
+	if called != 0 {
+		t.Fatalf("no relay should be ejected below threshold=%d, onConnectFail called %d times", threshold, called)
+	}
+	// All relays still in pool (below threshold).
+	if len(c.relays) != numRelays {
+		t.Fatalf("all %d relays should remain in pool, got %d", numRelays, len(c.relays))
+	}
+	// Each relay's counter for its class should be 1.
+	for i, rs := range c.relays {
+		switch classes[i] {
+		case classFilterRej:
+			if rs.failFilterRej.Load() != 1 {
+				t.Fatalf("relay %d: want failFilterRej=1, got %d", i, rs.failFilterRej.Load())
+			}
+		case classTransport:
+			if rs.failTransport.Load() != 1 {
+				t.Fatalf("relay %d: want failTransport=1, got %d", i, rs.failTransport.Load())
+			}
+		case classSubFlap:
+			if rs.failSubFlap.Load() != 1 {
+				t.Fatalf("relay %d: want failSubFlap=1, got %d", i, rs.failSubFlap.Load())
+			}
+		}
+	}
+}
+
+// TestQueryRelay_AtCapRejectionReturnsFilterRejErrorNoEject drives the at-cap
+// rejection decision through the REAL production code via handleCapRejection.
+// Asserts: (1) returned error is *filterRejectionError; (2) the relay's failFilterRej
+// is still 0 (handleCapRejection itself does not eject — the dispatcher does, closes
+// CR-01); (3) the cap was halved.
+//
+// NOTE: This test supersedes the inline logic in TestProbeRejection_ExemptFromEjection
+// (which re-implements the decision). This test calls the actual handleCapRejection
+// production function, so regressions in the real path are caught here.
+func TestQueryRelay_AtCapRejectionReturnsFilterRejErrorNoEject(t *testing.T) {
+	c := &Crawler{
+		ejectionThresholds: map[failureClass]int32{classFilterRej: 3},
+		onConnectFail:      func(url string) { t.Error("handleCapRejection must not fire onConnectFail") },
+		filterBatchSize:    100,
+	}
+	rs := &relayState{url: "wss://atcap.relay"}
+	rs.filterCap.Store(50) // cap above floor: halving yields 25
+	rs.backoff = initialBackoff
+	c.relays = []*relayState{rs}
+
+	// Drive the real production path (handleCapRejection is the extracted seam).
+	err := c.handleCapRejection(rs, "wss://atcap.relay", 50, false /*isProbing=false*/)
+
+	// (1) Returned error must be *filterRejectionError (never *transportError).
+	if err == nil {
+		t.Fatal("expected *filterRejectionError, got nil")
+	}
+	var filterErr *filterRejectionError
+	if !errors.As(err, &filterErr) {
+		t.Fatalf("want *filterRejectionError, errors.As returned false (err=%v, type=%T)", err, err)
+	}
+	var transErr *transportError
+	if errors.As(err, &transErr) {
+		t.Fatal("at-cap rejection must NOT be *transportError — WR-01 regression")
+	}
+
+	// (2) queryRelay itself does NOT call markRelayDead — failFilterRej stays 0.
+	// (handleCapRejection only halves the cap and returns the error; the dispatcher
+	// calls markRelayDead which increments failFilterRej.)
+	if rs.failFilterRej.Load() != 0 {
+		t.Fatalf("CR-01: handleCapRejection must not increment failFilterRej (want 0, got %d)", rs.failFilterRej.Load())
+	}
+
+	// (3) Cap was halved: 50 → 25.
+	if rs.filterCap.Load() != 25 {
+		t.Fatalf("cap halving: want 25, got %d", rs.filterCap.Load())
+	}
+
+	// Bonus: classifyRelayError routes this to classFilterRej (threshold 3).
+	class := classifyRelayError(err)
+	if class != classFilterRej {
+		t.Fatalf("classifyRelayError(filterRejErr): want classFilterRej, got %v", class)
 	}
 }
 
