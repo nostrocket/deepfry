@@ -77,6 +77,8 @@ func main() {
 		FilterBatchSize: cfg.RelayFilterBatchSize,
 		// Phase 7: per-class ejection thresholds from config (D-06).
 		EjectionThresholds: cfg.RelayEjectionThresholds,
+		// Phase 8 TIMEOUT-02 (D-12): EOSE quorum fraction threaded from config.
+		RelayEOSEQuorum: cfg.RelayEOSEQuorum,
 		OnConnectFail: func(url string) {
 			// markRelayDead already emits the single ejection log line with class/count/threshold (LOG-03/D-15).
 			if err := config.EjectRelayURL(url); err != nil {
@@ -132,14 +134,20 @@ mainLoop:
 			break
 		}
 
-		// The stale-pubkey query now bounds the batch itself (cfg.RelayFilterBatchSize).
-		totalStale := len(pubkeys)
+		// METRIC-01 (D-15/D-16/D-17): query the honest stale count every batch.
+		// CountStalePubkeys counts frontier + aged-eligible, matching GetStalePubkeys
+		// selection semantics, so staleRemaining is never the always-zero (totalStale - batch).
+		totalStale, err := dgraphClient.CountStalePubkeys(ctx)
+		if err != nil {
+			log.Printf("Error counting stale pubkeys: %v", err)
+			break
+		}
 
 		// Reconnect any dead relays before processing
 		crawler.ReconnectRelays(ctx)
 
-		// Process the batch
-		hadEvents, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
+		// Process the batch; hitSet contains pubkeys that returned a kind-3 event.
+		hitSet, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("Interrupted while fetching follows: %v", err)
@@ -151,21 +159,27 @@ mainLoop:
 
 		// Mark every queried pubkey as attempted so un-fetchable ones age out of the
 		// frontier instead of being re-selected every cycle.
+		// D-05: pass the real hit-set so MarkAttempted applies hit vs miss backoff stamping.
 		batchKeys := make([]string, 0, len(pubkeys))
 		for pk := range pubkeys {
 			batchKeys = append(batchKeys, pk)
 		}
-		// TODO(Plan-02): replace empty hits map with actual hitSet from FetchAndUpdateFollows
-		// once that function returns (map[string]struct{}, error) instead of (int, error).
-		// DefaultBackoffParams() will also be replaced with config-driven params from cfg.MissBackoff.
-		emptyHits := map[string]struct{}{}
-		if err := dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), emptyHits, dgraph.DefaultBackoffParams()); err != nil {
+		// Construct BackoffParams from config (cfg.MissBackoff) so PERF-02 intervals
+		// are runtime-tunable without rebuilding (D-07). pkg/dgraph never imports
+		// pkg/config to avoid import cycles; params are threaded here as a value struct.
+		backoffParams := dgraph.BackoffParams{
+			Base:              cfg.MissBackoff.Base,
+			Ratio:             cfg.MissBackoff.Ratio,
+			Cap:               cfg.MissBackoff.Cap,
+			HitRefreshCadence: cfg.MissBackoff.HitRefreshCadence,
+		}
+		if err := dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), hitSet, backoffParams); err != nil {
 			log.Printf("Warning: failed to mark batch attempted: %v", err)
 		}
 
 		staleRemaining := totalStale - len(pubkeys)
 		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
-			len(pubkeys), hadEvents, staleRemaining, totalPubkeys)
+			len(pubkeys), len(hitSet), staleRemaining, totalPubkeys)
 	}
 
 	// Generate final report
