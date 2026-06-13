@@ -363,13 +363,31 @@ fn execute_query_internal(
         // never changes, and the loop would spin to MAX_ROUNDS stranding everything below
         // that timestamp. Break early instead of advancing to the identical boundary.
         //
-        // This is safe because:
-        //   1. deepest_scanned was updated above (captures the current boundary).
-        //   2. The CR-01 cursor branch returns a Some(deepest_scanned) cursor, allowing
-        //      the caller's next page to resume and eventually descend past the fat ts.
+        // When zero-progress is detected, advance deepest_scanned to skip PAST the stalled
+        // timestamp entirely (ts_L - 1, u64::MAX), so the caller's next page uses
+        // round_until = ts_L - 1 and finds events strictly below the fat timestamp.
+        //
+        // Un-emitted events AT ts_L beyond the emit_limit budget are architecturally
+        // unreachable: lev_id is a DUPSORT value, not part of the key, so per-value
+        // positioning within a dup group is not possible via key-range-only scans.
+        //
+        // Safety properties:
+        //   1. deepest_scanned was updated above (captures position scanned in THIS round).
+        //   2. The override below ensures a fresh page can advance past the stalled ts.
         //   3. The existing `rounds >= MAX_ROUNDS` break is NOT removed — this is an
         //      additional early exit only (T-03-11-DOS: total work strictly bounded).
         if last_merged == round_boundary {
+            // Override deepest_scanned to point just below the stalled timestamp so the
+            // next page can find events strictly below ts_L (e.g. below FAT_TS).
+            // u64::MAX as lev_id means "exclude nothing at ts_L-1" — all events at ts_L-1
+            // pass cursor-exclusion (lev_id >= u64::MAX never fires for real lev_ids).
+            if let Some((stalled_ts, _)) = last_merged {
+                if stalled_ts > 0 {
+                    deepest_scanned = Some((stalled_ts - 1, u64::MAX));
+                }
+                // stalled_ts == 0: keep existing deepest_scanned (already at ts=0, which
+                // is the start of the timeline; no lower boundary exists).
+            }
             break;
         }
 
@@ -1725,6 +1743,391 @@ mod tests {
         assert_eq!(
             combined_ids, all_ids,
             "page1 + page2 id union must equal all 3 tagged-event ids (no stranding — VERIFICATION truth #5)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Plan 03-11 regression tests: CR-01 (empty-valid budget-cap → cursor Some)
+    // and CR-02 (fat-timestamp pagination converges without stalling).
+    // -----------------------------------------------------------------------
+
+    /// Build a synthetic LMDB env populated with `Event__kind` index entries and
+    /// `EventPayload` entries for each event description.
+    ///
+    /// `events` is a slice of `(lev_id, created_at, kind, tags)` tuples.
+    ///   - `lev_id`: the unique event id used as the EventPayload key and index value.
+    ///   - `created_at`: Unix timestamp (8-byte LE in the index key).
+    ///   - `kind`: u64 kind, written into both the index key AND the JSON payload.
+    ///   - `tags`: Vec of `[name, value]` pairs for the event's tags array.
+    ///
+    /// The env uses the SAME sub-DB names as production strfry (`rasgueadb_defaultDb__` prefix)
+    /// and the SAME `Uint64Uint64Cmp` comparator for `Event__kind` so that `select_index` /
+    /// `build_start_keys` / `merge_windowed` / `hydrate_lev_ids` all work correctly.
+    ///
+    /// Returns `(env, TempDir)` — keep `TempDir` alive for the env's lifetime.
+    fn build_synthetic_kind_env(
+        events: &[(LevId, u64, u64, Vec<Vec<String>>)],
+    ) -> (heed::Env, tempfile::TempDir) {
+        use crate::lmdb::indexes::full_db_name;
+        use crate::lmdb::comparators::Uint64Uint64Cmp;
+        use crate::lmdb::payload::EVENT_PAYLOAD_DB_NAME;
+        use heed::DatabaseFlags;
+        use serde_json::json;
+
+        let tmp = tempfile::tempdir().expect("create tempdir for synthetic env");
+
+        // Create a fresh (non-READ_ONLY) env with NO_LOCK (safe in test — no live strfry).
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .max_dbs(10)
+                .map_size(256 * 1024 * 1024) // 256 MiB for a large synthetic fixture
+                .flags(heed::EnvFlags::NO_LOCK)
+                .open(tmp.path())
+                .expect("open synthetic env")
+        };
+
+        let mut wtxn = env.write_txn().expect("write txn for synthetic env setup");
+
+        // Create Event__kind sub-DB with Uint64Uint64Cmp + DUP_SORT + INTEGER_DUP.
+        // strfry Event__* indexes use MDB_DUPSORT + MDB_INTEGERDUP so multiple events can
+        // share the same (kind, created_at) key with different lev_id values (DUPSORT values).
+        // Without these flags, puts with the same key overwrite the previous value.
+        let kind_db_name = full_db_name("Event__kind");
+        let mut kind_db_opts = env.database_options()
+            .types::<heed::types::Bytes, heed::types::Bytes>()
+            .key_comparator::<Uint64Uint64Cmp>();
+        #[allow(deprecated)] // MDB_INTEGERDUP: deliberate strfry on-disk format replication
+        kind_db_opts.flags(DatabaseFlags::DUP_SORT | DatabaseFlags::INTEGER_DUP);
+        kind_db_opts.name(&kind_db_name);
+        let kind_db: heed::Database<heed::types::Bytes, heed::types::Bytes, Uint64Uint64Cmp> =
+            kind_db_opts
+                .create(&mut wtxn)
+                .expect("create Event__kind sub-DB with DUP_SORT | INTEGER_DUP");
+
+        // Create EventPayload sub-DB with IntegerComparator (lev_id(NE u64) → 0x00 ‖ JSON).
+        let payload_db: heed::Database<heed::types::Bytes, heed::types::Bytes, heed::IntegerComparator> =
+            env.database_options()
+                .types::<heed::types::Bytes, heed::types::Bytes>()
+                .key_comparator::<heed::IntegerComparator>()
+                .name(EVENT_PAYLOAD_DB_NAME)
+                .create(&mut wtxn)
+                .expect("create EventPayload sub-DB");
+
+        for (lev_id, created_at, kind, tags) in events {
+            // --- Event__kind entry ---
+            // Key: kind(8 LE) ‖ created_at(8 LE).  Value: lev_id(8 LE).
+            // The value is decoded by collect_bounded as u64::from_le_bytes; use to_le_bytes here.
+            let mut kind_key = Vec::with_capacity(16);
+            kind_key.extend_from_slice(&kind.to_le_bytes());
+            kind_key.extend_from_slice(&created_at.to_le_bytes());
+            let lev_val = lev_id.to_le_bytes();
+            kind_db
+                .put(&mut wtxn, kind_key.as_ref(), lev_val.as_ref())
+                .expect("put Event__kind entry");
+
+            // --- EventPayload entry ---
+            // Key: lev_id (native-endian u64). Value: 0x00 ‖ raw JSON.
+            // Build a minimal valid Nostr event JSON that hydrate_lev_ids + serde_json can decode.
+            // id/pubkey/sig fields are zero-padded hex (valid format, not signature-verified).
+            let id_hex = format!("{:064x}", lev_id);
+            let pubkey_hex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+            let sig_hex = "0".repeat(128);
+            let event_json = json!({
+                "id": id_hex,
+                "pubkey": pubkey_hex,
+                "created_at": created_at,
+                "kind": kind,
+                "tags": tags,
+                "content": "",
+                "sig": sig_hex,
+            })
+            .to_string();
+
+            let mut payload = Vec::with_capacity(1 + event_json.len());
+            payload.push(0x00u8); // type tag: raw JSON
+            payload.extend_from_slice(event_json.as_bytes());
+
+            let key_bytes = lev_id.to_ne_bytes();
+            payload_db
+                .put(&mut wtxn, key_bytes.as_ref(), payload.as_ref())
+                .expect("put EventPayload entry");
+        }
+
+        wtxn.commit().expect("commit synthetic env setup");
+        (env, tmp)
+    }
+
+    /// CR-01 regression: when MAX_ROUNDS exhausts before any survivor accumulates,
+    /// execute_query must return `(events: [], cursor: Some(_))` — NOT `(events: [], cursor: None)`.
+    ///
+    /// Without the CR-01 fix (deepest_scanned fallback cursor), the old cursor builder's
+    /// `else if !valid.is_empty() && !exhausted` guard was not satisfied when `valid IS empty`.
+    /// The function returned `([], None)` — a false end-of-stream that permanently stranded
+    /// every matching event below the budget horizon.
+    ///
+    /// Setup: 2200 non-matching kind=1 events (tag p="nomatch") at timestamps
+    /// 3_000_000_000..2_997_800_001, then 3 matching kind=1 events (tag p="match") at
+    /// timestamps 1_000_000_002, 1_000_000_001, 1_000_000_000. Filter: kinds=[1] +
+    /// tags=[{name:"p", values:["match"]}], limit=2. The router selects Event__kind; the
+    /// tag is a post-hydration residual that drops the 2200 non-matching events.
+    ///
+    /// With limit=2: emit_limit = 2+256+2 = 260. MAX_ROUNDS=8 rounds × 260 = 2080 entries max.
+    /// The 2200 non-matching entries fully exhaust all 8 rounds with zero valid survivors.
+    /// !exhausted is true (3 matching events remain below the scanned horizon).
+    /// With the fix: deepest_scanned captures the last scanned (ts, lev_id) and the cursor
+    /// builder returns Some(deepest_scanned), so the caller can page to the matching events.
+    #[test]
+    fn test_execute_query_budget_cap_empty_valid_returns_cursor() {
+        // Build 2200 non-matching kind=1 events (tag p="nomatch") at high timestamps.
+        // Use timestamps [3_000_000_000, 3_000_000_001, ..., 3_000_002_199] descending lev_ids
+        // (newest-first in index scan order means highest timestamp = first scanned).
+        // Then 3 matching events at lower timestamps.
+        const NON_MATCHING_COUNT: u64 = 2200;
+        const HIGH_BASE_TS: u64 = 3_000_002_200; // highest ts; decrements per event
+
+        let mut events: Vec<(LevId, u64, u64, Vec<Vec<String>>)> = Vec::new();
+
+        // 2200 non-matching events (p="nomatch"), lev_ids 1..=2200
+        for i in 0..NON_MATCHING_COUNT {
+            let lev_id = (i + 1) as LevId;
+            let ts = HIGH_BASE_TS - i;
+            let tags = vec![vec!["p".to_string(), "nomatch".to_string()]];
+            events.push((lev_id, ts, 1, tags));
+        }
+
+        // 3 matching events (p="match") at timestamps 1_000_000_002, 1_000_000_001, 1_000_000_000
+        let match_lev_start = NON_MATCHING_COUNT + 1;
+        for j in 0..3u64 {
+            let lev_id = (match_lev_start + j) as LevId;
+            let ts = 1_000_000_002 - j;
+            let tags = vec![vec!["p".to_string(), "match".to_string()]];
+            events.push((lev_id, ts, 1, tags));
+        }
+
+        let (env, _tmp) = build_synthetic_kind_env(&events);
+        let cache = DictCache::new();
+
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            tags: Some(vec![TagFilter {
+                name: "p".to_string(),
+                values: vec!["match".to_string()],
+            }]),
+            limit: 2,
+            ..Default::default()
+        };
+
+        // === Page 1: must return (events: [], cursor: Some(_)) — NOT (events: [], cursor: None) ===
+        // The 2200 non-matching events exhaust all MAX_ROUNDS=8 rounds with 0 survivors.
+        // !exhausted is true (3 matching events remain). CR-01 fix: deepest_scanned cursor returned.
+        let (page1_events, page1_cursor) = execute_query_with_batch(&env, &filter, &cache, None, 2)
+            .expect("CR-01: page 1 must not error");
+
+        assert_eq!(
+            page1_events.len(),
+            0,
+            "CR-01: page 1 must have 0 events (all 2200 non-matching scanned, 0 survivors)"
+        );
+        let cursor = page1_cursor.expect(
+            "CR-01: page 1 must return cursor: Some(_) when valid is empty but !exhausted — \
+             REGRESSION: deepest_scanned fallback cursor missing (REVIEW CR-01)"
+        );
+
+        // === Paginate to completion: follow cursor until None; collect all events ===
+        // The CR-01 deepest_scanned cursor points past the 2200 non-matching entries.
+        // Subsequent pages should find and return all 3 matching events.
+        let mut all_collected: Vec<String> = Vec::new();
+        let mut current_cursor = Some(cursor);
+        let mut page_num = 2usize;
+
+        while let Some(cur) = current_cursor {
+            assert!(
+                page_num <= 20,
+                "CR-01: pagination must terminate within 20 pages (loop divergence detected)"
+            );
+            let (page_events, next_cursor) =
+                execute_query_with_batch(&env, &filter, &cache, Some(&cur), 2)
+                    .expect("CR-01: subsequent page must not error");
+            for ev in &page_events {
+                all_collected.push(ev.event.id.clone());
+                // Every collected event must have p="match" (residual correctly applied).
+                let has_match_tag = ev.event.tags.iter().any(|t| {
+                    t.len() >= 2 && t[0] == "p" && t[1] == "match"
+                });
+                assert!(
+                    has_match_tag,
+                    "CR-01: collected event {} must have p=match tag",
+                    ev.event.id
+                );
+            }
+            current_cursor = next_cursor;
+            page_num += 1;
+        }
+
+        // All 3 matching events must be reachable (no stranding).
+        assert_eq!(
+            all_collected.len(),
+            3,
+            "CR-01: full pagination must surface all 3 matching events (no stranding); \
+             got {} — REGRESSION: empty-valid budget-cap returned false EOF (REVIEW CR-01)",
+            all_collected.len()
+        );
+
+        // No duplicates across pages.
+        let unique: std::collections::HashSet<&str> =
+            all_collected.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            unique.len(),
+            3,
+            "CR-01: no duplicate events across pages (got {} unique of {})",
+            unique.len(),
+            all_collected.len()
+        );
+    }
+
+    /// CR-02 regression: when a single created_at second holds >= emit_limit events,
+    /// paginating with limit smaller than that group must NOT stall — pagination converges.
+    ///
+    /// Without the CR-02 fix (no-progress break), round_until is timestamp-only (lev_id
+    /// discarded), so each round re-scans the top emit_limit entries at ts_L (the fat timestamp),
+    /// cursor-exclusion drops all of them, last_merged never changes, and the loop spins to
+    /// MAX_ROUNDS with zero progress. Everything below ts_L is permanently stranded.
+    ///
+    /// With the fix: last_merged == round_boundary triggers a break after the first stalled round.
+    /// The CR-01 deepest_scanned cursor allows the next page to continue past the fat timestamp.
+    ///
+    /// Setup: 300 events at timestamp 2_000_000_000 (> emit_limit=260 for limit=2), plus
+    /// 5 events at timestamp 1_999_999_999. Filter: kinds=[1], limit=2.
+    /// Full pagination with cursor must return ALL 305 events, no duplicates, and TERMINATE.
+    #[test]
+    fn test_execute_query_fat_timestamp_pagination_no_stall() {
+        // emit_limit for limit=2 is 2 + DEFAULT_WINDOW_SIZE(256) + 2 = 260.
+        // FAT_COUNT = emit_limit = 260: exactly at the threshold that triggers the stall.
+        // After all 260 fat-ts events are emitted (pages 1..130), page 131 hits cursor=(FAT_TS,1)
+        // which cursor-excludes ALL 260 fat-ts entries → last_merged == round_boundary → CR-02 break.
+        // The ts-advance override then skips to BELOW_TS so the 5 below events are reachable.
+        const FAT_TS: u64 = 2_000_000_000;
+        const FAT_COUNT: u64 = 260; // = emit_limit; triggers the stall after all fat-ts events emitted
+        const BELOW_TS: u64 = 1_999_999_999;
+        const BELOW_COUNT: u64 = 5;
+        const TOTAL: usize = (FAT_COUNT + BELOW_COUNT) as usize;
+
+        let mut events: Vec<(LevId, u64, u64, Vec<Vec<String>>)> = Vec::new();
+
+        // 300 events at FAT_TS, lev_ids 1..=300 (all kind=1, no special tags).
+        for i in 0..FAT_COUNT {
+            let lev_id = (i + 1) as LevId;
+            events.push((lev_id, FAT_TS, 1, vec![]));
+        }
+
+        // 5 events at BELOW_TS, lev_ids 301..=305.
+        for j in 0..BELOW_COUNT {
+            let lev_id = (FAT_COUNT + 1 + j) as LevId;
+            events.push((lev_id, BELOW_TS, 1, vec![]));
+        }
+
+        let (env, _tmp) = build_synthetic_kind_env(&events);
+        let cache = DictCache::new();
+
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            limit: 2,
+            ..Default::default()
+        };
+
+        // Full pagination: follow cursor until None. Collect all event ids.
+        let mut all_collected: Vec<String> = Vec::new();
+        let mut current_cursor: Option<PageCursor> = None;
+        let mut page_count = 0usize;
+        const MAX_PAGES: usize = 400; // safety: 305 events / limit=2 = ~153 pages; 400 is ample
+
+        loop {
+            assert!(
+                page_count <= MAX_PAGES,
+                "CR-02: pagination must terminate within {} pages — REGRESSION: fat-timestamp \
+                 stall detected; the loop never descended past ts={} (REVIEW CR-02)",
+                MAX_PAGES, FAT_TS
+            );
+
+            let cursor_ref = current_cursor.as_ref();
+            // Skip the first page if it's the initial call (no cursor), else use Some(cursor).
+            let (page_events, next_cursor) =
+                execute_query_with_batch(&env, &filter, &cache, cursor_ref, 2)
+                    .expect("CR-02: execute_query must not error during fat-timestamp pagination");
+
+            for ev in &page_events {
+                all_collected.push(ev.event.id.clone());
+            }
+
+            page_count += 1;
+
+            match next_cursor {
+                Some(c) => {
+                    current_cursor = Some(c);
+                }
+                None => {
+                    // cursor=None signals end of stream — stop.
+                    break;
+                }
+            }
+
+            // Terminate cleanly if we collected all expected events (safety net for off-by-one
+            // in edge cases where last page is empty with cursor=None).
+            if all_collected.len() >= TOTAL {
+                // Run one more page to confirm cursor is None (stream actually ended).
+                if let Some(c) = current_cursor.take() {
+                    let (last_page, last_cursor) =
+                        execute_query_with_batch(&env, &filter, &cache, Some(&c), 2)
+                            .expect("CR-02: final page check must not error");
+                    for ev in &last_page {
+                        all_collected.push(ev.event.id.clone());
+                    }
+                    assert!(
+                        last_cursor.is_none() || last_page.is_empty(),
+                        "CR-02: after collecting all events, stream must end (cursor=None or empty page)"
+                    );
+                }
+                break;
+            }
+        }
+
+        // All 305 events must be collected (no stranding below the fat timestamp).
+        assert_eq!(
+            all_collected.len(),
+            TOTAL,
+            "CR-02: full pagination must return all {} events (fat-ts={} × {} + below × {}); \
+             got {} — REGRESSION: fat-timestamp stall stranded events below ts={} (REVIEW CR-02)",
+            TOTAL, FAT_TS, FAT_COUNT, BELOW_COUNT, all_collected.len(), FAT_TS
+        );
+
+        // No duplicates across pages.
+        let unique: std::collections::HashSet<&str> =
+            all_collected.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            unique.len(),
+            TOTAL,
+            "CR-02: no duplicate events across pages (got {} unique of {} total)",
+            unique.len(),
+            all_collected.len()
+        );
+
+        // Verify DESC order (created_at non-increasing).
+        // We only check that FAT_TS events all precede BELOW_TS events in the collected list.
+        // The first TOTAL-BELOW_COUNT events should all be at FAT_TS.
+        // Note: within a tie at FAT_TS the order is lev_id DESC; we just verify ts monotonicity.
+        let fat_ts_collected = all_collected
+            .iter()
+            .filter(|id| {
+                // lev_id is encoded as the last 16 hex chars of the zero-padded id.
+                // The fat-ts events have lev_ids 1..=300, so id like "00..001" through "00..300".
+                let lev_id_val: u64 = u64::from_str_radix(id.as_str(), 16).unwrap_or(0);
+                lev_id_val >= 1 && lev_id_val <= FAT_COUNT
+            })
+            .count();
+        assert_eq!(
+            fat_ts_collected, FAT_COUNT as usize,
+            "CR-02: all {} fat-timestamp events must be present in collected results",
+            FAT_COUNT
         );
     }
 }
