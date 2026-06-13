@@ -31,6 +31,18 @@ type transportError struct {
 func (e *transportError) Error() string { return e.err.Error() }
 func (e *transportError) Unwrap() error { return e.err }
 
+// filterRejectionError is returned by queryRelay when a filter-cap rejection
+// occurs (at-cap or floor-reached). The FetchAndUpdateFollows dispatcher maps
+// this to classFilterRej (threshold 3), distinct from classTransport (threshold 10).
+// This ensures floor-reached and at-cap rejections are correctly classified as
+// filter_rejection, not transport (closes WR-01).
+type filterRejectionError struct {
+	err error
+}
+
+func (e *filterRejectionError) Error() string { return e.err.Error() }
+func (e *filterRejectionError) Unwrap() error { return e.err }
+
 const (
 	initialBackoff = 30 * time.Second
 	maxBackoff     = 5 * time.Minute
@@ -129,10 +141,19 @@ func New(cfg Config) (*Crawler, error) {
 		})
 		relay, err := nostr.RelayConnect(context.Background(), url, noticeHandler)
 		if err != nil {
-			log.Printf("WARN: Failed to connect to relay %s, removing from config: %v", url, err)
-			if cfg.OnConnectFail != nil {
-				cfg.OnConnectFail(url)
+			// CR-03: keep the relay in the pool with alive=false so ReconnectRelays
+			// can retry under threshold governance. Do NOT call cfg.OnConnectFail here —
+			// a transient boot/DNS outage must not permanently eject all relays (T-07-DOS).
+			log.Printf("WARN: Failed to connect to relay %s at startup, will retry: %v", url, err)
+			rs.alive = false
+			rs.conn = nil
+			rs.failTransport.Add(1)
+			rs.retryAt = time.Now().Add(rs.backoff)
+			rs.backoff *= 2
+			if rs.backoff > maxBackoff {
+				rs.backoff = maxBackoff
 			}
+			relays = append(relays, rs)
 			continue
 		}
 		rs.conn = relay
@@ -532,9 +553,17 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 
 			// LOG-03/D-15: markRelayDead emits the single dead-state log line.
 			// Do NOT emit a WARN here before calling markRelayDead.
+			// CR-02: markRelayDead is called only here (single-threaded dispatcher) and
+			// in ReconnectRelays (main loop) — never from per-relay goroutines. This
+			// makes c.relays mutation single-threaded, eliminating the data race.
+			var filterErr *filterRejectionError
 			var subErr *subscriptionError
 			var transErr *transportError
 			switch {
+			case errors.As(re.err, &filterErr):
+				// WR-01: filter-cap rejections (at-cap and floor-reached) are routed to
+				// classFilterRej (threshold 3), never classTransport (threshold 10).
+				c.markRelayDead(re.url, classFilterRej)
 			case errors.As(re.err, &subErr):
 				c.markRelayDead(re.url, classSubFlap)
 			case errors.As(re.err, &transErr):
@@ -600,6 +629,14 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 	}
 
 	authors := filter.Authors
+
+	// WR-03: hoist the probing defer BEFORE the loop so it registers exactly once
+	// per queryRelay call and clears the flag on every exit path (including ctx cancel).
+	// The per-iteration rs.probing.Store(true) inside the loop still sets the flag;
+	// explicit rs.probing.Store(false) clears in rejection branches for immediate reads
+	// by handleFilterNotice; this deferred clear is the catch-all for normal/cancel exits.
+	defer rs.probing.Store(false)
+
 	for len(authors) > 0 {
 		batchCap := int(rs.filterCap.Load())
 		if batchCap <= 0 {
@@ -619,8 +656,6 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 				rs.probing.Store(true)
 			}
 		}
-		// Ensure probing flag is always cleared on return (Pitfall 3 — probe flag not cleared on cancel).
-		defer rs.probing.Store(false)
 
 		chunk := authors
 		if len(authors) > batchCap {
@@ -653,19 +688,27 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 					rs.probing.Store(false)
 					if isProbing {
 						// D-11: probe rejection — cap reverted, streak reset, no ejection count.
+						// Returns nil so this relay stays alive; the probe exemption means a probe
+						// rejection is not a failure event and does not count toward ejection.
+						// Remaining authors are picked up next cycle via staleness.
 						log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
-					} else {
-						// At-cap rejection — count toward filter_rejection ejection.
-						log.Printf("Relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)
-						c.markRelayDead(relayURL, classFilterRej)
+						return nil
 					}
-					authors = append(chunk, authors...) // re-queue this chunk
-					isProbing = false
-					continue
+					// CR-01: at-cap rejection — return a filterRejectionError so the single-threaded
+					// FetchAndUpdateFollows dispatcher classifies and marks the relay dead via
+					// classFilterRej (threshold 3). Do NOT continue the loop — the connection is
+					// closed and must not be reused. Remaining authors are picked up next cycle.
+					// IN-04/LOG-03: demote the cap-halving detail to debug; the dead-state log line
+					// is emitted by the dispatcher, not here.
+					if c.debug {
+						log.Printf("Relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)
+					}
+					return &filterRejectionError{err: fmt.Errorf("relay %s: filter rejection at cap %d, halved to %d", relayURL, old, newVal)}
 				}
-				// filterCap is already at floor=10 — mark dead (filter_rejection, not transport wording per LOG-03/D-15).
-				log.Printf("Relay %s: filter cap at floor, marking dead (filter_rejection)", relayURL)
-				return &transportError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
+				// filterCap is already at floor=10 — return filterRejectionError (not transportError)
+				// so the dispatcher routes to classFilterRej (threshold 3), not classTransport (threshold 10).
+				// WR-01: floor-reached must never return transportError.
+				return &filterRejectionError{err: fmt.Errorf("relay %s: filter cap floor reached", relayURL)}
 			}
 			// Strip the verbose filter dump that go-nostr embeds in Subscribe errors
 			cleanErr := cleanSubscribeError(err)
