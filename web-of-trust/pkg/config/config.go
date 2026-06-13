@@ -21,6 +21,22 @@ type EjectionThresholds struct {
 	SubFlap   int `mapstructure:"subscription_flap"`
 }
 
+// MissBackoffParams holds the exponential backoff configuration for
+// chronic-miss pubkeys (Phase 8 PERF-02, D-07). Non-positive values are
+// corrected to hardcoded defaults after unmarshal (T-08-CFG mitigation).
+type MissBackoffParams struct {
+	// Base is the initial backoff interval applied on the first miss.
+	Base time.Duration `mapstructure:"base"`
+	// Ratio is the geometric growth factor per miss (e.g. 2 → doubles each time).
+	Ratio int `mapstructure:"ratio"`
+	// Cap is the maximum backoff interval (7d = 168h); misses beyond this point
+	// are retried on the cap schedule indefinitely (never permanently abandoned).
+	Cap time.Duration `mapstructure:"cap"`
+	// HitRefreshCadence is the next_attempt interval stamped on a HIT (D-03):
+	// pubkeys that return a kind-3 event are re-queried after this duration.
+	HitRefreshCadence time.Duration `mapstructure:"hit_refresh_cadence"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	RelayURLs            []string      `mapstructure:"relay_urls"`
@@ -42,6 +58,13 @@ type Config struct {
 	// Relay health management (Phase 7) settings.
 	RelayEjectionThresholds EjectionThresholds `mapstructure:"relay_ejection_thresholds"`
 	EjectedRelays           []string           `mapstructure:"ejected_relays"`
+
+	// Phase 8 TIMEOUT-02: fraction of queried relays that must reach EOSE or
+	// error before the batch cancels early. Default 0.70 (70%).
+	RelayEOSEQuorum float64 `mapstructure:"relay_eose_quorum"`
+
+	// Phase 8 PERF-02: miss-backoff parameters for chronic-miss pubkeys.
+	MissBackoff MissBackoffParams `mapstructure:"miss_backoff"`
 }
 
 // LoadConfig loads the application configuration from various sources
@@ -71,7 +94,7 @@ func LoadConfig() (*Config, error) {
 		"wss://relay.primal.net",
 	})
 	viper.SetDefault("dgraph_addr", "localhost:9080")
-	viper.SetDefault("timeout", "30s")
+	viper.SetDefault("timeout", "15s") // TIMEOUT-01 (D-11): was "30s"
 	viper.SetDefault("debug", false)
 	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
 	viper.SetDefault("stale_pubkey_threshold", 24*60*60) // 24 hours in seconds
@@ -99,6 +122,17 @@ func LoadConfig() (*Config, error) {
 		"subscription_flap": 5,
 	})
 	viper.SetDefault("ejected_relays", []string{})
+
+	// Phase 8 TIMEOUT-02 (D-12): EOSE quorum fraction.
+	viper.SetDefault("relay_eose_quorum", 0.70)
+
+	// Phase 8 PERF-02 (D-07): miss-backoff parameter group.
+	viper.SetDefault("miss_backoff", map[string]interface{}{
+		"base":               "2h",
+		"ratio":              2,
+		"cap":                "168h", // 7 days
+		"hit_refresh_cadence": "24h", // StalePubkeyThreshold re-used for HIT path (D-03)
+	})
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -137,6 +171,21 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.RelayEjectionThresholds.SubFlap <= 0 {
 		cfg.RelayEjectionThresholds.SubFlap = 5
+	}
+
+	// Guard: non-positive miss-backoff values would produce zero/negative intervals,
+	// causing resource-exhaustion (T-08-CFG). Correct to hardcoded defaults.
+	if cfg.MissBackoff.Base <= 0 {
+		cfg.MissBackoff.Base = 2 * time.Hour
+	}
+	if cfg.MissBackoff.Ratio <= 1 {
+		cfg.MissBackoff.Ratio = 2
+	}
+	if cfg.MissBackoff.Cap <= 0 {
+		cfg.MissBackoff.Cap = 168 * time.Hour
+	}
+	if cfg.MissBackoff.HitRefreshCadence <= 0 {
+		cfg.MissBackoff.HitRefreshCadence = 24 * time.Hour
 	}
 
 	// Ensure EjectedRelays is non-nil for safe slice operations.
