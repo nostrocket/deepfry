@@ -660,17 +660,28 @@ func (c *Client) MarkAttempted(
 				}
 			} else {
 				// No lowercase duplicate — update the pubkey field in place.
-				// Do NOT stamp last_attempt or next_attempt: the recovered node
-				// must re-enter the fresh frontier to be crawled with the
-				// corrected pubkey.
+				//
+				// NOTE (HARD-02): The recovery txn and the hit/miss stamp txn
+				// below are INDEPENDENT operations: recovery deliberately does NOT
+				// stamp last_attempt/next_attempt so the corrected node re-enters
+				// the fresh frontier and is crawled under its canonical pubkey.
+				// MarkAttempted is retry-safe: recovery is idempotent (re-resolving
+				// an already-corrected pubkey finds the lowercase form and takes the
+				// duplicate/no-op path above), and stamping is an upsert.
+				//
+				// IMPORTANT: txn.Discard(ctx) is called INLINE after Mutate (not
+				// via defer) because this branch runs inside a for-loop — a defer
+				// inside a loop fires at function return, not at iteration end,
+				// accumulating undiscarded txns until MarkAttempted returns (WR-02).
 				txn := c.dg.NewTxn()
 				mu := &api.Mutation{
 					SetNquads: []byte(fmt.Sprintf("<%s> <pubkey> %q .\n", garbageUID, lower)),
 					CommitNow: true,
 				}
-				if _, err := txn.Mutate(ctx, mu); err != nil {
-					txn.Discard(ctx)
-					log.Printf("WARN: recover uppercase pubkey %q (uid %s) to %q failed: %v", pk, garbageUID, lower, err)
+				_, mutErr := txn.Mutate(ctx, mu)
+				txn.Discard(ctx) // always inline — closes both success and error paths
+				if mutErr != nil {
+					log.Printf("WARN: recover uppercase pubkey %q (uid %s) to %q failed: %v", pk, garbageUID, lower, mutErr)
 				} else {
 					log.Printf("INFO: recovered uppercase pubkey %q (uid %s) → %q", pk, garbageUID, lower)
 				}
