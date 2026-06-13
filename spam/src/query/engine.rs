@@ -2,10 +2,12 @@
 ///
 /// Composes router + merge + hydrate into two public entry points:
 ///
-/// - [`execute_query`]: routes a `NostrFilter` to the selected index, merges per-prefix reverse
-///   scans, over-fetches + hydrates + drops NIP-40-expired events until `limit` valid events are
-///   collected (D-07), returns them in `(created_at DESC, lev_id DESC)` order (D-10) plus an
-///   opaque resume cursor (D-11).
+/// - [`execute_query`]: routes a `NostrFilter` to the selected index, over-fetches in a bounded
+///   round-loop (capped by MAX_ROUNDS) calling merge_windowed from an advancing resume boundary
+///   until `limit` valid events are collected (D-07), then returns them in
+///   `(created_at DESC, lev_id DESC)` order (D-10). When the round budget stops the loop early
+///   before `limit` survivors accumulate, a partial-result resume cursor is still returned from
+///   `valid.last()` so that remaining reachable events are never stranded (D-11).
 ///
 /// - [`latest_per_author`]: returns ≤ `per_author` newest events per requested pubkey, grouped
 ///   by pubkey, each bucket `created_at DESC` (QRY-03 / D-12).
@@ -13,8 +15,10 @@
 /// ## Invariants
 ///
 /// - Read-only: no `.create()`, no `write_txn` (T-03-RDONLY).
-/// - Bounded: the over-fetch loop stops at `valid.len() >= limit` OR empty merge batch; each
-///   batch is `DEFAULT_WINDOW_SIZE`-bounded; per-author scans are `per_author`-bounded (T-03-DOS).
+/// - Bounded: the round-loop is capped by MAX_ROUNDS; total LMDB entries examined per query is
+///   bounded by MAX_ROUNDS × emit_limit (= MAX_ROUNDS × (2×limit + DEFAULT_WINDOW_SIZE)). This
+///   preserves the WR-03 DoS boundary: each round has its own emit_limit cap and the loop never
+///   reopens an unbounded scan (T-03-DOS).
 /// - NIP-40: `is_expired` uses direct `SystemTime::now()` — NOT an injected clock (D-09).
 /// - Cursor: `PageCursor` is length/format-validated at decode (T-03-CUR in 03-01); here it only
 ///   sets an upper bound + exclusion comparison — out-of-range values yield empty/older pages.
@@ -28,6 +32,18 @@ use crate::query::merge::merge_windowed;
 use crate::query::router::{build_start_keys, decode_hex, select_index, SelectedIndex};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ---------------------------------------------------------------------------
+// Round budget constant (T-03-DOS / WR-03)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of merge_windowed rounds per query.
+///
+/// Total LMDB entries examined per query is bounded by `MAX_ROUNDS × emit_limit`
+/// (= MAX_ROUNDS × (2×limit + DEFAULT_WINDOW_SIZE)). This preserves the WR-03 DoS
+/// boundary: the loop is unconditionally broken after MAX_ROUNDS regardless of how many
+/// events the residual/expiry/cursor filter has dropped. Do NOT remove this check.
+const MAX_ROUNDS: usize = 8;
 
 // ---------------------------------------------------------------------------
 // NIP-40 expiration predicate (D-08/D-09)
@@ -77,11 +93,12 @@ fn index_short_name(selected: &SelectedIndex) -> &'static str {
 
 /// Execute a `NostrFilter` query returning up to `filter.limit` valid `DecodedEvent`s.
 ///
-/// ## Algorithm (D-07 over-fetch + merge_windowed k-way merge)
+/// ## Algorithm (D-07 over-fetch + bounded round-loop + merge_windowed k-way merge)
 ///
-/// 1. `select_index(filter)` → `SelectedIndex`; `build_start_keys(filter, &selected, Reverse)`.
-///    If `cursor` is `Some`, use `cursor.created_at` as the `until` upper bound (D-11).
-/// 2. Call `merge_windowed(env, short_name, start_keys, batch_size, emit_limit, since)` which:
+/// 1. `select_index(filter)` → `SelectedIndex`. If `cursor` is `Some`, use `cursor.created_at`
+///    as the initial `until` upper bound (D-11), advancing per round.
+/// 2. Round-loop (up to MAX_ROUNDS): for each round, rebuild `start_keys` from the current
+///    `round_boundary` (the advancing resume ts/lev_id), call `merge_windowed` once:
 ///    a. Issues windowed `scan_index_one_window` calls per stream (key-granular exclusive-resume).
 ///    b. Applies CR-01 prefix guard per stream: `take_while(key.starts_with(prefix))`.
 ///    c. Enforces per-stream since exhaustion (CR-03): each stream exhausts independently.
@@ -89,11 +106,14 @@ fn index_short_name(selected: &SelectedIndex) -> &'static str {
 ///       order via the BinaryHeap frontier (CR-02 — no sort-per-batch).
 /// 3. Apply cursor exclusion (D-11); hydrate via `hydrate_lev_ids`. CR-01 residual: drop events
 ///    not matching filter kinds/authors/ids. Drop `is_expired` (QRY-05). Drop tag mismatch (QRY-02).
-/// 4. Push survivors into `valid` until limit; build cursor from valid.last() iff len == limit.
+/// 4. Push survivors into `valid`. Break when `valid.len() >= limit`, merge exhausted, or MAX_ROUNDS.
+/// 5. Build cursor from `valid.last()` when `len == limit` OR when budget-capped with events remaining
+///    (partial-result cursor — reachable events are never stranded).
 ///
 /// ## Security
 ///
-/// - T-03-DOS: bounded by `limit` (or `DEFAULT_WINDOW_SIZE` when `limit==0`).
+/// - T-03-DOS: bounded by MAX_ROUNDS × emit_limit (= MAX_ROUNDS × (2×limit + DEFAULT_WINDOW_SIZE));
+///   `rounds >= MAX_ROUNDS` break is unconditional.
 /// - T-03-NIP40: `is_expired` tag parse never panics.
 /// - T-03-CUR: cursor sets only an upper bound; out-of-range → empty/older pages.
 /// - T-03-RDONLY: no `.create()`, no `write_txn`.
@@ -145,150 +165,178 @@ fn execute_query_internal(
     // excluded from the result (they were already emitted on the previous page).
     let cursor_boundary: Option<(u64, LevId)> = cursor.map(|c| (c.created_at, c.lev_id));
 
-    // Build start keys. When a cursor is present, use cursor.created_at as the upper bound
-    // (replaces the filter.until-derived trailing bytes) so we start scanning from where we
-    // left off rather than from the absolute `until` bound.
-    // IN-04: removed cursor.unwrap() after is_some() check — use if-let instead.
-    let effective_filter: NostrFilter;
-    let start_filter = if let Some(c) = cursor {
-        effective_filter = NostrFilter {
-            until: Some(c.created_at),
-            ..filter.clone()
-        };
-        &effective_filter
-    } else {
-        filter
-    };
-
-    let base_start_keys = build_start_keys(start_filter, &selected, ScanDirection::Reverse);
-    if base_start_keys.is_empty() {
-        return Ok((vec![], None));
-    }
+    // Per-round emit cap: ask merge_windowed for more than `limit` to account for NIP-40
+    // drops, residual mismatches, and cursor exclusion. The engine pulls in rounds of
+    // `emit_limit` until valid.len() >= limit or the merge is truly exhausted.
+    //
+    // Round-loop algorithm:
+    //   Each round calls merge_windowed ONCE with a per-round emit_limit cap. The exhaustion
+    //   signal is `merge_batch.len() < emit_limit` (true exhaustion: merge had fewer entries
+    //   than we asked for). If the round filled emit_limit entries but valid.len() < limit,
+    //   we advance `round_boundary` to the last merged entry and loop — rebuild start_keys
+    //   from the new `until` so the next round scans strictly below where we left off.
+    //
+    // DoS bound (WR-03): total LMDB entries examined per query ≤ MAX_ROUNDS × emit_limit
+    //   (= MAX_ROUNDS × (2×limit + DEFAULT_WINDOW_SIZE)). The `rounds >= MAX_ROUNDS` break
+    //   is unconditional — a residual/expiry-heavy filter cannot spin the loop unbounded.
+    //
+    // Partial-result cursor: when the budget cap (rounds >= MAX_ROUNDS) stops the loop
+    //   before valid.len() == limit, a resume cursor is STILL built from valid.last() (if
+    //   any events were collected). This ensures reachable events are never permanently
+    //   stranded — the caller can always page to the remainder. The cursor is omitted only
+    //   when the merge was truly exhausted (exhausted = true) AND valid is under-full,
+    //   meaning no more matching events exist at all.
+    let emit_limit = limit.saturating_add(DEFAULT_WINDOW_SIZE).saturating_add(limit);
 
     // valid: (created_at, lev_id, DecodedEvent) — tracks sort key alongside event.
     let mut valid: Vec<(u64, LevId, DecodedEvent)> = Vec::with_capacity(limit);
     let mut skip_count: usize = 0;
 
-    // Over-fetch cap: ask merge_windowed for more than `limit` to account for NIP-40 drops,
-    // residual mismatches, and cursor exclusion. The engine pulls in rounds of `overfetch_cap`
-    // until valid.len() >= limit or the merge is exhausted.
-    //
-    // Round-loop: merge_windowed returns the globally ordered stream lazily by round. Each
-    // round emits up to `overfetch_cap` entries from the merge; the engine filters and pushes
-    // survivors to `valid` until `limit` is reached. If `valid.len() < limit` after a round,
-    // the engine calls merge_windowed again from the resume point via merge_windowed's
-    // stateless-batch model (a new call with updated start_keys). To keep this simple and
-    // bounded, we request `limit + DEFAULT_WINDOW_SIZE` entries per merge call — this is
-    // the standard D-07 over-fetch headroom. If all that produces fewer than `limit` valid
-    // events, the stream is exhausted.
-    //
-    // Implementation: merge_windowed is stateless (takes start_keys, returns a Vec up to
-    // emit_limit). We call it once with emit_limit = limit + headroom; if insufficient valid
-    // events are returned, we iterate for more using the last emitted key as resume position
-    // — but for simplicity (and because DEFAULT_WINDOW_SIZE >> typical residual drop rate),
-    // a single merge_windowed call with emit_limit = limit * 2 + DEFAULT_WINDOW_SIZE handles
-    // virtually all cases. A second round only occurs when many events are filtered out.
-    let emit_limit = limit.saturating_add(DEFAULT_WINDOW_SIZE).saturating_add(limit);
+    // round_boundary: the exclusion boundary for the CURRENT round's merge call.
+    // Initialized from the caller cursor so round 1 behaves exactly as before.
+    // Advanced to `last_merged` at the end of each round so the next round scans
+    // strictly below the previous round's last entry.
+    let mut round_boundary: Option<(u64, LevId)> = cursor_boundary;
+    let mut rounds: usize = 0;
+    let mut exhausted = false;
 
-    // Obtain the globally ordered (created_at DESC, lev_id DESC) stream via the windowed
-    // k-way merge. Ordering is correct across all iterations (CR-02); per-stream since
-    // exhaustion is enforced inside merge_windowed (CR-03).
-    // No sort_unstable_by here — ordering comes from the merge (CR-02 fix).
-    let merge_batch = merge_windowed(env, short_name, &base_start_keys, batch_size, emit_limit, since)
-        .map_err(QueryError::Lmdb)?;
+    loop {
+        // Rebuild effective_filter.until from the current round boundary.
+        // When round_boundary is set, use its ts as the until upper bound so the scan
+        // starts at the resume position. On the first round this reproduces the original
+        // cursor-based until (or the filter's own until when no cursor is present).
+        let round_until: u64 = round_boundary
+            .map(|(ts, _)| ts)
+            .unwrap_or_else(|| filter.until.unwrap_or(u64::MAX));
 
-    // Apply cursor exclusion (D-11) and collect lev_ids for hydration.
-    let filtered_batch: Vec<(u64, LevId)> = merge_batch
-        .into_iter()
-        .filter_map(|(ts, lev_id, _key)| {
-            // Cursor exclusion: events at or above the page cursor are already-emitted.
-            if let Some((cur_ts, cur_lev)) = cursor_boundary {
-                if ts > cur_ts || (ts == cur_ts && lev_id >= cur_lev) {
-                    return None;
-                }
-            }
-            // No global since check here — since is enforced per-stream inside merge_windowed (CR-03).
-            Some((ts, lev_id))
-        })
-        .collect();
+        let round_filter = NostrFilter {
+            until: Some(round_until),
+            ..filter.clone()
+        };
 
-    if filtered_batch.is_empty() {
-        return Ok((vec![], None));
-    }
-
-    let lev_ids: Vec<LevId> = filtered_batch.iter().map(|(_, l)| *l).collect();
-    let hydrated_pairs = hydrate_lev_ids(env, &lev_ids, dict_cache, &mut skip_count)?;
-
-    // CR-05 fix: join hydrated events on lev_id rather than positional zip.
-    let mut hydrated_map: HashMap<LevId, DecodedEvent> =
-        hydrated_pairs.into_iter().map(|(lid, ev)| (lid, ev)).collect();
-
-    for (ts, lev_id) in &filtered_batch {
-        if valid.len() >= limit {
+        let start_keys = build_start_keys(&round_filter, &selected, ScanDirection::Reverse);
+        if start_keys.is_empty() {
             break;
         }
 
-        let decoded = match hydrated_map.remove(lev_id) {
-            Some(ev) => ev,
-            // Corrupt payload was skipped in hydrate_lev_ids — absent from map.
-            None => continue,
-        };
+        // Obtain the globally ordered (created_at DESC, lev_id DESC) stream via the windowed
+        // k-way merge. Ordering is correct across all iterations (CR-02); per-stream since
+        // exhaustion is enforced inside merge_windowed (CR-03).
+        // No sort_unstable_by here — ordering comes from the merge (CR-02 fix).
+        let merge_batch = merge_windowed(env, short_name, &start_keys, batch_size, emit_limit, since)
+            .map_err(QueryError::Lmdb)?;
 
-        // Drop NIP-40 expired events (QRY-05 / D-08).
-        if is_expired(&decoded.event) {
-            continue;
-        }
+        // True-exhaustion signal: if merge returned fewer entries than we asked for,
+        // there are no more entries in this portion of the index. Capture BEFORE consuming.
+        exhausted = merge_batch.len() < emit_limit;
 
-        // CR-01 residual: belt-and-braces post-hydration kind/author/id check.
-        // The merge prefix guard ensures no cross-prefix contamination, but a residual
-        // on the decoded event provides a second layer of correctness (belt-and-braces).
-        if let Some(kinds) = &filter.kinds {
-            if !kinds.contains(&decoded.event.kind) {
-                continue;
+        // Capture the last entry for use as the next round's boundary.
+        let last_merged: Option<(u64, LevId)> = merge_batch.last().map(|(ts, lev, _)| (*ts, *lev));
+
+        // Apply cursor exclusion (D-11) and collect lev_ids for hydration.
+        // Cursor exclusion uses round_boundary (the advancing exclusion key), so the
+        // boundary entry of the previous round is never re-emitted.
+        let filtered_batch: Vec<(u64, LevId)> = merge_batch
+            .into_iter()
+            .filter_map(|(ts, lev_id, _key)| {
+                // Cursor exclusion: events at or above the page cursor are already-emitted.
+                if let Some((cur_ts, cur_lev)) = round_boundary {
+                    if ts > cur_ts || (ts == cur_ts && lev_id >= cur_lev) {
+                        return None;
+                    }
+                }
+                // No global since check here — since is enforced per-stream inside merge_windowed (CR-03).
+                Some((ts, lev_id))
+            })
+            .collect();
+
+        if !filtered_batch.is_empty() {
+            let lev_ids: Vec<LevId> = filtered_batch.iter().map(|(_, l)| *l).collect();
+            let hydrated_pairs = hydrate_lev_ids(env, &lev_ids, dict_cache, &mut skip_count)?;
+
+            // CR-05 fix: join hydrated events on lev_id rather than positional zip.
+            let mut hydrated_map: HashMap<LevId, DecodedEvent> =
+                hydrated_pairs.into_iter().map(|(lid, ev)| (lid, ev)).collect();
+
+            for (ts, lev_id) in &filtered_batch {
+                if valid.len() >= limit {
+                    break;
+                }
+
+                let decoded = match hydrated_map.remove(lev_id) {
+                    Some(ev) => ev,
+                    // Corrupt payload was skipped in hydrate_lev_ids — absent from map.
+                    None => continue,
+                };
+
+                // Drop NIP-40 expired events (QRY-05 / D-08).
+                if is_expired(&decoded.event) {
+                    continue;
+                }
+
+                // CR-01 residual: belt-and-braces post-hydration kind/author/id check.
+                // The merge prefix guard ensures no cross-prefix contamination, but a residual
+                // on the decoded event provides a second layer of correctness (belt-and-braces).
+                if let Some(kinds) = &filter.kinds {
+                    if !kinds.contains(&decoded.event.kind) {
+                        continue;
+                    }
+                }
+                if let Some(authors) = &filter.authors {
+                    if !authors.iter().any(|a| a == &decoded.event.pubkey) {
+                        continue;
+                    }
+                }
+                if let Some(ids) = &filter.ids {
+                    if !ids.iter().any(|id| id == &decoded.event.id) {
+                        continue;
+                    }
+                }
+
+                // Tag residual predicate: NIP-01 AND-across-fields semantics (CR-06 fix).
+                //
+                // A multi-tag filter {#e:[X], #p:[Y]} requires the event to carry BOTH an #e tag
+                // matching X AND a #p tag matching Y. Multiple TagFilter entries (distinct tag names)
+                // are ANDed together. Values WITHIN a single TagFilter are ORed (a filter for
+                // #e:[X, Z] matches an event with either #e=X or #e=Z).
+                //
+                // Old code (CR-06 bug): `'outer` loop broke on the FIRST matching TagFilter — any
+                // tag matched meant the event passed, regardless of whether the other tag filters
+                // also matched. This is OR semantics, which contradicts NIP-01.
+                //
+                // Fix: `tags_filter.iter().all(...)` — every TagFilter must match (AND across
+                // distinct fields). The inner `.any(...)` on values within a TagFilter preserves
+                // the within-field OR semantics.
+                if let Some(tags_filter) = &filter.tags {
+                    let passes = tags_filter.iter().all(|tf| {
+                        decoded.event.tags.iter().any(|ev_tag| {
+                            ev_tag.len() >= 2
+                                && ev_tag[0] == tf.name
+                                && tf.values.iter().any(|v| v == &ev_tag[1])
+                        })
+                    });
+                    if !passes {
+                        continue;
+                    }
+                }
+
+                // Use the AUTHORITATIVE (ts, lev_id) from filtered_batch — never from the hydrated
+                // side. This guarantees the PageCursor built from `valid.last()` carries the true
+                // last-emitted (created_at, lev_id) even when a corrupt payload was skipped upstream.
+                valid.push((*ts, *lev_id, decoded));
             }
         }
-        if let Some(authors) = &filter.authors {
-            if !authors.iter().any(|a| a == &decoded.event.pubkey) {
-                continue;
-            }
-        }
-        if let Some(ids) = &filter.ids {
-            if !ids.iter().any(|id| id == &decoded.event.id) {
-                continue;
-            }
+
+        rounds += 1;
+
+        // Break when: enough results, merge truly exhausted, or round budget reached.
+        if valid.len() >= limit || exhausted || rounds >= MAX_ROUNDS {
+            break;
         }
 
-        // Tag residual predicate: NIP-01 AND-across-fields semantics (CR-06 fix).
-        //
-        // A multi-tag filter {#e:[X], #p:[Y]} requires the event to carry BOTH an #e tag
-        // matching X AND a #p tag matching Y. Multiple TagFilter entries (distinct tag names)
-        // are ANDed together. Values WITHIN a single TagFilter are ORed (a filter for
-        // #e:[X, Z] matches an event with either #e=X or #e=Z).
-        //
-        // Old code (CR-06 bug): `'outer` loop broke on the FIRST matching TagFilter — any
-        // tag matched meant the event passed, regardless of whether the other tag filters
-        // also matched. This is OR semantics, which contradicts NIP-01.
-        //
-        // Fix: `tags_filter.iter().all(...)` — every TagFilter must match (AND across
-        // distinct fields). The inner `.any(...)` on values within a TagFilter preserves
-        // the within-field OR semantics.
-        if let Some(tags_filter) = &filter.tags {
-            let passes = tags_filter.iter().all(|tf| {
-                decoded.event.tags.iter().any(|ev_tag| {
-                    ev_tag.len() >= 2
-                        && ev_tag[0] == tf.name
-                        && tf.values.iter().any(|v| v == &ev_tag[1])
-                })
-            });
-            if !passes {
-                continue;
-            }
-        }
-
-        // Use the AUTHORITATIVE (ts, lev_id) from filtered_batch — never from the hydrated
-        // side. This guarantees the PageCursor built from `valid.last()` carries the true
-        // last-emitted (created_at, lev_id) even when a corrupt payload was skipped upstream.
-        valid.push((*ts, *lev_id, decoded));
+        // Advance round boundary: next round scans strictly below the last merged entry.
+        // If last_merged is None (empty merge batch), exhausted is true and we already broke above.
+        round_boundary = last_merged;
     }
 
     valid.truncate(limit);
@@ -298,8 +346,21 @@ fn execute_query_internal(
         tracing::debug!(skip_count, "query completed with skipped payloads");
     }
 
-    // Build next-page cursor iff we filled the limit (indicating more events may exist).
+    // Build next-page cursor:
+    // - If valid.len() == limit → cursor from valid.last() (existing behavior; more events likely).
+    // - ELSE IF valid.len() > 0 && !exhausted → STILL build a cursor from valid.last().
+    //   This is the partial-result cursor: the budget cap (MAX_ROUNDS) stopped the loop early
+    //   before the merge was truly exhausted, meaning reachable events remain below the page
+    //   boundary. Never return None when reachable events may still exist.
+    // - ELSE (exhausted and under-full, OR valid empty) → None (true end of stream).
     let next_cursor = if valid.len() == limit {
+        valid.last().map(|(ts, lev_id, _)| PageCursor {
+            created_at: *ts,
+            lev_id: *lev_id,
+        })
+    } else if !valid.is_empty() && !exhausted {
+        // Partial-result cursor: budget cap stopped us before merge exhaustion.
+        // Build from valid.last() so the caller can page to the remainder.
         valid.last().map(|(ts, lev_id, _)| PageCursor {
             created_at: *ts,
             lev_id: *lev_id,

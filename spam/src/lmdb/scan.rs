@@ -363,6 +363,14 @@ fn reverse_upper_bound(start_key: &[u8]) -> (Vec<u8>, bool) {
         start_key.len()
     );
 
+    // Fail-soft guard: sub-8-byte keys cannot carry a trailing created_at.
+    // Return the Included-fallback tuple (old non-panicking behavior) rather than
+    // panicking/aborting in release builds via the usize-wrapping slice index below.
+    // The debug_assert above fires in dev/test builds for visibility (T-03-PANIC).
+    if start_key.len() < 8 {
+        return (start_key.to_vec(), false);
+    }
+
     let len = start_key.len();
     // Decode the trailing 8-byte created_at.
     let ts = u64::from_le_bytes(start_key[len - 8..len].try_into().unwrap_or([0u8; 8]));

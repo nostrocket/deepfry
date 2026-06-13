@@ -39,7 +39,6 @@ use std::collections::BinaryHeap;
 ///
 /// `stream_idx` identifies which per-prefix stream this candidate came from, so the
 /// merge can pull the next entry from the same stream after popping.
-#[derive(Eq, PartialEq)]
 pub struct MergeCandidate {
     /// Unix timestamp from the trailing 8 bytes of the key (D-06 — extracted without hydration).
     pub created_at: u64,
@@ -50,6 +49,18 @@ pub struct MergeCandidate {
     /// Index into the per-prefix stream vector — used to pull the next entry from this stream.
     pub stream_idx: usize,
 }
+
+// Manual Eq/PartialEq over (created_at, lev_id) only — matching the Ord relation.
+// lev_id is unique per event, so this is a valid equivalence. The derived Eq would
+// compare key_bytes and stream_idx too, creating an Eq/Ord inconsistency (#[derive]
+// compares all fields; Ord::cmp uses only the sort key fields).
+impl PartialEq for MergeCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.created_at == other.created_at && self.lev_id == other.lev_id
+    }
+}
+
+impl Eq for MergeCandidate {}
 
 impl Ord for MergeCandidate {
     /// Order by `(created_at DESC, lev_id DESC)` — BinaryHeap is a max-heap,
