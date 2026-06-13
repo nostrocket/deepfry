@@ -55,13 +55,25 @@ pub type AppSchema = Schema<Query, EmptyMutation, EmptySubscription>;
 /// - enables the `Tracing` extension — free structured tracing of resolver execution
 ///   (requires the `tracing` feature on `async-graphql`).
 /// - uses `EmptyMutation` + `EmptySubscription` — no mutation root in the SDL (D-10/API-06).
-/// - does NOT add `.limit_depth()` or `.limit_complexity()` — the limit ceiling (500) plus
-///   the engine's `MAX_ROUNDS` bound is the v1 DoS guard (D-06/T-04-DOS).
+/// - applies `.limit_depth()` + `.limit_complexity()` (WR-01). The per-resolver limit
+///   ceiling (500) and the engine's `MAX_ROUNDS` bound only constrain a *single* `events`
+///   scan — they do nothing about deeply nested selection sets, introspection
+///   amplification, or a single request with many top-level aliased resolvers
+///   (`a: events{...} b: events{...} ...`), each of which spawns its own blocking LMDB
+///   scan. The depth/complexity limiters bound those vectors (essential for protecting
+///   the unbounded scans, per CLAUDE.md).
 ///
 /// Called once from `main.rs` after all startup gates pass.
 pub fn build_schema(app_state: AppState) -> AppSchema {
     Schema::build(Query, EmptyMutation, EmptySubscription)
         .data(app_state)
         .extension(Tracing)
+        // WR-01: bound query depth and aliased-resolver fan-out. The schema is shallow
+        // (events → events → tags, latestPerAuthor → events), so depth 12 leaves ample
+        // headroom for legitimate queries while rejecting pathological nesting.
+        .limit_depth(12)
+        // WR-01: bound total selection complexity to cap how many resolvers (and thus
+        // blocking LMDB scans) a single request can schedule via aliasing.
+        .limit_complexity(2000)
         .finish()
 }
