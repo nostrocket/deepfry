@@ -35,7 +35,8 @@ func DefaultBackoffParams() BackoffParams {
 // The formula is: base * ratio^missCount, capped at cap.
 //
 // For the standard Phase 8 PERF-02 schedule (base=2h, ratio=2, cap=168h):
-//   miss 0 → 2h, miss 1 → 4h, ..., miss 6 → 128h, miss 7+ → 168h (7 days).
+//
+//	miss 0 → 2h, miss 1 → 4h, ..., miss 6 → 128h, miss 7+ → 168h (7 days).
 //
 // Overflow guard (T-08-OVF): if missCount is large enough that the shifted
 // interval would meet or exceed cap, cap is returned directly before performing
@@ -49,22 +50,28 @@ func BackoffInterval(missCount int, base time.Duration, ratio int, cap time.Dura
 		return min64(base, cap)
 	}
 
-	// Overflow guard: determine how many doublings (or ratio-ings) fit before
-	// hitting cap. If missCount >= that threshold, return cap directly.
+	// Geometric growth: result = base * ratio^missCount, clamped at cap.
+	// Iterate (instead of computing ratio^missCount) to avoid int64 overflow.
 	//
-	// We want to check: base * ratio^missCount >= cap
-	// i.e.: ratio^missCount >= cap/base
-	// We iterate instead of computing ratio^missCount to avoid overflow.
-	threshold := int64(cap / base)
-	power := int64(1)
+	// Overflow guard (T-08-OVF): before each multiply, if the next step would
+	// reach or exceed cap we are already pinned at cap, so return it directly.
+	// Test that overflow-safely via division — result*ratio >= cap is equivalent
+	// to result > (cap-1)/ratio for positive integers.
+	//
+	// CR-01 fix: the prior guard compared `power` against the *truncated*
+	// int64(cap/base) threshold, which fired one ratio-step early whenever
+	// cap/base was not ratio-aligned (e.g. base=2h, cap=5h returned 5h instead
+	// of 4h). Comparing the actual running product against cap removes that
+	// off-by-one; the locked 2h/168h defaults are power-aligned, which is why
+	// the original table tests passed despite the bug.
+	r := time.Duration(ratio)
+	result := base
 	for i := 0; i < missCount; i++ {
-		power *= int64(ratio)
-		if power >= threshold {
+		if result > (cap-1)/r {
 			return cap
 		}
+		result *= r
 	}
-
-	result := base * time.Duration(power)
 	return min64(result, cap)
 }
 
