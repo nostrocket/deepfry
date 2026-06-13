@@ -178,5 +178,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
-| 4. GraphQL API | 2/2 | Complete   | 2026-06-13 |
+| 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
