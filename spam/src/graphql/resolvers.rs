@@ -141,6 +141,13 @@ impl Query {
             .extend_with(|_, e| e.set("code", "TOO_MANY_AUTHORS")));
         }
 
+        // WR-05: reject a negative kind rather than coercing it. `kind as u64` would wrap
+        // a negative value (e.g. -1 → 18446744073709551615), building an `Event__pubkeyKind`
+        // start key for a kind that cannot exist and silently returning empty buckets instead
+        // of signalling invalid input — the same defect class WR-04 fixed for since/until.
+        let kind_u64: u64 = u64::try_from(kind)
+            .map_err(|_| async_graphql::Error::new("kind must be a non-negative integer"))?;
+
         // D-08: clamp perAuthor silently to [1, 500].
         let clamped_per_author = (per_author.max(1) as usize).min(500);
 
@@ -150,7 +157,7 @@ impl Query {
 
         let groups: HashMap<String, Vec<_>> =
             tokio::task::spawn_blocking(move || {
-                latest_per_author(&env, kind as u64, clamped_per_author, &authors, &*dict_cache)
+                latest_per_author(&env, kind_u64, clamped_per_author, &authors, &*dict_cache)
             })
             .await
             .map_err(|e| async_graphql::Error::new(format!("task error: {e}")))?
@@ -234,7 +241,23 @@ pub fn build_nostr_filter(
     let f = filter.unwrap_or_default();
 
     // kinds: Vec<i64> → Option<Vec<u64>>
-    let kinds: Option<Vec<u64>> = f.kinds.map(|ks| ks.into_iter().map(|k| k as u64).collect());
+    //
+    // WR-05: same defect class as WR-04 (negative timestamps). A negative kind cast
+    // unguarded (`k as u64`) wraps to a giant u64 (e.g. -1 → 18446744073709551615),
+    // silently dropping out of any match instead of signalling invalid input. Reject
+    // negatives explicitly with the same non-negative pattern used for since/until.
+    let kinds: Option<Vec<u64>> = match f.kinds {
+        Some(ks) => {
+            let mut out = Vec::with_capacity(ks.len());
+            for k in ks {
+                out.push(u64::try_from(k).map_err(|_| {
+                    async_graphql::Error::new("kind must be a non-negative integer")
+                })?);
+            }
+            Some(out)
+        }
+        None => None,
+    };
 
     // WR-04: since/until are Unix timestamps (≥0). A negative value is malformed input, not a
     // valid bound. Previously `.max(0) as u64` silently coerced a negative `until` to 0, which
