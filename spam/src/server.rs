@@ -24,6 +24,7 @@
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::GraphQL;
 use axum::{
+    extract::DefaultBodyLimit,
     response::{Html, IntoResponse},
     routing::get,
     Router,
@@ -39,11 +40,21 @@ use crate::graphql::schema::AppSchema;
 ///
 /// `post_service` is called on the `MethodRouter` returned by `get(graphiql)` (Pitfall 4 —
 /// NOT a free `axum::routing::post_service` function).
+/// WR-02: cap the request body at 256 KiB. Without this, a client can POST an arbitrarily
+/// large query/variables document (e.g. a multi-MB `authors` array or a giant query string),
+/// which axum buffers — a trivial memory/CPU amplification vector. A query document large
+/// enough to be legitimate does not approach this ceiling.
+const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
+
 pub fn build_router(schema: AppSchema) -> Router {
-    Router::new().route(
-        "/graphql",
-        get(graphiql).post_service(GraphQL::new(schema)),
-    )
+    Router::new()
+        .route(
+            "/graphql",
+            get(graphiql).post_service(GraphQL::new(schema)),
+        )
+        // WR-02: application-level request body cap (the async-graphql Tower service path
+        // does not otherwise get a meaningful body limit here).
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
 }
 
 /// GraphiQL playground handler — returns the GraphiQL v2 HTML page (GET /graphql).
