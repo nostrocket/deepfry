@@ -9,7 +9,10 @@
 ///   6. Run comparator self-check (LMDB-06 / D-04)
 ///   7. On ANY Err → anyhow propagates to main → process exits non-zero (fail-closed, V7)
 ///   8. Build GraphQL schema + axum router and start serving (Plan 04-02)
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use anyhow::Context;
 use lmdb2graphql::graphql::schema::{AppState, build_schema};
@@ -75,6 +78,13 @@ async fn main() -> anyhow::Result<()> {
         "comparator self-check passed — all Event__* indexes verified"
     );
 
+    // OPS-01 / T-05-04: readiness flag — initialized false; set true only after all startup
+    // gates pass. main.rs is the authoritative gate chain; the flag is never set true before
+    // run_comparator_self_check returns Ok (source order enforced; acceptance criterion asserts).
+    let ready = Arc::new(AtomicBool::new(false));
+    ready.store(true, Ordering::Release);
+    tracing::info!("startup gates passed — service is ready");
+
     // 8. Build GraphQL schema and start axum HTTP server (Plan 04-02).
     //    Reuses the already-opened `env` and read `meta` — no reopen (acceptance criteria).
     let dict_cache = Arc::new(lmdb::payload::DictCache::new());
@@ -82,9 +92,10 @@ async fn main() -> anyhow::Result<()> {
         env: env.clone(),
         dict_cache,
         meta: meta.clone(),
+        pinned_strfry_version: cfg.pinned_strfry_version.clone(),
     };
     let schema = build_schema(app_state);
-    let router = build_router(schema);
+    let router = build_router(schema, Arc::clone(&ready));
 
     // Bind address from config (bind_address; default 127.0.0.1:8080 loopback — CR-01).
     let listener = tokio::net::TcpListener::bind(&cfg.bind_address)

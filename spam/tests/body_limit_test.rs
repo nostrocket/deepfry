@@ -35,8 +35,10 @@ fn make_router() -> axum::Router {
         env,
         dict_cache: Arc::new(DictCache::new()),
         meta,
+        pinned_strfry_version: "test-pinned".to_string(),
     };
-    build_router(build_schema(app_state))
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    build_router(build_schema(app_state), ready)
 }
 
 /// A small, valid GraphQL POST body must be accepted (status < 400).
