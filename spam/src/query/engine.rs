@@ -1526,4 +1526,151 @@ mod tests {
         assert_eq!(events[1].event.created_at, 1700000256, "second: ts=1700000256");
         assert_eq!(events[2].event.created_at, 1700000255, "third: ts=1700000255");
     }
+
+    // -----------------------------------------------------------------------
+    // VERIFICATION truth #5 regression: round-loop reachability (plan 03-10)
+    // -----------------------------------------------------------------------
+
+    /// Regression: reachability under a residual filter that only matches a subset of events.
+    ///
+    /// Scenario: `kinds=[1] + #e=TAG_VALUE_64A` routes to `Event__kind` (kinds beats tags in
+    /// D-02 priority), so the tag is a post-hydration residual. Only 3 of the 7 kind=1 fixture
+    /// events carry #e=64a (levIds 6, 8, 11 at ts=1700000255, 1700000256, 1720000000). With
+    /// `batch_size=1` and `limit=2`, the first merged entries are checked one at a time; events
+    /// without the tag are dropped by the residual, forcing multiple rounds to accumulate
+    /// `limit` survivors.
+    ///
+    /// This test proves:
+    /// 1. Page 1 (cursor=None) returns exactly 2 tagged events newest-first AND a non-None cursor.
+    /// 2. Page 2 (using the page-1 cursor) returns the remaining 1 tagged event with no overlap.
+    /// 3. page1 + page2 id union == all 3 tagged-event ids (no events stranded).
+    ///
+    /// The `cargo test` termination proves the loop terminates (no hang) with batch_size=1 —
+    /// the round budget (MAX_ROUNDS=8) unconditionally caps the loop regardless of drop rate.
+    #[test]
+    fn test_execute_query_residual_deep_match_reachable() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        // Filter: kinds=[1] + #e=64a. Router picks Event__kind; tag is a post-hydration residual.
+        // 3 of 7 kind=1 events match: levId=11 (ts=1720000000), levId=8 (ts=1700000256),
+        // levId=6 (ts=1700000255). They are NOT the newest contiguous run (levId=10 at
+        // ts=1710000000 carries no #e tag), so with tiny batch_size the residual drops entries
+        // before 2 survivors accumulate — forcing the engine to scan deeper.
+        let filter = NostrFilter {
+            kinds: Some(vec![1]),
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![TAG_VALUE_64A.to_string()],
+            }]),
+            limit: 2,
+            ..Default::default()
+        };
+
+        // Page 1: limit=2, no cursor, batch_size=1 (tiny window forces multi-round behavior).
+        let (page1, cursor1) = execute_query_with_batch(&env, &filter, &cache, None, 1)
+            .expect("page 1 with residual filter must succeed");
+
+        // Page 1 must return exactly 2 events newest-first.
+        assert_eq!(
+            page1.len(),
+            2,
+            "page 1 (limit=2) must return 2 tagged events; got {}",
+            page1.len()
+        );
+
+        // Verify newest-first order (D-10).
+        assert!(
+            page1[0].event.created_at >= page1[1].event.created_at,
+            "page1 events must be newest-first: {} >= {}",
+            page1[0].event.created_at, page1[1].event.created_at
+        );
+
+        // All page1 events must carry the #e=64a tag (residual correctly applied).
+        for ev in &page1 {
+            let has_tag = ev.event.tags.iter().any(|t| {
+                t.len() >= 2 && t[0] == "e" && t[1] == TAG_VALUE_64A
+            });
+            assert!(has_tag, "page1 event must carry #e=64a tag");
+            assert_eq!(ev.event.kind, 1, "page1 event must be kind=1");
+        }
+
+        // Page 1 MUST return a non-None cursor — 3 matching events exist, only 2 returned.
+        // This is the core fix: previously next_cursor was None when valid.len() < limit, but
+        // now a cursor is built even when the round loop stops early due to budget or exhaustion
+        // with events remaining. With 3 matching events and limit=2, the cursor must be Some.
+        let cursor = cursor1.expect(
+            "page 1 must return a non-None cursor (3 matching events, only 2 returned) — \
+             VERIFICATION truth #5 reachability failure if None"
+        );
+
+        // Page 2: use the returned cursor to fetch the remaining tagged event.
+        let (page2, _cursor2) = execute_query_with_batch(&env, &filter, &cache, Some(&cursor), 1)
+            .expect("page 2 with residual filter and cursor must succeed");
+
+        // Page 2 must return exactly 1 event (the 3rd tagged event).
+        assert_eq!(
+            page2.len(),
+            1,
+            "page 2 must return 1 remaining tagged event (3rd of 3); got {}",
+            page2.len()
+        );
+
+        // Page 2 must not overlap with page 1 (no re-emission).
+        let page1_ids: std::collections::HashSet<&str> =
+            page1.iter().map(|ev| ev.event.id.as_str()).collect();
+        for ev in &page2 {
+            assert!(
+                !page1_ids.contains(ev.event.id.as_str()),
+                "page2 event {} must not appear in page1 (no overlap)",
+                ev.event.id
+            );
+        }
+
+        // Page 2 events must be at or before page 1's last ts (non-increasing order).
+        let page1_last_ts = page1.last().unwrap().event.created_at;
+        for ev in &page2 {
+            assert!(
+                ev.event.created_at <= page1_last_ts,
+                "page2 event ts={} must be <= page1 last ts={} (correct DESC order)",
+                ev.event.created_at, page1_last_ts
+            );
+            // All page2 events must carry the #e=64a tag.
+            let has_tag = ev.event.tags.iter().any(|t| {
+                t.len() >= 2 && t[0] == "e" && t[1] == TAG_VALUE_64A
+            });
+            assert!(has_tag, "page2 event must carry #e=64a tag");
+        }
+
+        // Completeness: page1 + page2 id union == all 3 tagged-event ids (no stranding).
+        // Use a limit=10 single query with the same kinds+tags filter to get the ground truth.
+        let filter_all = NostrFilter {
+            kinds: Some(vec![1]),
+            tags: Some(vec![TagFilter {
+                name: "e".to_string(),
+                values: vec![TAG_VALUE_64A.to_string()],
+            }]),
+            limit: 10,
+            ..Default::default()
+        };
+        let (all_events, _) = execute_query_with_batch(&env, &filter_all, &cache, None, 1)
+            .expect("all-events query must succeed");
+        assert_eq!(
+            all_events.len(),
+            3,
+            "ground truth: 3 kind=1 events carry #e=64a; got {}",
+            all_events.len()
+        );
+
+        let all_ids: std::collections::HashSet<&str> =
+            all_events.iter().map(|ev| ev.event.id.as_str()).collect();
+        let combined_ids: std::collections::HashSet<&str> = page1.iter().chain(page2.iter())
+            .map(|ev| ev.event.id.as_str())
+            .collect();
+
+        assert_eq!(
+            combined_ids, all_ids,
+            "page1 + page2 id union must equal all 3 tagged-event ids (no stranding — VERIFICATION truth #5)"
+        );
+    }
 }
