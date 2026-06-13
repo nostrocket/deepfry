@@ -15,3 +15,7 @@ pub mod query;
 /// Plan 04-01: types (output + input types, DecodedEvent → Event mapping).
 /// Plan 04-02: schema (AppSchema, build_schema), resolvers (Query root), server wiring.
 pub mod graphql;
+
+/// HTTP server — axum router mounting POST/GET /graphql (Phase 4 Plan 04-02).
+/// `build_router(schema)` returns an axum Router ready for `axum::serve`.
+pub mod server;
