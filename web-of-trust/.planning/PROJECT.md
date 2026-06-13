@@ -8,9 +8,11 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current Milestone: v1.2 Crawler Reliability & Efficiency
+## Current Milestone: v1.2 Crawler Reliability & Efficiency — COMPLETE (2026-06-13)
 
 **Goal:** Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management that ejects bad relays without manual intervention.
+
+**Status:** All 16 requirements delivered across Phases 05–08 (VALID, FILTER, RELAY, LOG, PERF, TIMEOUT, METRIC). Phase 08 (frontier prioritization, 15s timeout, EOSE-quorum, honest staleRemaining) verified live on the production host.
 
 **Target fixes:**
 - **VALID**: `updateFollowsFromEvent` uses `nostr.GetPublicKey` as a validator (semantically wrong — it's a private-key→public-key derivation); 19 garbage pubkeys already in DB re-enter every batch permanently. Fix validator to hex regex; purge bad nodes; stamp invalid pubkeys in `MarkAttempted` via UID to age them out.
@@ -34,27 +36,17 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **`last_attempt` predicate + attempt tracking** — never-attempted nodes selected first; every queried pubkey stamped via `MarkAttempted`; one-time backfill applied — shipped v1.0 (Phase 01-02)
 - ✓ **Chunked writes persist all follows** — `>10k`-follow pubkeys fully written; per-chunk `kind3CreatedAt` version guard fixed; `defer cancel()` leak eliminated — shipped v1.1 (Phase 03)
 - ✓ **Regression coverage** — unit + integration tests cover chunk/version-guard logic — shipped v1.1 (Phase 03)
+- ✓ **VALID-01/02/03** — hex-regex pubkey validation; garbage purge; UID-stamped invalid nodes age out — shipped v1.2 (Phase 05)
+- ✓ **FILTER-01/02** — batchSize 500→100; NOTICE "filter item too large" parsing + per-relay cap detection — shipped v1.2 (Phase 06)
+- ✓ **RELAY-01/02/03** — persisted/decayed failure counters; per-class classification + configurable auto-ejection; learned filter caps persist across reconnects — shipped v1.2 (Phase 07)
+- ✓ **LOG-01/02/03** — one-line reconnect-sweep / filter-cap / relay-death summaries — shipped v1.2 (Phase 07)
+- ✓ **PERF-01/02** — frontier ordered by `count(~follows) DESC`; geometric backoff (`next_attempt`/`miss_count`) for chronic-miss stubs — shipped v1.2 (Phase 08)
+- ✓ **TIMEOUT-01/02** — per-batch timeout 30s→15s; EOSE-quorum early exit at ≥70% — shipped v1.2 (Phase 08)
+- ✓ **METRIC-01** — honest `staleRemaining` via `CountStalePubkeys` — shipped v1.2 (Phase 08)
 
 ### Active
 
-<!-- Milestone v1.2: crawler reliability & efficiency. -->
-
-- [ ] **VALID-01**: `updateFollowsFromEvent` validates pubkeys against `^[0-9a-f]{64}$` regex instead of calling `nostr.GetPublicKey` (wrong function — private-key derivation, not validation).
-- [ ] **VALID-02**: Existing garbage pubkeys (uppercase hex, relay URL blobs, truncated shorts) are purged from Dgraph on crawler startup or via `healthcheck -purge`.
-- [ ] **VALID-03**: `MarkAttempted` stamps invalid pubkeys via UID lookup so they age out of the stale frontier instead of re-entering every batch forever.
-- [ ] **FILTER-01**: `batchSize` reduced from 500 to 100 authors per relay filter REQ.
-- [ ] **FILTER-02**: Crawler parses NOTICE messages for "filter item too large" and tracks a per-relay filter cap; relays that drop the connection on REQ are also detected.
-- [ ] **PERF-01**: `GetStalePubkeys` orders the stale frontier by `count(~follows) DESC` so high-follower stubs (most likely to have kind-3 events) are queried first.
-- [ ] **PERF-02**: Pubkeys that return no event after N consecutive attempts have their `last_attempt` advanced exponentially so they are deprioritised without being permanently abandoned.
-- [ ] **RELAY-01**: Relay failure counter is persisted and decayed across reconnects instead of reset to 0, so relays that repeatedly connect-and-drop eventually exceed `maxConsecutiveFailures`.
-- [ ] **RELAY-02**: Failure reasons are classified (transport error, filter rejection, subscription flap); auto-ejection threshold and policy are configurable per failure class; ejected relays are written to config.
-- [ ] **RELAY-03**: Learned per-relay filter caps persist across reconnects (with probe-up/decay recovery) instead of being reset and re-learned every batch.
-- [ ] **LOG-01**: Reconnect sweep logs one summary line instead of one line per relay; per-relay detail debug-only.
-- [ ] **LOG-02**: Filter-cap negotiation logs at most one final-outcome line per relay per batch, not every halving step.
-- [ ] **LOG-03**: Relay death logged as a single line with failure class, count, and next retry — no duplicate WARN pair, no false "timed out" wording for filter-cap failures.
-- [ ] **TIMEOUT-01**: Per-batch relay query timeout reduced from 30s to 15s.
-- [ ] **TIMEOUT-02**: Batch relay context is cancelled once ≥70% of alive relays have sent EOSE or errored (EOSE-quorum early exit).
-- [ ] **METRIC-01**: `staleRemaining` in the crawler's progress log reflects actual remaining stale count in Dgraph, not 0.
+_All v1.2 requirements delivered (Phases 05–08). Milestone v1.2 complete — no active requirements. Code-review hardening follow-ups (WR-02/03/04/05) and a transient-Dgraph-error retry are tracked in `.planning/todos/pending/` for a future cycle._
 
 ### Out of Scope
 
@@ -110,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-12 — RELAY-03 + LOG-01/02/03 added to v1.2 (logging noise + filter-cap persistence, from production log review)*
+*Last updated: 2026-06-13 — Phase 08 complete; milestone v1.2 fully delivered (PERF-01/02, TIMEOUT-01/02, METRIC-01 shipped, verified live)*
