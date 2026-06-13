@@ -84,7 +84,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `latestPerAuthor` returns the latest N events per pubkey via `Event__pubkeyKind` prefix scans (including across all requested pubkeys)
   4. Events with `expiration != 0 && expiration <= now` are excluded from all query results at query time, even if physically present in the index
 
-**Plans**: 10 plans (10 waves; 03-05/06/07 + 03-08/09 + 03-10 gap closure for the verification gaps in 03-VERIFICATION.md)
+**Plans**: 11 plans (11 waves; 03-05/06/07 + 03-08/09 + 03-10 + 03-11 gap closure for the verification gaps in 03-VERIFICATION.md)
 
 **Wave 1**
 
@@ -125,6 +125,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 10** *(gap closure — new REVIEW CR-01 no-backfill-loop; blocked on Wave 9: shares engine.rs)*
 
 - [x] 03-10-PLAN.md — restore a bounded round-loop (MAX_ROUNDS budget) in execute_query_internal calling merge_windowed from an advancing resume boundary, build a partial-result cursor when the budget stops the loop early so reachable events are never stranded, rewrite the divergent comments; fold in scan.rs reverse_upper_bound fail-soft + merge.rs MergeCandidate Eq/Ord consistency (QRY-01,QRY-02 / new REVIEW CR-01; WR-03 budget preserved) — COMPLETE 2026-06-13
+
+**Wave 11** *(gap closure — REVIEW CR-01/CR-02 cursor stranding; blocked on Wave 10: shares engine.rs)*
+
+- [ ] 03-11-PLAN.md — close REVIEW CR-01 (empty-valid budget cap → false EOF: add deepest_scanned fallback cursor) + CR-02 (fat-timestamp pagination stall: detect no-progress and break) in execute_query_internal; add two regression tests the 11-event fixture missed (QRY-01, QRY-05 / REVIEW CR-01,CR-02; WR-03 budget preserved)
 
 ### Phase 4: GraphQL API
 
