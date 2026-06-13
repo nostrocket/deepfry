@@ -113,7 +113,7 @@
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete    | 2026-06-13 |
-| 9. Phase 8 Hardening & Resilience Follow-ups | 0/2 | Planned | - |
+| 9. Phase 8 Hardening & Resilience Follow-ups | 2/2 | Code complete (live-host check pending) | 2026-06-13 |
 
 ### Phase 9: Phase 8 Hardening & Resilience Follow-ups
 
@@ -132,8 +132,8 @@
 
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — Dgraph layer: paginated BackfillNextAttempt + IN-03 cadence param (HARD-01/WR-03), MarkAttempted recovery-txn hygiene + docs (HARD-02/WR-02), large-frontier sort-cap test/doc (HARD-04/WR-05)
+- [x] 09-01-PLAN.md — Dgraph layer: paginated BackfillNextAttempt + IN-03 cadence param (HARD-01/WR-03), MarkAttempted recovery-txn hygiene + docs (HARD-02/WR-02), large-frontier sort-cap test/doc (HARD-04/WR-05)
 
 **Wave 2** *(blocked on Wave 1 — new BackfillNextAttempt signature)*
 
-- [ ] 09-02-PLAN.md — Crawler + main resilience: bounded forwardEvent publish (HARD-03/WR-04), BackfillNextAttempt caller update (HARD-01/IN-03), transient-vs-fatal Dgraph error classification + backoff retry in main loop (RESIL-01), live-host re-verification checkpoint
+- [x] 09-02-PLAN.md — Crawler + main resilience: bounded forwardEvent publish (HARD-03/WR-04), BackfillNextAttempt caller update (HARD-01/IN-03), transient-vs-fatal Dgraph error classification + backoff retry in main loop (RESIL-01), live-host re-verification checkpoint *(code complete; live-host check pending)*
