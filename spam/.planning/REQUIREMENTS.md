@@ -25,17 +25,17 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **QRY-01**: LMDB2GraphQL resolves `events()` filters (ids, authors, kinds, since/until) by scanning the most selective applicable strfry index (`Event__id` / `Event__pubkey` / `Event__pubkeyKind` / `Event__kind` / `Event__created_at`) to produce ordered `levId`s
 - [x] **QRY-02**: LMDB2GraphQL resolves tag filters by scanning `Event__tag` (`tagName ‖ tagValue ‖ created_at`)
-- [ ] **QRY-03**: LMDB2GraphQL resolves `latestPerAuthor` via `Event__pubkeyKind` prefix scans (newest-first, N events per pubkey)
+- [x] **QRY-03**: LMDB2GraphQL resolves `latestPerAuthor` via `Event__pubkeyKind` prefix scans (newest-first, N events per pubkey)
 - [x] **QRY-04**: LMDB2GraphQL hydrates full event JSON by point-looking-up `EventPayload[levId]` for each matched result
 - [x] **QRY-05**: LMDB2GraphQL filters out NIP-40 expired events (`expiration != 0 && expiration <= now`) at query time
 
 ### GraphQL API
 
-- [ ] **API-01**: A consumer can query `events()` filtered by ids, authors, kinds, since, until, and limit
-- [ ] **API-02**: A consumer can query `events()` filtered by a tag (name + values)
-- [ ] **API-03**: A consumer can query `latestPerAuthor(kind, perAuthor, authors)` to get the latest N events per pubkey
-- [ ] **API-04**: A consumer can query `stats` (event count via `mdb_stat` on `EventPayload`, max levId, dbVersion)
-- [ ] **API-05**: The API enforces a hard limit ceiling and cursor pagination on `(created_at, lev_id)` so no single query scans the whole DB
+- [x] **API-01**: A consumer can query `events()` filtered by ids, authors, kinds, since, until, and limit
+- [x] **API-02**: A consumer can query `events()` filtered by a tag (name + values)
+- [x] **API-03**: A consumer can query `latestPerAuthor(kind, perAuthor, authors)` to get the latest N events per pubkey
+- [x] **API-04**: A consumer can query `stats` (event count via `mdb_stat` on `EventPayload`, max levId, dbVersion)
+- [x] **API-05**: The API enforces a hard limit ceiling and cursor pagination on `(created_at, lev_id)` so no single query scans the whole DB
 - [ ] **API-06**: The API is read-only — it exposes no mutations
 
 ### Operations & Deployment
@@ -94,14 +94,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LMDB-09 | Phase 2 | Complete (Plan 02-03) |
 | QRY-01 | Phase 3 | Complete |
 | QRY-02 | Phase 3 | Complete |
-| QRY-03 | Phase 3 | Pending |
+| QRY-03 | Phase 3 | Complete |
 | QRY-04 | Phase 3 | Complete |
 | QRY-05 | Phase 3 | Complete |
-| API-01 | Phase 4 | Pending |
-| API-02 | Phase 4 | Pending |
-| API-03 | Phase 4 | Pending |
-| API-04 | Phase 4 | Pending |
-| API-05 | Phase 4 | Pending |
+| API-01 | Phase 4 | Complete |
+| API-02 | Phase 4 | Complete |
+| API-03 | Phase 4 | Complete |
+| API-04 | Phase 4 | Complete |
+| API-05 | Phase 4 | Complete |
 | API-06 | Phase 4 | Pending |
 | OPS-01 | Phase 5 | Pending |
 | OPS-02 | Phase 5 | Pending |

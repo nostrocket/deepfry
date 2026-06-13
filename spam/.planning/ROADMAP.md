@@ -148,7 +148,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Add GraphQL crates (async-graphql/-axum, axum, tokio), `bind_address` config field, and all GraphQL schema types (Event/EventsPage/AuthorGroup/StatsResult + EventFilterInput/TagFilterInput) + DecodedEvent→Event mapping (API-01..API-05)
+- [x] 04-01-PLAN.md — Add GraphQL crates (async-graphql/-axum, axum, tokio), `bind_address` config field, and all GraphQL schema types (Event/EventsPage/AuthorGroup/StatsResult + EventFilterInput/TagFilterInput) + DecodedEvent→Event mapping (API-01..API-05)
 
 **Wave 2** *(blocked on Wave 1: shares src/lib.rs + consumes 04-01 types)*
 
@@ -178,5 +178,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
-| 4. GraphQL API | 0/2 | Not started | - |
+| 4. GraphQL API | 1/2 | In Progress|  |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
