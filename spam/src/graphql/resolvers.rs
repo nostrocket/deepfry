@@ -34,6 +34,11 @@ use crate::query::filter::{NostrFilter, PageCursor, QueryError, TagFilter};
 
 use super::types::decoded_event_to_gql;
 
+/// WR-03: maximum number of authors accepted by `latestPerAuthor`. Bounds the
+/// multiplicative LMDB fan-out (authors × per_author). Requests above this return a
+/// `TOO_MANY_AUTHORS` client error rather than scheduling unbounded work.
+const MAX_AUTHORS: usize = 1000;
+
 /// GraphQL Query root — all three read-only resolvers.
 pub struct Query;
 
@@ -124,11 +129,24 @@ impl Query {
         )]
         authors: Vec<String>,
     ) -> GqlResult<Vec<AuthorGroup>> {
-        // D-08: clamp perAuthor silently to [1, 500]. Author count NOT capped (D-08 accepted risk).
+        // WR-03: cap author count. Total work is authors × per_author, each author triggering
+        // an independent bounded LMDB scan + hydrate. An uncapped author list (e.g. 1,000,000
+        // authors × per_author=500) schedules hundreds of millions of scan/hydrate operations
+        // on a single spawn_blocking task. Reject past the ceiling with a client error rather
+        // than accepting unbounded multiplicative fan-out.
+        if authors.len() > MAX_AUTHORS {
+            return Err(async_graphql::Error::new(format!(
+                "too many authors: max {MAX_AUTHORS}"
+            ))
+            .extend_with(|_, e| e.set("code", "TOO_MANY_AUTHORS")));
+        }
+
+        // D-08: clamp perAuthor silently to [1, 500].
         let clamped_per_author = (per_author.max(1) as usize).min(500);
 
-        let env = state_from(ctx).env.clone();
-        let dict_cache = Arc::clone(&state_from(ctx).dict_cache);
+        let state = state_from(ctx);
+        let env = state.env.clone();
+        let dict_cache = Arc::clone(&state.dict_cache);
 
         let groups: HashMap<String, Vec<_>> =
             tokio::task::spawn_blocking(move || {
@@ -195,6 +213,20 @@ fn state_from<'a>(ctx: &'a Context<'_>) -> &'a AppState {
 /// the offending bytes (T-04-HEX). Validation is left to the engine (which warns+skips on
 /// malformed hex) rather than adding a second hex-validation pass here, keeping the code DRY
 /// while preserving the no-echo invariant (errors from engine are opaque via map_query_error).
+/// WR-04: validate an optional Unix timestamp bound, rejecting negative values.
+///
+/// Returns a client-facing error for negatives rather than coercing them to 0 — a negative
+/// `until` coerced to 0 silently yields an empty page instead of signaling invalid input.
+fn nonneg_ts(v: Option<i64>, field: &str) -> GqlResult<Option<u64>> {
+    match v {
+        Some(x) if x < 0 => Err(async_graphql::Error::new(format!(
+            "{field} must be a non-negative Unix timestamp"
+        ))),
+        Some(x) => Ok(Some(x as u64)),
+        None => Ok(None),
+    }
+}
+
 pub fn build_nostr_filter(
     filter: Option<EventFilterInput>,
     effective_limit: usize,
@@ -204,9 +236,12 @@ pub fn build_nostr_filter(
     // kinds: Vec<i64> → Option<Vec<u64>>
     let kinds: Option<Vec<u64>> = f.kinds.map(|ks| ks.into_iter().map(|k| k as u64).collect());
 
-    // since/until: i64 → Option<u64>  (negative values become 0 via as-cast, safe for timestamps)
-    let since: Option<u64> = f.since.map(|s| s.max(0) as u64);
-    let until: Option<u64> = f.until.map(|u| u.max(0) as u64);
+    // WR-04: since/until are Unix timestamps (≥0). A negative value is malformed input, not a
+    // valid bound. Previously `.max(0) as u64` silently coerced a negative `until` to 0, which
+    // the engine reads as "events at or before timestamp 0" — i.e. a silently-empty page rather
+    // than feedback that the input was invalid. Reject negatives explicitly instead of masking.
+    let since: Option<u64> = nonneg_ts(f.since, "since")?;
+    let until: Option<u64> = nonneg_ts(f.until, "until")?;
 
     // tag: single TagFilterInput → one-element Vec<TagFilter> (D-02 / CONTEXT Open Question 2)
     let tags: Option<Vec<TagFilter>> = f.tag.map(|t: TagFilterInput| {
