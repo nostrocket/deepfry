@@ -98,7 +98,7 @@
 **Plans**: 2 plans
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — Dgraph + config foundation: next_attempt/miss_count predicates (D-01), follower-count-ordered GetStalePubkeys + D-09 live verification (PERF-01/D-08/D-09/D-10), hit/miss MarkAttempted + BackfillNextAttempt (PERF-02/D-03..06), CountStalePubkeys (METRIC-01/D-16), backoff math helper + config keys (D-07/D-11/D-12), unit + integration tests
+- [x] 08-01-PLAN.md — Dgraph + config foundation: next_attempt/miss_count predicates (D-01), follower-count-ordered GetStalePubkeys + D-09 live verification (PERF-01/D-08/D-09/D-10), hit/miss MarkAttempted + BackfillNextAttempt (PERF-02/D-03..06), CountStalePubkeys (METRIC-01/D-16), backoff math helper + config keys (D-07/D-11/D-12), unit + integration tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -111,4 +111,4 @@
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
-| 8. Frontier Prioritization, Timeout & Observability | 0/2 | Not started | - |
+| 8. Frontier Prioritization, Timeout & Observability | 1/2 | In Progress|  |
