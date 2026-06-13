@@ -177,7 +177,9 @@ mainLoop:
 			log.Printf("Warning: failed to mark batch attempted: %v", err)
 		}
 
-		staleRemaining := totalStale - len(pubkeys)
+		// Clamp at 0 (WR-01): totalStale is recounted before this batch is stamped,
+		// so on a shrinking frontier totalStale-len(pubkeys) can go negative.
+		staleRemaining := max(0, totalStale-len(pubkeys))
 		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
 			len(pubkeys), len(hitSet), staleRemaining, totalPubkeys)
 	}

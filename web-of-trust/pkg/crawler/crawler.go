@@ -525,8 +525,14 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// The relay query context was cancelled — either by the 15s timeout
 			// (DeadlineExceeded) or by the EOSE-quorum early exit (Canceled).
 			// In both cases, continue draining events already buffered in
-			// eventsChan; do not return an error. The post-cancel drain is safe
-			// because eventsChan is buffered and goroutines send before closing.
+			// eventsChan; do not return an error.
+			//
+			// NOTE (WR-06): this drain is NOT lossless. A goroutine sitting between
+			// receiving from sub.Events and sending to eventsChan returns ctx.Err()
+			// on cancellation and drops that event. Under the 70% EOSE-quorum this is
+			// by design (latency over completeness) — the slow ~30% of relays may have
+			// their events discarded, and the affected pubkeys are then stamped as
+			// misses (backed off). Already-buffered events in eventsChan still drain.
 			if c.debug {
 				log.Printf("Relay query context cancelled while processing events: %v", relayQueryContext.Err())
 				if relayQueryContext.Err() == context.DeadlineExceeded {
