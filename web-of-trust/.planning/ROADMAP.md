@@ -69,7 +69,7 @@
   5. A reconnect sweep over ~100 relays produces one summary log line (counts of reconnected / removed / still dead), with per-relay lines only under the debug flag.
   6. Per batch, a relay's filter-cap negotiation produces at most one log line stating the final outcome, and a relay entering the dead state produces exactly one line carrying failure class, count, and next retry — no duplicate `WARN: Connection timed out` + `marked dead` pair, and no "timed out" wording for filter-cap failures.
 
-**Plans**: 2 plans
+**Plans**: 3 plans (2 original + 1 gap-closure)
 **Wave 1**
 
 - [x] 07-01-PLAN.md — Config layer: EjectionThresholds struct + per-class defaults/guard (D-06), EjectRelayURL move-to-ejected persistence (D-08), config unit tests (RELAY-02)
@@ -77,6 +77,10 @@
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 07-02-PLAN.md — Crawler state-machine surgery: per-class counters + decay (RELAY-01/D-01..04), classification + threshold ejection (RELAY-02/D-05..08), filterCap persistence + probe-up (RELAY-03/D-09..12), log collapse (LOG-01/02/03/D-13..15), OnConnectFail→EjectRelayURL wiring, unit tests
+
+**Wave 1 (gap closure — verification found 5 defects in 07-02; 07-01 verified, untouched)**
+
+- [ ] 07-03-PLAN.md — Restructure queryRelay→errorsChan→markRelayDead flow so ejection is threshold-governed: filterRejectionError type + dispatcher routing (CR-01/WR-01), single-threaded markRelayDead (CR-02), startup keep-in-pool not eject (CR-03), hoisted probe defer (WR-03), one-line at-cap log (IN-04), real-seam tests (WR-05) — RELAY-01/02/03, LOG-01/02/03
 
 ### Phase 8: Frontier Prioritization, Timeout & Observability
 
