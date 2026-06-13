@@ -36,7 +36,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **API-03**: A consumer can query `latestPerAuthor(kind, perAuthor, authors)` to get the latest N events per pubkey
 - [x] **API-04**: A consumer can query `stats` (event count via `mdb_stat` on `EventPayload`, max levId, dbVersion)
 - [x] **API-05**: The API enforces a hard limit ceiling and cursor pagination on `(created_at, lev_id)` so no single query scans the whole DB
-- [ ] **API-06**: The API is read-only — it exposes no mutations
+- [x] **API-06**: The API is read-only — it exposes no mutations
 
 ### Operations & Deployment
 
@@ -102,7 +102,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-03 | Phase 4 | Complete |
 | API-04 | Phase 4 | Complete |
 | API-05 | Phase 4 | Complete |
-| API-06 | Phase 4 | Pending |
+| API-06 | Phase 4 | Complete |
 | OPS-01 | Phase 5 | Pending |
 | OPS-02 | Phase 5 | Pending |
 | OPS-03 | Phase 5 | Pending |

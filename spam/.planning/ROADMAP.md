@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: LMDB Foundation & Comparator Proof** - De-risk the comparator technique; open strfry's LMDB safely and prove scan order is byte-exact (4 plans complete 2026-06-11; CR-01 gap closed — seek gate added, LMDB-06 correctness restored)
 - [x] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index (3 plans complete 2026-06-11; LMDB-07/08/09 satisfied)
 - [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — 11 plans incl. gap-closures 03-05..03-11; final fat-group cursor-stranding + ts=0 non-termination blockers closed via debug fix (lev_id_floor in merge_windowed, commit f4ec868); verification PASSED 5/5 must-haves (completed 2026-06-13)
-- [ ] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings
+- [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
 - [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment
 
 ## Phase Details
@@ -152,7 +152,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1: shares src/lib.rs + consumes 04-01 types)*
 
-- [ ] 04-02-PLAN.md — AppState + query-only schema (EmptyMutation), the three resolvers (events/latestPerAuthor/stats) composing the Phase-3 engine via spawn_blocking, limit/perAuthor clamps, error mapping, axum router (POST /graphql + GraphiQL), and main.rs server startup after the gates (API-01..API-06)
+- [x] 04-02-PLAN.md — AppState + query-only schema (EmptyMutation), the three resolvers (events/latestPerAuthor/stats) composing the Phase-3 engine via spawn_blocking, limit/perAuthor clamps, error mapping, axum router (POST /graphql + GraphiQL), and main.rs server startup after the gates (API-01..API-06)
 
 ### Phase 5: Hardening & Docker Packaging
 
@@ -178,5 +178,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. LMDB Foundation & Comparator Proof | 4/4 | Complete    | 2026-06-11 |
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
-| 4. GraphQL API | 1/2 | In Progress|  |
+| 4. GraphQL API | 2/2 | Complete   | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
