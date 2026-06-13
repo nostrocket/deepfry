@@ -166,7 +166,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. CI generates a fixture `strfry-db` from the pinned strfry version/digest, asserts both `0x00` and `0x01` payload decoding succeed, and asserts LMDB2GraphQL's comparator scan order matches strfry's
   4. Startup output and `stats` surface the expected (pinned) strfry version alongside the detected on-disk `dbVersion`, so operators can immediately spot drift if the parent's `dockurr/strfry` image moves
 
-**Plans**: TBD
+**Plans**: 2 plans (2 waves)
+
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — /health + /ready probes (Arc<AtomicBool> readiness flag set after the comparator self-check) and pinnedStrfryVersion surfaced through the stats query (OPS-01, OPS-04)
+
+**Wave 2** *(blocked on Wave 1: docker-compose healthcheck consumes /health)*
+
+- [ ] 05-02-PLAN.md — Alpine multi-stage Dockerfile + docker-compose service mounting strfry-db :ro co-located with strfry, and CI workflow + fixture-generation script asserting comparator scan order + 0x00/0x01 decode against the pinned strfry digest (OPS-02, OPS-03)
 
 ## Progress
 
@@ -179,4 +187,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Payload Decoding & Index Scan Primitives | 3/3 | Complete    | 2026-06-11 |
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
-| 5. Hardening & Docker Packaging | 0/TBD | Not started | - |
+| 5. Hardening & Docker Packaging | 0/2 | Not started | - |
