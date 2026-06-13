@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-13T06:21:56.823Z"
-last_activity: "2026-06-12 -- Phase 07 plan 02 executed: relay state machine rewrite (RELAY-01/02/03 + LOG-01/02/03)"
+last_updated: "2026-06-13T06:23:32.732Z"
+last_activity: 2026-06-13 -- Phase 07 plan 03 complete (gap closure)
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 7
+  completed_plans: 7
   percent: 75
 ---
 
@@ -21,20 +21,20 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 08 — frontier + timeout + observability (next)
+**Current focus:** Phase 07 — relay-health-management
 
 ## Current Position
 
 Phase: 07 (relay-health-management) — COMPLETE
-Plan: 2 of 2 (complete)
-Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 07 plan 02 executed: relay state machine rewrite (RELAY-01/02/03 + LOG-01/02/03)
+Plan: 3 of 3
+Status: Phase 07 complete; Phase 08 next
+Last activity: 2026-06-13 -- Phase 07 plan 03 complete (gap closure)
 
 ## Performance Metrics
 
 - Phases complete (v1.2): 3 / 4
 - Requirements delivered (v1.2): 11 / 16 (VALID-01/02/03, FILTER-01/02, RELAY-01/02/03, LOG-01/02/03)
-- Plans complete (v1.2): 6 / 6
+- Plans complete (v1.2): 7 / 7
 
 ## Accumulated Context
 
@@ -56,6 +56,7 @@ Last activity: 2026-06-12 -- Phase 07 plan 02 executed: relay state machine rewr
 | LOG-01/02/03 added (2026-06-12) | Production logs dominated by per-relay noise (~100 reconnect lines/sweep, 6-line cap cascades, duplicate dead/timeout pairs). Folded into Phase 7 since all touch the relay state machine Phase 7 rewrites |
 | Phase 07-relay-health-management P01 | 2 | 2 tasks | 2 files |
 | Phase 07-relay-health-management P02 | 35 | 3 tasks | 3 files |
+| Phase 07-relay-health-management P03 (gap closure) | 7 | 2 tasks | 2 files |
 
 ### Important Facts
 
@@ -104,3 +105,7 @@ None.
 - [Phase 07-02]: markRelayDead is single log-line owner; FetchAndUpdateFollows callers must not emit WARN before calling it (LOG-03/D-15)
 - [Phase 07-02]: Probe-up flag probing atomic.Bool force-cleared via defer on all queryRelay exits including context cancel (Pitfall 3)
 - [Phase 07-02]: Forward relay confirmed exempt from markRelayDead routing (Pitfall 6) — self-contained failure path in ReconnectRelays
+- [Phase 07-03]: filterRejectionError dedicated type (not annotated subscriptionError) so errors.As can distinguish it without string heuristics (D-07)
+- [Phase 07-03]: markRelayDead removed from queryRelay (per-relay goroutine); structural single-threaded fix for data race CR-02 — no mutex needed
+- [Phase 07-03]: New() startup connect failure: relay kept in pool alive=false, failTransport++, no OnConnectFail call — T-07-DOS mitigation
+- [Phase 07-03]: handleCapRejection extracted as testable seam for at-cap/floor rejection path (WR-05: real-seam tests, not inline copies)

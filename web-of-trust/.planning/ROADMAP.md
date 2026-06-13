@@ -10,7 +10,7 @@
 
 - [x] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier (completed 2026-06-10)
 - [x] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns (completed 2026-06-11)
-- [ ] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries
+- [x] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries (completed 2026-06-13)
 - [ ] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric
 
 ## Phase Details
@@ -80,7 +80,7 @@
 
 **Wave 1 (gap closure — verification found 5 defects in 07-02; 07-01 verified, untouched)**
 
-- [ ] 07-03-PLAN.md — Restructure queryRelay→errorsChan→markRelayDead flow so ejection is threshold-governed: filterRejectionError type + dispatcher routing (CR-01/WR-01), single-threaded markRelayDead (CR-02), startup keep-in-pool not eject (CR-03), hoisted probe defer (WR-03), one-line at-cap log (IN-04), real-seam tests (WR-05) — RELAY-01/02/03, LOG-01/02/03
+- [x] 07-03-PLAN.md — Restructure queryRelay→errorsChan→markRelayDead flow so ejection is threshold-governed: filterRejectionError type + dispatcher routing (CR-01/WR-01), single-threaded markRelayDead (CR-02), startup keep-in-pool not eject (CR-03), hoisted probe defer (WR-03), one-line at-cap log (IN-04), real-seam tests (WR-05) — RELAY-01/02/03, LOG-01/02/03 (completed 2026-06-13)
 
 ### Phase 8: Frontier Prioritization, Timeout & Observability
 
@@ -103,5 +103,5 @@
 |-------|----------------|--------|-----------|
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
-| 7. Relay Health Management | 2/2 | Gaps found | - |
+| 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
