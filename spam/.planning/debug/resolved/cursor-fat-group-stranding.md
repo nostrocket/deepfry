@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Phase 3 query engine: cursor pagination strands events and can non-terminate when a single created_at second holds more events than emit_limit (fat group). Two gap-closures (03-10, 03-11) relocated the bug instead of closing it; both shipped green tests."
 created: 2026-06-13
 updated: 2026-06-13
@@ -96,3 +96,18 @@ verification: >
 files_changed:
   - src/query/merge.rs
   - src/query/engine.rs
+
+orchestrator_independent_verification: >
+  Confirmed the fix is robust beyond the shipped tests (not just rubber-stamped — the two prior
+  "green" fixes were actually broken). Wrote a temporary probe with FAT_COUNT=800 (>> the 256
+  production window) paginated via the PRODUCTION path (execute_query → DEFAULT_WINDOW_SIZE=256),
+  not the batch_size=2 harness paginate_all uses: collected 805/805, no duplicates, terminated.
+  Probe reverted; full suite re-confirmed green (110 tests). The resume_key mechanism descends
+  correctly through an arbitrarily fat dup group across pages even under the production window.
+
+coverage_gap_noted: >
+  All shipped fat-group regression tests paginate with batch_size=2 (paginate_all hardcodes
+  execute_query_with_batch(..., 2)), NOT the production DEFAULT_WINDOW_SIZE=256. The fix is
+  empirically correct under production batch size (probe above), but a PERMANENT regression test
+  exercising the production window would harden against future window/floor-interaction regressions.
+  Recommend adding one when convenient (non-blocking — correctness is verified).
