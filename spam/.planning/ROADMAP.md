@@ -124,7 +124,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 10** *(gap closure — new REVIEW CR-01 no-backfill-loop; blocked on Wave 9: shares engine.rs)*
 
-- [ ] 03-10-PLAN.md — restore a bounded round-loop (MAX_ROUNDS budget) in execute_query_internal calling merge_windowed from an advancing resume boundary, build a partial-result cursor when the budget stops the loop early so reachable events are never stranded, rewrite the divergent comments; fold in scan.rs reverse_upper_bound fail-soft + merge.rs MergeCandidate Eq/Ord consistency (QRY-01,QRY-02 / new REVIEW CR-01; WR-03 budget preserved)
+- [x] 03-10-PLAN.md — restore a bounded round-loop (MAX_ROUNDS budget) in execute_query_internal calling merge_windowed from an advancing resume boundary, build a partial-result cursor when the budget stops the loop early so reachable events are never stranded, rewrite the divergent comments; fold in scan.rs reverse_upper_bound fail-soft + merge.rs MergeCandidate Eq/Ord consistency (QRY-01,QRY-02 / new REVIEW CR-01; WR-03 budget preserved) — COMPLETE 2026-06-13
 
 ### Phase 4: GraphQL API
 
