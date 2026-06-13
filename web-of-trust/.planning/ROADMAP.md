@@ -95,7 +95,14 @@
   4. A batch whose alive relays reach ≥70% EOSE or error exits early without waiting for the remaining relays or the full 15s timeout.
   5. The `staleRemaining` value printed in the crawler's progress log reflects the actual remaining stale count (a `CountStalePubkeys` query result minus the current batch size) — not zero.
 
-**Plans**: TBD
+**Plans**: 2 plans
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — Dgraph + config foundation: next_attempt/miss_count predicates (D-01), follower-count-ordered GetStalePubkeys + D-09 live verification (PERF-01/D-08/D-09/D-10), hit/miss MarkAttempted + BackfillNextAttempt (PERF-02/D-03..06), CountStalePubkeys (METRIC-01/D-16), backoff math helper + config keys (D-07/D-11/D-12), unit + integration tests
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 08-02-PLAN.md — Crawler + main wiring: 15s timeout confirm (TIMEOUT-01/D-11), EOSE-quorum early exit (TIMEOUT-02/D-12/D-13/D-14), FetchAndUpdateFollows hit-set return + MarkAttempted wiring (PERF-02/D-05), startup BackfillNextAttempt (D-06), staleRemaining via CountStalePubkeys (METRIC-01/D-15/D-16/D-17), quorum unit tests + live-host verification
 
 ## Progress Table
 
@@ -104,4 +111,4 @@
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
-| 8. Frontier Prioritization, Timeout & Observability | 0/0 | Not started | - |
+| 8. Frontier Prioritization, Timeout & Observability | 0/2 | Not started | - |
