@@ -11,7 +11,7 @@
 - [x] **Phase 5: Pubkey Validation Hardening** - Fix the validator bug, purge existing garbage pubkeys from Dgraph, and ensure MarkAttempted ages invalid nodes out of the frontier (completed 2026-06-10)
 - [x] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns (completed 2026-06-11)
 - [x] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries (completed 2026-06-13)
-- [ ] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric
+- [x] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric (completed 2026-06-13)
 
 ## Phase Details
 
@@ -102,7 +102,7 @@
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 08-02-PLAN.md — Crawler + main wiring: 15s timeout confirm (TIMEOUT-01/D-11), EOSE-quorum early exit (TIMEOUT-02/D-12/D-13/D-14), FetchAndUpdateFollows hit-set return + MarkAttempted wiring (PERF-02/D-05), startup BackfillNextAttempt (D-06), staleRemaining via CountStalePubkeys (METRIC-01/D-15/D-16/D-17), quorum unit tests + live-host verification
+- [x] 08-02-PLAN.md — Crawler + main wiring: 15s timeout confirm (TIMEOUT-01/D-11), EOSE-quorum early exit (TIMEOUT-02/D-12/D-13/D-14), FetchAndUpdateFollows hit-set return + MarkAttempted wiring (PERF-02/D-05), startup BackfillNextAttempt (D-06), staleRemaining via CountStalePubkeys (METRIC-01/D-15/D-16/D-17), quorum unit tests + live-host verification
 
 ## Progress Table
 
@@ -111,4 +111,4 @@
 | 5. Pubkey Validation Hardening | 2/2 | Complete   | 2026-06-10 |
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
-| 8. Frontier Prioritization, Timeout & Observability | 1/2 | In Progress|  |
+| 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete   | 2026-06-13 |
