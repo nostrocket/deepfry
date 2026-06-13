@@ -73,8 +73,11 @@ Last activity: 2026-06-13
 
 ### Todos
 
-- [ ] Plan Phase 7 (`/gsd-plan-phase 7`)
-- [ ] Plan Phase 8 (`/gsd-plan-phase 8`)
+- [ ] Plan Phase 9 (`/gsd-plan-phase 9`) — Phase 8 hardening & resilience follow-ups
+
+### Roadmap Evolution
+
+- Phase 9 added (2026-06-13): "Phase 8 Hardening & Resilience Follow-ups" — opened at v1.2 milestone-close gate to resolve the two deferred follow-up todos (08-REVIEW.md WR-02/03/04/05 + transient-Dgraph-error retry) rather than carry them as tech debt. Phase 08 was already Complete/verified, so a follow-up phase was chosen over a `--force` replan. New requirements: HARD-01..04, RESIL-01. v1.2 grows from 4 → 5 phases (16 → 21 requirements).
 
 ### Blockers
 

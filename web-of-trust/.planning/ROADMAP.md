@@ -3,7 +3,7 @@
 **Milestone:** v1.2 — Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management
 **Created:** 2026-06-10
 **Granularity:** Coarse
-**Coverage:** 16/16 v1.2 requirements mapped
+**Coverage:** 21/21 v1.2 requirements mapped (16 original + 5 Phase-9 hardening/resilience follow-ups)
 **Numbering:** Continues from v1.1 (last phase was Phase 4) — this milestone starts at Phase 5
 
 ## Phases
@@ -12,6 +12,7 @@
 - [x] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns (completed 2026-06-11)
 - [x] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries (completed 2026-06-13)
 - [x] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric (completed 2026-06-13)
+- [ ] **Phase 9: Phase 8 Hardening & Resilience Follow-ups** - Close the deferred Phase 8 code-review warnings (paginate BackfillNextAttempt, MarkAttempted transaction safety, bounded forward-publish, large-frontier test coverage) and make the main crawl loop retry transient Dgraph errors instead of exiting
 
 ## Phase Details
 
@@ -112,3 +113,23 @@
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete    | 2026-06-13 |
+| 9. Phase 8 Hardening & Resilience Follow-ups | 0/0 | Not started | - |
+
+### Phase 9: Phase 8 Hardening & Resilience Follow-ups
+
+**Goal**: The deferred Phase 8 code-review warnings are closed and the main crawl loop survives transient Dgraph blips without a process restart — latent failure modes that the live run happened to dodge can no longer silently strand state or stall the drain loop
+**Depends on**: Phase 8
+**Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, RESIL-01
+**Success Criteria** (what must be TRUE):
+
+  1. `BackfillNextAttempt` paginates its query and commits stamps in `batchSize`-sized windows — a frontier of >gRPC-message-cap nodes is fully backfilled without a single oversized query/mutation, so D-06 holds on a large legacy set instead of silently failing non-fatally (WR-03).
+  2. `MarkAttempted`'s in-place recovery transaction is discarded promptly on every exit path (no undiscarded-txn accumulation across the recover/purge/stamp sequence), and the stamp-vs-recovery independence + retry-safety is documented — the VALID-03 behavior is preserved verbatim (WR-02).
+  3. `forwardEvent` publishes within a short bounded context (e.g. `c.timeout`) so a hung forward relay cannot stall the single-threaded drain loop or delay `MarkAttempted` / the next batch (WR-04).
+  4. The >1000-row frontier sort-cap regime is covered — either an integration test exercises a frontier larger than the order-by sort cap (proving top-N is honored, not pre-truncated), or the live-verified guarantee from the D-09 checkpoint is documented as the standing evidence (WR-05).
+  5. A transient Dgraph gRPC error (`codes.Unavailable`, EOF, deadline-exceeded) in the main crawl loop logs a WARN and retries with backoff rather than terminating the process; genuinely fatal/unrecoverable errors still exit loudly (RESIL-01).
+
+**Plans**: 0 plans (run `/gsd-plan-phase 9` to break down)
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 9 to break down)

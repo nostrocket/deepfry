@@ -1,4 +1,5 @@
 ---
+status: complete
 phase: quick-260611-ott
 plan: 01
 subsystem: web-of-trust
