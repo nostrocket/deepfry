@@ -266,6 +266,16 @@ pub fn build_nostr_filter(
     let since: Option<u64> = nonneg_ts(f.since, "since")?;
     let until: Option<u64> = nonneg_ts(f.until, "until")?;
 
+    // WR-06: reject an inverted range (since > until). The engine scans `created_at <= until`
+    // with a per-stream `since` floor, so a transposed pair (e.g. since=2_000_000_000,
+    // until=1_000_000_000) silently returns an empty page rather than feedback that the input
+    // was malformed — the same failure mode WR-04 was raised to eliminate.
+    if let (Some(s), Some(u)) = (since, until) {
+        if s > u {
+            return Err(async_graphql::Error::new("since must be <= until"));
+        }
+    }
+
     // tag: single TagFilterInput → one-element Vec<TagFilter> (D-02 / CONTEXT Open Question 2)
     let tags: Option<Vec<TagFilter>> = f.tag.map(|t: TagFilterInput| {
         vec![TagFilter {
