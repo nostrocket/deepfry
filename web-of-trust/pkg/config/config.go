@@ -128,10 +128,10 @@ func LoadConfig() (*Config, error) {
 
 	// Phase 8 PERF-02 (D-07): miss-backoff parameter group.
 	viper.SetDefault("miss_backoff", map[string]interface{}{
-		"base":               "2h",
-		"ratio":              2,
-		"cap":                "168h", // 7 days
-		"hit_refresh_cadence": "24h", // StalePubkeyThreshold re-used for HIT path (D-03)
+		"base":                "2h",
+		"ratio":               2,
+		"cap":                 "168h", // 7 days
+		"hit_refresh_cadence": "24h",  // StalePubkeyThreshold re-used for HIT path (D-03)
 	})
 
 	// Read config file

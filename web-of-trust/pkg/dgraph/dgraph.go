@@ -741,8 +741,8 @@ func (c *Client) MarkAttempted(
 
 // pubkeyNode is a compact result row for resolveUIDsWithMissCount.
 type pubkeyNode struct {
-	UID      string
-	Pubkey   string
+	UID       string
+	Pubkey    string
 	MissCount int
 }
 
@@ -792,8 +792,8 @@ func (c *Client) resolveUIDsWithMissCount(
 	out := make([]pubkeyNode, len(result.Nodes))
 	for i, n := range result.Nodes {
 		out[i] = pubkeyNode{
-			UID:      n.UID,
-			Pubkey:   n.Pubkey,
+			UID:       n.UID,
+			Pubkey:    n.Pubkey,
 			MissCount: n.MissCount,
 		}
 	}
