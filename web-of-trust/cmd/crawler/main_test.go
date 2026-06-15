@@ -154,8 +154,11 @@ func TestRetryDgraph_FatalPassthrough(t *testing.T) {
 }
 
 // TestRetryDgraph_TransientThenSuccess verifies that success-only timing is
-// recorded (OBS-01/D-07): one transient failure then success must produce a
-// metrics.avg > 0, and exactly one delay must have been recorded.
+// recorded (OBS-01/D-07): one transient failure then success must record
+// exactly one successful call, and exactly one delay must have been recorded.
+// We assert on the recorded success count rather than avg > 0: the success
+// duration is time.Since(start) over a no-op fn, which can truncate to 0ns on
+// a fast machine, making an avg > 0 assertion non-deterministic (WR-04).
 func TestRetryDgraph_TransientThenSuccess(t *testing.T) {
 	var slept []time.Duration
 	calls := 0
@@ -178,7 +181,7 @@ func TestRetryDgraph_TransientThenSuccess(t *testing.T) {
 	if len(slept) != 1 {
 		t.Errorf("expected exactly 1 recorded delay, got %d: %v", len(slept), slept)
 	}
-	if avg := m.avg("X"); avg <= 0 {
-		t.Errorf("expected metrics.avg(\"X\") > 0 after successful call, got %v", avg)
+	if m.count["X"] != 1 {
+		t.Errorf("expected exactly 1 recorded success for \"X\", got %d", m.count["X"])
 	}
 }
