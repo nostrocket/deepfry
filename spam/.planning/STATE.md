@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-06-13T15:20:20.918Z"
-last_activity: 2026-06-13
+last_updated: "2026-06-15T03:22:45.473Z"
+last_activity: 2026-06-15 -- Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 20
-  completed_plans: 20
+  total_plans: 22
+  completed_plans: 21
   percent: 80
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-10)
 
 **Core value:** Serve correct, rich queries over strfry's events by reading strfry's live on-disk state directly — never copying event data or indexes out of strfry, never writing to strfry's database.
-**Current focus:** Phase 04 — graphql-api
+**Current focus:** Phase 05 — hardening-docker-packaging
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-06-13
+Phase: 05 (hardening-docker-packaging) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 05
+Last activity: 2026-06-15 -- Phase 05 execution started
 
-Progress: [██████░░░░] 60% (Phases 1+2+3 complete; Phase 4 next)
+Progress: [███████░░░] 84% (Phases 1+2+3+4 complete; Phase 05 Plan 01 complete)
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [██████░░░░] 60% (Phases 1+2+3 complete; Phase 4 n
 | Phase 03-query-engine P10 | 20min | 2 tasks | 3 files |
 | Phase 03-query-engine P11 | 30min | 2 tasks | 1 file |
 | Phase 04-graphql-api P01 | 9 | 3 tasks | 5 files |
+| Phase 05-hardening P01 | 6 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,7 @@ Recent decisions affecting current work:
 - [Phase 03-query-engine]: CR-01 closed: Reverse scan Bound::Excluded(ts+1) for finite start keys — heed 0.22.1 rev_range Included positions at smallest dup then steps away; Excluded(ts+1) lands on largest dup of the boundary timestamp
 - [Phase 03-query-engine P10]: Bounded round-loop with MAX_ROUNDS=8; partial-result cursor returned when budget-capped with reachable events; VERIFICATION truth #5 VERIFIED; 106 tests pass (90 lib + 16 integration)
 - [Phase 03-query-engine P11]: CR-01 closed: deepest_scanned fallback cursor returns Some() when valid empty + !exhausted. CR-02 closed: no-progress break with ts-advance override (deepest_scanned = stalled_ts-1 / u64::MAX) ensures events below fat timestamp reachable. 108 tests pass.
+- [Phase 05 P01]: OPS-01 — /health (200 always) + /ready (503 before gates, 200 after) via Arc<AtomicBool> set after run_comparator_self_check. OPS-04 — pinnedStrfryVersion in AppState+StatsResult+stats resolver. 125 tests pass.
 
 ### Pending Todos
 
