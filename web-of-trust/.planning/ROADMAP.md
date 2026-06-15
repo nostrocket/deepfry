@@ -46,7 +46,8 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
   3. A fatal non-transient Dgraph error (e.g. `codes.Unauthenticated`) still exits the crawler immediately with a logged error, unchanged from v1.2 behavior
   4. Pressing Ctrl-C (or sending SIGTERM) while the crawler is mid-backoff causes clean exit within seconds, not after the full wait interval elapses
   5. Console periodically logs average call duration per Dgraph call type (`GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`) during normal operation
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 10-01-PLAN.md — Extract generic retryDgraph helper (indefinite transient retry, 1m→5m backoff, ctx-cancel-aware wait, cumulative per-call-type duration metrics) + unit tests
 
 ## Progress
 
@@ -57,4 +58,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 7. Relay Health Management | v1.2 | 3/3 | Complete | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | v1.2 | 2/2 | Complete | 2026-06-13 |
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
-| 10. Unbounded Retry & Backoff Hardening | v1.3 | 0/? | Not started | - |
+| 10. Unbounded Retry & Backoff Hardening | v1.3 | 0/1 | Not started | - |
