@@ -2,61 +2,76 @@
 
 A **read-only GraphQL adapter over a [strfry](https://github.com/hoytech/strfry) Nostr relay's LMDB database.** It exposes strfry's events as a directly queryable GraphQL endpoint, letting you run rich queries the Nostr `REQ` protocol can't express — e.g. *"the latest 20 kind-1 events per pubkey"* — without going through the relay process.
 
-It is a **query lens over strfry's live data, not a copy of it.** LMDB2GraphQL reads strfry's existing on-disk indexes directly (`MDB_RDONLY`, never a write txn) and never replicates event data into a separate store, honoring the DeepFry stack rule: *no event payloads outside strfry*.
+It is a **query lens over strfry's live data, not a copy of it.** LMDB2GraphQL reads strfry's existing on-disk indexes directly (`MDB_RDONLY`, never a write txn) and never replicates event data into a separate store.
 
-> ⚠️ **Coupling & version gate.** This adapter reimplements strfry/golpe's custom LMDB comparators byte-for-byte and depends on strfry's internal index key formats. It is pinned to one strfry version and **refuses to start** unless the on-disk `Meta.dbVersion == 3` and endianness matches the host. Treat strfry's internals as a private API.
+## Quick start
 
----
+All you need is the compiled binary and a strfry LMDB database directory to point it at.
 
-## Requirements
+**1. Build the binary:**
 
-- A strfry LMDB database directory (the one containing `data.mdb`), readable by this process.
-- The **pinned** strfry build: `dockurr/strfry@sha256:545555da…` (strfry 1.1.0 / hoytech commit `f31a1b9d`). A different strfry version may have incompatible indexes.
-- To build from source: Rust (toolchain pinned via `rust-toolchain.toml`) and `lmdb.h` (`brew install lmdb` on macOS).
+```bash
+cargo build --release
+# → target/release/lmdb2graphql
+```
+
+**2. Point it at a database.** Config is read from `~/deepfry/lmdb2graphql.yaml`. The minimal config is the path to strfry's LMDB directory (the one containing `data.mdb`):
+
+```bash
+mkdir -p ~/deepfry
+cat > ~/deepfry/lmdb2graphql.yaml <<'YAML'
+strfry_db_path: /path/to/strfry-db
+
+# Required (surfaced in `stats` / startup logs for drift detection — see Configuration):
+pinned_strfry_version: "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5"
+pinned_strfry_commit: "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135"
+YAML
+```
+
+**3. Run it:**
+
+```bash
+./target/release/lmdb2graphql
+```
+
+It binds `127.0.0.1:8080`, opens the LMDB read-only, runs its startup gates, and starts serving.
+
+**4. Query it:**
+
+```bash
+curl -s http://127.0.0.1:8080/graphql \
+  -H 'content-type: application/json' \
+  -d '{"query":"{ stats { eventCount dbVersion pinnedStrfryVersion } }"}'
+```
+
+Or open `http://127.0.0.1:8080/graphql` in a browser for the interactive GraphiQL playground.
+
+> **What "startup gates" means:** before serving any data, the process opens the LMDB read-only, asserts the on-disk `Meta.dbVersion == 3` and that endianness matches the host, then runs a comparator self-check against committed golden vectors. If any gate fails it **exits non-zero** and `/ready` never returns 200 — fail-closed. This is why the database must be from a compatible strfry build (see below).
+
+## Compatibility
+
+LMDB2GraphQL reimplements strfry/golpe's custom LMDB comparators byte-for-byte and depends on strfry's internal index key formats. It is pinned to one strfry version (`dockurr/strfry@sha256:545555da…` / hoytech commit `f31a1b9d`) and treats strfry's internals as a private API. A database from a different strfry version may have incompatible indexes and will be rejected by the startup gate.
+
+Building from source needs Rust (toolchain pinned via `rust-toolchain.toml`) and `lmdb.h` (`brew install lmdb` on macOS). If `cargo` reports "not available" on this machine, the toolchain needs explicit env:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+export RUSTUP_TOOLCHAIN=stable-x86_64-apple-darwin
+```
 
 ## Configuration
 
-LMDB2GraphQL reads a single YAML file. Bare-metal runs read it from `~/deepfry/lmdb2graphql.yaml`; the Docker image reads it from `/root/deepfry/lmdb2graphql.yaml` (mounted). Copy the example and edit:
+`~/deepfry/lmdb2graphql.yaml` (full reference at `config/lmdb2graphql.yaml.example`):
 
-```bash
-cp config/lmdb2graphql.yaml.example ~/deepfry/lmdb2graphql.yaml
-```
+| Key | Required | Default | Purpose |
+|-----|----------|---------|---------|
+| `strfry_db_path` | **yes** | — | Directory containing strfry's `data.mdb` (the LMDB env dir). |
+| `pinned_strfry_version` | **yes** | — | The strfry image ref this adapter targets. Surfaced in `stats`/logs so operators can spot drift if the parent image moves. |
+| `pinned_strfry_commit` | **yes** | — | The corresponding hoytech/strfry git commit SHA. |
+| `bind_address` | no | `127.0.0.1:8080` | HTTP listen address. |
+| `map_size` | no | `10995116277760` (10 TiB) | LMDB map size in bytes — must be **≥** strfry's configured `dbParams.mapsize`. |
 
-| Key | Purpose |
-|-----|---------|
-| `strfry_db_path` | Directory containing strfry's `data.mdb` (the LMDB env dir). |
-| `bind_address` | HTTP listen address. Use `127.0.0.1:8080` bare-metal; **`0.0.0.0:8080` inside Docker** (see note below). |
-| `map_size` | LMDB map size in bytes — must be **≥** strfry's configured `dbParams.mapsize` (default 10 TiB). |
-| `pinned_strfry_version` | The pinned strfry image ref (full `sha256` digest). Surfaced in `stats`/startup logs for drift detection. |
-| `pinned_strfry_commit` | The pinned hoytech/strfry git commit SHA. |
-
-> 🔒 **Non-loopback binds are loud on purpose.** This endpoint is unauthenticated with full introspection and a GraphiQL playground. Binding a non-loopback address logs a `NON-LOOPBACK` warning. Inside Docker, `0.0.0.0` only binds the container namespace — the compose `127.0.0.1:8080:8080` publish rule is the real host-level exposure control.
-
-## Running
-
-### Bare-metal / dev
-
-```bash
-# from the crate root (this directory)
-cargo run --release
-```
-
-On startup it: loads config → binds the HTTP socket → runs the gate chain (open LMDB read-only → assert `dbVersion`/endianness → comparator self-check against committed golden vectors) → marks itself ready. **Fail-closed:** if any gate fails the process exits non-zero and `/ready` never reaches 200.
-
-### Docker (DeepFry stack)
-
-Packaged as a sidecar co-located with strfry, mounting `strfry-db` read-only.
-
-```bash
-# one-time: the shared network
-docker network create deepfry-net
-
-# bring it up alongside strfry
-docker compose -f docker-compose.strfry.yml \
-               -f docker-compose.lmdb2graphql.yml up -d
-```
-
-The compose service mounts the strfry LMDB at `/app/strfry-db:ro`, publishes the GraphQL endpoint on loopback only, and uses `/health` (not `/ready`) for its healthcheck.
+> 🔒 **`bind_address` defaults to loopback on purpose.** This endpoint is unauthenticated with full introspection and a GraphiQL playground. Binding a non-loopback address (e.g. `0.0.0.0:8080`) serves the entire strfry corpus to any host that can route to the box, so the process logs a loud `NON-LOOPBACK` warning. Only widen it deliberately.
 
 ## HTTP endpoints
 
@@ -64,10 +79,10 @@ The compose service mounts the strfry LMDB at `/app/strfry-db:ro`, publishes the
 |--------|------|-----------|
 | `POST` | `/graphql` | GraphQL query execution. Returns **503** until startup gates pass (no data served while not ready). |
 | `GET` | `/graphql` | GraphiQL playground (interactive query UI). |
-| `GET` | `/health` | Liveness — **200** whenever the process is alive. Use this for container healthchecks. |
-| `GET` | `/ready` | Readiness — **200** only after the LMDB env opens and the comparator self-check passes; **503** otherwise. |
+| `GET` | `/health` | Liveness — **200** whenever the process is alive. |
+| `GET` | `/ready` | Readiness — **200** only after the startup gates pass; **503** otherwise. |
 
-`/health` vs `/ready`: point load balancers / "is it up" checks at `/ready`; point container restart healthchecks at `/health` (using `/ready` would restart-loop during startup).
+Point "is it ready to serve traffic" checks at `/ready`; point process-restart healthchecks at `/health` (using `/ready` there would restart-loop during startup).
 
 ## GraphQL API
 
@@ -120,23 +135,36 @@ query {
     eventCount
     maxLevId
     dbVersion              # detected on-disk strfry DB version
-    pinnedStrfryVersion    # the version this adapter was built against — compare to spot drift
+    pinnedStrfryVersion    # the version this adapter targets — compare to spot drift
   }
 }
 ```
 
-#### Field reference
+**Field reference**
 
 - **Event**: `id`, `pubkey`, `kind`, `createdAt`, `content`, `sig`, `tags` (`[[String]]`), `raw` (the exact retained JSON bytes).
 - **EventFilterInput**: `ids`, `authors`, `kinds`, `since`, `until`, `tag { name, values }`.
 
-### Quick query from the shell
+## Running as part of the DeepFry stack (Docker)
+
+LMDB2GraphQL is one component of [DeepFry](../CLAUDE.md), the backend stack around an unmodified strfry relay. For that deployment it ships as a Docker sidecar — **this is a packaging choice, not a runtime requirement; the binary above runs fine standalone.**
+
+The container deployment adds: a kernel-enforced read-only mount (`strfry-db:ro` — defense-in-depth on top of the code's `MDB_RDONLY`), co-location with strfry on one host, and a reproducible static Alpine build pinned to the strfry digest.
 
 ```bash
-curl -s http://127.0.0.1:8080/graphql \
-  -H 'content-type: application/json' \
-  -d '{"query":"{ stats { eventCount dbVersion pinnedStrfryVersion } }"}'
+# one-time: the shared network used across DeepFry services
+docker network create deepfry-net
+
+# bring it up alongside strfry
+docker compose -f docker-compose.strfry.yml \
+               -f docker-compose.lmdb2graphql.yml up -d
 ```
+
+Notes specific to the stack deployment:
+
+- **Set `bind_address: "0.0.0.0:8080"` in the config.** Inside a container, `127.0.0.1` binds the container's loopback and is unreachable from elsewhere. The compose `127.0.0.1:8080:8080` publish rule is the actual host-level exposure control.
+- **`deepfry-net`** is an external Docker network so *other stack services* can reach this GraphQL endpoint by container name (the host port is loopback-only). The adapter reads strfry's data through the `:ro` volume mount, **not** over the network — so `deepfry-net` is for inbound consumers, not for talking to strfry. Standalone runs don't need it.
+- The compose healthcheck uses `/health` (not `/ready`).
 
 ## Development
 
@@ -144,14 +172,3 @@ curl -s http://127.0.0.1:8080/graphql \
 cargo build              # compile
 cargo test --all-targets # full test suite
 ```
-
-If `cargo` reports "not available" on this machine, the toolchain needs explicit env (cargo isn't on PATH and the toolchain pin must be overridden):
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-export RUSTUP_TOOLCHAIN=stable-x86_64-apple-darwin
-```
-
-## How it fits the DeepFry stack
-
-LMDB2GraphQL is one component of [DeepFry](../CLAUDE.md), the backend stack around an unmodified strfry relay. It never writes to strfry's database and never copies event payloads out of it — it only opens strfry's LMDB read-only and serves queries over the live indexes.
