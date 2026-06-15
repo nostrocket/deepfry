@@ -1,8 +1,8 @@
 //! WR-02-LAYER: integration test for the 256 KiB request body cap on POST /graphql.
 //!
 //! The body limit (`MAX_REQUEST_BODY_BYTES`) is applied to the axum `Router` via
-//! `DefaultBodyLimit::max(...)`. The GraphQL handler is mounted via `.post_service(...)`
-//! (a Tower `Service`, not a native axum handler), so this test confirms the layer
+//! `RequestBodyLimitLayer` (outermost layer). The GraphQL handler is mounted via a custom
+//! async handler that checks the `OnceCell<AppSchema>`, so this test confirms the layer
 //! actually bites on that path: a POST body over the cap must be rejected (HTTP 413)
 //! before it is buffered/parsed, while a small body must be accepted.
 
@@ -11,8 +11,9 @@ use lmdb2graphql::graphql::schema::{build_schema, AppState};
 use lmdb2graphql::lmdb::env::open_fixture_env;
 use lmdb2graphql::lmdb::meta::read_meta;
 use lmdb2graphql::lmdb::payload::DictCache;
-use lmdb2graphql::server::build_router;
+use lmdb2graphql::server::{AppRouterState, build_router};
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 use tower::ServiceExt; // for `oneshot`
 
 /// Copy the committed fixture to a temp dir and open a read-only env there.
@@ -37,8 +38,17 @@ fn make_router() -> axum::Router {
         meta,
         pinned_strfry_version: "test-pinned".to_string(),
     };
+    let schema = build_schema(app_state);
+    // Populate the schema cell so POST /graphql routes to the handler (not early 503).
+    // The body-limit layer fires BEFORE the handler regardless, so 413 still fires on oversized.
+    let schema_cell = Arc::new(OnceCell::new());
+    let _ = schema_cell.set(schema);
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    build_router(build_schema(app_state), ready)
+    let state = AppRouterState {
+        ready,
+        schema: schema_cell,
+    };
+    build_router(state)
 }
 
 /// A small, valid GraphQL POST body must be accepted (status < 400).
@@ -62,7 +72,7 @@ async fn test_small_body_accepted() {
 }
 
 /// A POST body larger than the 256 KiB cap must be rejected with 413 Payload Too Large,
-/// proving DefaultBodyLimit is enforced on the `post_service` GraphQL path (WR-02-LAYER).
+/// proving RequestBodyLimitLayer is enforced on the `POST /graphql` path (WR-02-LAYER).
 #[tokio::test]
 async fn test_oversized_body_rejected() {
     let router = make_router();

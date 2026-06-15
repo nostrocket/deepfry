@@ -1,13 +1,12 @@
 //! Integration tests for the /health and /ready HTTP probes (OPS-01).
 //!
-//! Verifies the three probe semantics without any LMDB access:
+//! Verifies the three probe semantics without any LMDB access beyond the schema-build fixture:
 //!   1. GET /health always returns 200 (liveness — no LMDB, no state).
 //!   2. GET /ready returns 503 when the readiness flag is false.
 //!   3. GET /ready returns 200 when the readiness flag is set true.
 //!
-//! The router is constructed via `build_router` with a directly-controlled
-//! `Arc<AtomicBool>` — no real LMDB env is needed because health/ready do
-//! not touch LMDB state.
+//! The router is constructed via `build_router(AppRouterState {...})` with a directly-controlled
+//! `Arc<AtomicBool>` — health/ready handlers do not touch LMDB state.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -19,14 +18,16 @@ use lmdb2graphql::graphql::schema::{build_schema, AppState};
 use lmdb2graphql::lmdb::env::open_fixture_env;
 use lmdb2graphql::lmdb::meta::read_meta;
 use lmdb2graphql::lmdb::payload::DictCache;
-use lmdb2graphql::server::build_router;
+use lmdb2graphql::server::{AppRouterState, build_router};
+use tokio::sync::OnceCell;
 use tower::ServiceExt; // for `oneshot`
 
 /// Build a minimal AppState from the committed fixture for schema construction.
 ///
 /// Health and ready handlers do not access `AppState` — but `build_router`
-/// requires a built `AppSchema`, which in turn requires an `AppState`. We use the
-/// fixture env to satisfy the type system without affecting the probe semantics.
+/// requires a schema in the `OnceCell` for /graphql access (not needed here,
+/// but the fixture env satisfies the type system. The OnceCell can be left
+/// empty for health/ready-only tests since those handlers never touch it.
 fn make_schema() -> lmdb2graphql::graphql::schema::AppSchema {
     let src = std::path::Path::new("tests/fixture");
     let tmp = tempfile::tempdir().expect("create tempdir");
@@ -55,9 +56,14 @@ fn make_schema() -> lmdb2graphql::graphql::schema::AppSchema {
 /// constant with no LMDB access and no shared state (OPS-01).
 #[tokio::test]
 async fn test_health_returns_200() {
-    let schema = make_schema();
     let ready = Arc::new(AtomicBool::new(false));
-    let router = build_router(schema, Arc::clone(&ready));
+    let schema_cell = Arc::new(OnceCell::new());
+    let _ = schema_cell.set(make_schema());
+    let state = AppRouterState {
+        ready: Arc::clone(&ready),
+        schema: Arc::clone(&schema_cell),
+    };
+    let router = build_router(state);
 
     let req = Request::builder()
         .method("GET")
@@ -84,9 +90,14 @@ async fn test_health_returns_200() {
 /// set `true` only after `run_comparator_self_check` passes (T-05-04 / OPS-01).
 #[tokio::test]
 async fn test_ready_returns_503_before_flag_set() {
-    let schema = make_schema();
     let ready = Arc::new(AtomicBool::new(false)); // flag NOT set
-    let router = build_router(schema, Arc::clone(&ready));
+    let schema_cell = Arc::new(OnceCell::new());
+    let _ = schema_cell.set(make_schema());
+    let state = AppRouterState {
+        ready: Arc::clone(&ready),
+        schema: Arc::clone(&schema_cell),
+    };
+    let router = build_router(state);
 
     let req = Request::builder()
         .method("GET")
@@ -113,11 +124,16 @@ async fn test_ready_returns_503_before_flag_set() {
 /// confirm the service is ready to serve queries (OPS-01).
 #[tokio::test]
 async fn test_ready_returns_200_after_flag_set() {
-    let schema = make_schema();
     let ready = Arc::new(AtomicBool::new(false));
     // Simulate startup gate completion — set the flag true before serving.
     ready.store(true, Ordering::Release);
-    let router = build_router(schema, Arc::clone(&ready));
+    let schema_cell = Arc::new(OnceCell::new());
+    let _ = schema_cell.set(make_schema());
+    let state = AppRouterState {
+        ready: Arc::clone(&ready),
+        schema: Arc::clone(&schema_cell),
+    };
+    let router = build_router(state);
 
     let req = Request::builder()
         .method("GET")

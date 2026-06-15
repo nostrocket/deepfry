@@ -1,22 +1,28 @@
 /// server.rs — axum HTTP router for the lmdb2graphql GraphQL API.
 ///
-/// Provides:
-///   - `build_probe_router(ready)` — startup-window surface: mounts ONLY `GET /health`
-///     and `GET /ready` (no GraphQL/data routes). Served on the bound TCP listener while
-///     the gate chain runs so orchestrators can observe the 503→200 transition (OPS-01,
-///     T-05-05-SC: no corpus reachable while `ready=false`).
-///   - `build_router(schema, ready)` — mounts `POST /graphql` (GraphQL service),
-///     `GET /graphql` (GraphiQL playground), `GET /health` (liveness), and
-///     `GET /ready` (readiness) on the same router (Pattern 5 / Pitfall 4 / OPS-01).
-///
-/// ## Routing
+/// Provides a single `build_router(state: AppRouterState) -> Router` that serves the
+/// entire process lifetime — from the initial bind through startup gates to full readiness.
+/// The router gates the data surface behind an `Arc<OnceCell<AppSchema>>`:
 ///
 /// ```text
-///   POST /graphql  →  async-graphql Tower Service (GraphQL::new(schema))
-///   GET  /graphql  →  graphiql handler → Html(GraphiQLSource)
+///   POST /graphql  →  503 (schema cell empty / not ready) OR execute query (schema populated)
+///   GET  /graphql  →  graphiql handler → Html(GraphiQLSource)  [always available]
 ///   GET  /health   →  health_handler → 200 always (liveness — OPS-01)
 ///   GET  /ready    →  ready_handler  → 200 if ready flag is true, 503 otherwise (OPS-01)
 /// ```
+///
+/// ## Bind-once / zero-gap design (CR-01 / CR-02 fix)
+///
+/// The listener is bound ONCE before the startup gate chain. A single `axum::serve` call
+/// serves this router for the entire process lifetime — no probe server, no graceful-shutdown
+/// handshake, no re-bind. The `POST /graphql` handler returns 503 and executes NO query while
+/// `AppRouterState::schema` is empty (`OnceCell` not yet populated). After the gate chain
+/// completes, `main.rs` populates the cell and flips `ready` to `true`; subsequent POST
+/// requests are routed to the schema. This eliminates the connection-refused gap (CR-01)
+/// and the ephemeral-port re-bind bug (CR-02) present in the previous probe-shutdown design.
+///
+/// Security (T-05-05-SC): no Nostr corpus is reachable while the schema cell is empty.
+/// A 503 response to POST /graphql executes no query and reads no LMDB data.
 ///
 /// ## Pitfall 4 (RESEARCH.md)
 ///
@@ -40,14 +46,15 @@ use std::sync::{
 };
 
 use async_graphql::http::GraphiQLSource;
-use async_graphql_axum::GraphQL;
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
+use tokio::sync::OnceCell;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::graphql::schema::AppSchema;
@@ -58,93 +65,55 @@ use crate::graphql::schema::AppSchema;
 /// large enough to be legitimate does not approach this ceiling.
 const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
 
-/// Build the axum router for the GraphQL API (Pattern 5 / RESEARCH.md / OPS-01).
+/// Shared state for the single gated router.
 ///
-/// Mounts four routes:
-/// - `GET  /graphql` → GraphiQL playground (HTML, for browser use)
-/// - `POST /graphql` → GraphQL Tower Service (for programmatic clients)
-/// - `GET  /health`  → liveness probe: always 200 (OPS-01, T-05-03)
-/// - `GET  /ready`   → readiness probe: 200 if `ready` flag is true, 503 otherwise (OPS-01)
+/// Both fields are `Arc`-wrapped so `AppRouterState` is `Clone` (required by axum's
+/// `with_state` — the state is cloned into every handler invocation).
 ///
-/// `post_service` is called on the `MethodRouter` returned by `get(graphiql)` (Pitfall 4 —
-/// NOT a free `axum::routing::post_service` function).
-///
-/// ## Readiness flag (OPS-01 / T-05-04)
-///
-/// `ready` is an `Arc<AtomicBool>` initialized `false` in `main.rs` and set `true` only
-/// after all startup gates pass (`run_comparator_self_check` succeeds). Using `AtomicBool`
-/// (not `Mutex<bool>` or `RwLock<bool>`) avoids lock contention on every probe — the readiness
-/// state is a single bit that only ever transitions false → true (per RESEARCH anti-patterns).
-///
-/// ## Layer ordering (WR-02-LAYER)
-///
-/// `.with_state(ready)` injects the `Arc<AtomicBool>` into the router state.
-/// `.layer(RequestBodyLimitLayer::new(...))` is applied AFTER `.with_state()` so it is the
-/// outermost layer — enforces the body cap at the Content-Length/body-stream level regardless
-/// of extractor, returning 413 Payload Too Large before the body is buffered.
-/// Build the probe-only router for the startup gate window (OPS-01 / T-05-05-SC).
-///
-/// This router is served on the bound TCP listener BEFORE the gate chain runs, giving
-/// orchestrators a real HTTP surface to poll during startup. It mounts:
-/// - `GET /health` → `health_handler`: 200 always (liveness)
-/// - `GET /ready`  → `ready_handler`: 503 while `ready=false`; 200 after `store(true)`
-///
-/// Critically, this router does NOT mount `/graphql` and does NOT include the GraphQL
-/// Tower service or `AppState`. No event data is reachable while `ready=false` — the
-/// data/GraphQL surface is only mounted in `build_router` after gates pass (T-05-05-SC).
-///
-/// No `RequestBodyLimitLayer` is needed here — both handlers accept no request body.
-///
-/// ## Startup sequence
-///
-/// In `main.rs`:
-/// 1. `let listener = TcpListener::bind(addr).await?;`
-/// 2. `let probe = build_probe_router(Arc::clone(&ready)); // ready=false`
-/// 3. `tokio::spawn(axum::serve(listener, probe).with_graceful_shutdown(...))`
-/// 4. Run gate chain (env open → Meta gates → comparator self-check)
-/// 5. On `Ok`: `ready.store(true, Ordering::Release)` → probe now returns 200
-/// 6. Graceful-shutdown the probe server; re-bind; serve `build_router`
-/// 7. On any gate `Err`: `?` propagates to `main`, process exits non-zero — `/ready` never reaches 200
-pub fn build_probe_router(ready: Arc<AtomicBool>) -> Router {
-    Router::new()
-        .route("/health", get(health_handler))
-        .route("/ready", get(ready_handler))
-        .with_state(ready)
+/// - `ready`: `AtomicBool` initialized `false` in `main.rs`; flipped `true` ONLY after all
+///   startup gates pass (`run_comparator_self_check` succeeds). Readable via `GET /ready`.
+/// - `schema`: `OnceCell<AppSchema>` populated ONLY after the gate chain returns `Ok` and
+///   BEFORE `ready.store(true)`. `POST /graphql` returns 503 while the cell is empty —
+///   no event data is reachable until the schema is present (T-05-05-SC).
+#[derive(Clone)]
+pub struct AppRouterState {
+    pub ready: Arc<AtomicBool>,
+    pub schema: Arc<OnceCell<AppSchema>>,
 }
 
-/// Build the axum router for the GraphQL API (Pattern 5 / RESEARCH.md / OPS-01).
+/// Build the single axum router for the entire process lifetime (OPS-01 / CR-01 fix).
 ///
 /// Mounts four routes:
-/// - `GET  /graphql` → GraphiQL playground (HTML, for browser use)
-/// - `POST /graphql` → GraphQL Tower Service (for programmatic clients)
+/// - `GET  /graphql` → GraphiQL playground (HTML; always available; exposes no data)
+/// - `POST /graphql` → gated handler: 503 while schema cell empty; execute query when populated
 /// - `GET  /health`  → liveness probe: always 200 (OPS-01, T-05-03)
 /// - `GET  /ready`   → readiness probe: 200 if `ready` flag is true, 503 otherwise (OPS-01)
 ///
-/// `post_service` is called on the `MethodRouter` returned by `get(graphiql)` (Pitfall 4 —
-/// NOT a free `axum::routing::post_service` function).
+/// ## Readiness gate (OPS-01 / T-05-05-SC)
 ///
-/// ## Readiness flag (OPS-01 / T-05-04)
+/// `state.schema` is a `OnceCell<AppSchema>` that starts empty. The `POST /graphql` handler
+/// reads `state.schema.get()`:
+/// - `None`  → 503 SERVICE_UNAVAILABLE; no query executed; no LMDB data accessed.
+/// - `Some(schema)` → execute the GraphQL request and return the result.
 ///
-/// `ready` is an `Arc<AtomicBool>` initialized `false` in `main.rs` and set `true` only
-/// after all startup gates pass (`run_comparator_self_check` succeeds). Using `AtomicBool`
-/// (not `Mutex<bool>` or `RwLock<bool>`) avoids lock contention on every probe — the readiness
-/// state is a single bit that only ever transitions false → true (per RESEARCH anti-patterns).
+/// `main.rs` populates the cell and THEN flips `state.ready` to `true`, so a 200 on `/ready`
+/// always implies the schema is present and `/graphql` is queryable.
 ///
 /// ## Layer ordering (WR-02-LAYER)
 ///
-/// `.with_state(ready)` injects the `Arc<AtomicBool>` into the router state.
+/// `.with_state(state)` injects `AppRouterState` into the router state.
 /// `.layer(RequestBodyLimitLayer::new(...))` is applied AFTER `.with_state()` so it is the
 /// outermost layer — enforces the body cap at the Content-Length/body-stream level regardless
 /// of extractor, returning 413 Payload Too Large before the body is buffered.
-pub fn build_router(schema: AppSchema, ready: Arc<AtomicBool>) -> Router {
+pub fn build_router(state: AppRouterState) -> Router {
     Router::new()
         .route(
             "/graphql",
-            get(graphiql).post_service(GraphQL::new(schema)),
+            get(graphiql).post(graphql_handler),
         )
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
-        .with_state(ready)
+        .with_state(state)
         // WR-02-LAYER: enforce the body cap with tower-http's RequestBodyLimitLayer rather
         // than axum's DefaultBodyLimit. DefaultBodyLimit relies on the Bytes/String extractors
         // and does NOT bite on the async-graphql `.post_service(...)` Tower-service path — an
@@ -158,8 +127,32 @@ pub fn build_router(schema: AppSchema, ready: Arc<AtomicBool>) -> Router {
 ///
 /// GraphiQL and schema introspection are enabled for this read-only adapter.
 /// No credentials or sensitive state are exposed (the adapter only reads strfry LMDB).
+/// This handler is NOT gated — the playground HTML contains no corpus data.
 async fn graphiql() -> impl IntoResponse {
     Html(GraphiQLSource::build().endpoint("/graphql").finish())
+}
+
+/// GraphQL POST handler — gated on schema readiness (POST /graphql, OPS-01 / T-05-05-SC).
+///
+/// Reads `state.schema.get()`:
+/// - `None`  (schema cell empty, gates not yet passed) → 503 SERVICE_UNAVAILABLE.
+///   No query is executed and no LMDB data is accessed. This preserves T-05-05-SC:
+///   no corpus is reachable while the service is not ready.
+/// - `Some(schema)` (gates passed, cell populated) → execute the GraphQL request
+///   via async-graphql and return the response.
+///
+/// The `RequestBodyLimitLayer` (outermost layer) still fires before this handler,
+/// so an oversized POST body is rejected with 413 before reaching this logic.
+async fn graphql_handler(
+    State(state): State<AppRouterState>,
+    req: GraphQLRequest,
+) -> Response {
+    match state.schema.get() {
+        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Some(schema) => {
+            GraphQLResponse::from(schema.execute(req.into_inner()).await).into_response()
+        }
+    }
 }
 
 /// Liveness probe handler — always returns 200 OK (GET /health, OPS-01, T-05-03).
@@ -176,8 +169,8 @@ async fn health_handler() -> StatusCode {
 
 /// Readiness probe handler — returns 200 if ready, 503 otherwise (GET /ready, OPS-01, T-05-04).
 ///
-/// Reads the `Arc<AtomicBool>` injected via `.with_state(ready)`. Returns:
-/// - `200 OK` if `ready.load(Ordering::Acquire)` is `true` (all startup gates passed).
+/// Reads the `Arc<AtomicBool>` from `AppRouterState` injected via `.with_state(state)`. Returns:
+/// - `200 OK` if `state.ready.load(Ordering::Acquire)` is `true` (all startup gates passed).
 /// - `503 SERVICE_UNAVAILABLE` if the flag is still `false` (gates not yet completed).
 ///
 /// `Ordering::Acquire` pairs with the `Ordering::Release` in `main.rs` where the flag is
@@ -185,8 +178,8 @@ async fn health_handler() -> StatusCode {
 ///
 /// Security (T-05-01): exposes only a boolean as an HTTP status code. No internal state,
 /// paths, or error text in the response body. ASVS L1 V4 partial.
-async fn ready_handler(State(ready): State<Arc<AtomicBool>>) -> StatusCode {
-    if ready.load(Ordering::Acquire) {
+async fn ready_handler(State(state): State<AppRouterState>) -> StatusCode {
+    if state.ready.load(Ordering::Acquire) {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
