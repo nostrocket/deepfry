@@ -1,158 +1,241 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-06-09
+**Analysis Date:** 2026-06-15
 
 ## Tech Debt
 
-**Mutex held across Dgraph writes in the event loop:**
-- Issue: `dbUpdateMutex` is locked at the top of the `eventsChan` case and held through `event.CheckSignature()`, `forwardEvent()` (a network publish), `TouchLastDBUpdate()` and the full `updateFollowsFromEvent()` → `AddFollowers()` Dgraph transaction. All per-event work is serialized behind a single mutex even though events arrive concurrently from multiple relays.
-- Files: `pkg/crawler/crawler.go:350-402`
-- Impact: The crawler processes events strictly one-at-a-time; a slow Dgraph commit or a slow forward-relay publish stalls processing of every other relay's events. Defeats the concurrent relay fan-in. Signature verification (CPU-bound) also runs under the lock.
-- Fix approach: Narrow the critical section to only the Dgraph mutation, or move signature checks and forwarding outside the lock. Consider a worker pool draining `eventsChan` with per-pubkey serialization instead of one global mutex.
+**Hardcoded pubkeys in whitelist repository**
+- File: `whitelist-plugin/pkg/repository/dgraph_repository.go` (`getHardcodedPubkeys()`, lines 203–212)
+- Five pubkeys (live forwarder, history forwarder, admin accounts) are hardcoded in source. If any of these keys are rotated, a code change and redeploy is required. There is no mechanism to detect stale hardcoded keys or to remove them via config.
+- Fix: move to a `whitelist-server.yaml` config field or a separate admin-keys list; document key rotation procedure.
 
-**`CountPubkeys` runs twice every loop iteration:**
-- Issue: The main loop calls `CountPubkeys` on every batch (`totalPubkeys`) plus once at start/end. `CountPubkeys` runs `count(func: has(pubkey))` which scans the entire pubkey index.
-- Files: `cmd/crawler/main.go:116-120`, `pkg/dgraph/dgraph.go:540-571`
-- Impact: As the graph grows into hundreds of thousands of nodes, a full count per batch adds avoidable latency to every cycle. The value is only used for a log line and an empty-DB check.
-- Fix approach: Count once before the loop; only re-check for empty-DB on the first iteration. Drop the per-batch count or run it on a timer.
+**Whitelist refresh silently retains stale data on sustained Dgraph outage**
+- File: `whitelist-plugin/pkg/whitelist/whitelist_refresher.go` (lines 62–87)
+- If all `retryCount+1` refresh attempts fail, the refresher logs one line and continues using the last successfully loaded whitelist. There is no alerting, no health-check downgrade, and no circuit-breaker. A Dgraph outage will silently age the whitelist indefinitely.
+- Fix: expose a staleness metric on `/stats`, degrade `/health` to `{"status":"stale"}` after configurable max-age, or alert via structured log with staleness timestamp.
 
-**Redundant `fmt.Sprintf("%s", strings.Join(...))`:**
-- Issue: `bulkQuery := fmt.Sprintf("{ %s }", fmt.Sprintf("%s", strings.Join(queryParts, "\n")))` wraps a `strings.Join` in a no-op `Sprintf("%s", ...)`.
-- Files: `pkg/dgraph/dgraph.go:226-227`
-- Impact: `go vet` flags this; minor wasted allocation. Cosmetic but indicates the file has not been vet-clean.
-- Fix approach: `bulkQuery := fmt.Sprintf("{ %s }", strings.Join(queryParts, "\n"))`.
+**6-hour whitelist refresh cadence is long**
+- Config: `config/whitelist/whitelist-server.yaml` (`refresh_interval: 6h`)
+- A newly-discovered pubkey can wait up to 6 hours before it is admitted to write events. Quarantine events during that window pile up. The `quarantine-rescuer`/`quarantine-cleaner` tools exist partly to paper over this gap.
+- Fix: reduce refresh interval (adds Dgraph load) or add a manual trigger endpoint (`POST /refresh`).
 
-**Stale stub crawl problem (documented, partially mitigated):**
-- Issue: Per `8pc_crawled.md`, the crawler historically re-refreshed the ~15k known accounts and only crawled ~8% of known pubkeys, never reaching the stub frontier. `GetStalePubkeys` was reworked to a frontier-first query (`NOT has(last_attempt)`), and `MarkAttempted` was added so un-fetchable stubs age out.
-- Files: `pkg/dgraph/dgraph.go:443-537`, `cmd/crawler/main.go:151-159`, `8pc_crawled.md`
-- Impact: The fix is recent and only covered by a single integration test. The `last_attempt` predicate must be backfilled from `last_db_update` for already-crawled nodes (noted in `8pc_crawled.md:344`); if that backfill did not run, the aged-query phase behaves differently than intended on the live graph.
-- Fix approach: Verify the live `last_attempt` backfill completed; add coverage for the Phase-2 aged top-up path, not just the frontier path.
+**`quarantine-rescuer` reads LMDB directly — schema coupling**
+- Files: `quarantine-rescuer/internal/lmdbreader/reader.go`, `dictcache.go`
+- The rescuer opens strfry's `EventPayload` and `CompressionDictionary` LMDB sub-databases directly using `github.com/PowerDNS/lmdb-go`. This is coupled to strfry's undocumented internal schema (`golpe.yaml`). Any strfry upgrade that changes the LMDB schema or DB version silently produces corrupt reads.
+- Mitigation in place: `DefaultMapSize` matches strfry's default. No runtime schema version check exists.
+- Fix: add a startup check against `Meta.dbVersion` (as specified in `spam/spec.md` for LMDB2GraphQL) before reading events; refuse to proceed on version mismatch.
 
-## Known Bugs
+**Dgraph gRPC connection is unauthenticated and unencrypted**
+- File: `web-of-trust/pkg/dgraph/dgraph.go` (line 43: `insecure.NewCredentials()`)
+- All Dgraph gRPC traffic uses plaintext transport with no authentication. Acceptable in a single-host Docker network, but a misconfigured deployment that exposes port `9080` externally would allow unauthenticated writes.
+- Fix: add network-policy docs or explicit `deepfry-net` isolation assertion; add mTLS or token auth if Dgraph is ever moved off-host.
 
-**Chunked large follow-lists trip the kind3CreatedAt version guard:**
-- Symptoms: For follow lists >10,000, `processFollowsInChunks` calls `AddFollowers` once per 200-item chunk with the same `createdAt`. The first chunk writes `kind3CreatedAt`; every subsequent chunk hits the `kind3createdAt <= existingKind3CreatedAt` guard (`==` case) and returns early at `pkg/dgraph/dgraph.go:165-168`, so only the first 200 follows are ever persisted.
-- Files: `pkg/crawler/chunks.go:37-75`, `pkg/dgraph/dgraph.go:163-168`
-- Trigger: Any pubkey with more than 10,000 follows.
-- Workaround: None in code. The guard treats equal timestamps as "already have it," which is correct for whole-event replay but wrong for the chunked path that reuses one timestamp across calls.
-- Fix approach: Have `AddFollowers` support an "append additional follows for this same event" mode, or accumulate all chunks into a single replace operation, or pass a flag that bypasses the version guard for continuation chunks.
+**Dgraph HTTP/GraphQL endpoint has no authentication**
+- Port `8080` exposed by `docker-compose.dgraph.yml`. The whitelist server queries it via plain HTTP. The Ratel UI (`8000`) is also exposed without auth.
+- Fix: restrict `8080`/`9080`/`8000` to `deepfry-net` and never expose externally; document this explicitly.
 
-**`defer cancel()` accumulates inside the chunk loop:**
-- Symptoms: In `processFollowsInChunks` each iteration does `chunkCtx, cancel := context.WithTimeout(...)` followed by `defer cancel()`. The deferred cancels do not fire until the whole function returns, so for an N-chunk list, N contexts (and their timers) stay live until completion.
-- Files: `pkg/crawler/chunks.go:38-40`
-- Trigger: Large follow lists processed in many chunks.
-- Workaround: None.
-- Fix approach: Call `cancel()` explicitly at the end of each loop iteration instead of deferring, or wrap the body in a closure.
+**Two separate quarantine-recovery tools with overlapping scope**
+- `quarantine-rescuer/` (implemented, reads LMDB directly) vs `quarantine-cleaner/` (spec-only, uses `docker exec strfry scan/delete`)
+- Their purpose descriptions overlap: both move whitelisted pubkeys' events from quarantine to main relay. It is unclear which is the intended long-term path. The rescuer's LMDB-direct approach contradicts the "never modify StrFry's LMDB directly" principle stated in CLAUDE.md; the cleaner spec uses only the StrFry binary interface.
+- Fix: decide which approach wins; deprecate or remove the other.
 
-## Security Considerations
+**No shared Go module / workspace**
+- Each subsystem (`event-forwarder`, `whitelist-plugin`, `web-of-trust`, `quarantine-rescuer`) is an independent Go module with no `go.work`. Shared utilities (e.g. Nostr pubkey hex helpers) are duplicated across modules.
+- Fix: introduce a `go.work` workspace or a `pkg/` shared module to reduce duplication.
 
-**DQL queries built by string concatenation / `fmt.Sprintf`:**
-- Risk: Pubkeys and other values are interpolated directly into DQL query strings throughout the Dgraph layer rather than always using `Vars`. `AddFollowers` uses `%q` (Go-quoted) which escapes quotes, and `RemoveFollower` concatenates `signerPubkey`/`followee` straight into the query with `+`.
-- Files: `pkg/dgraph/dgraph.go:104-114` (`%q`), `pkg/dgraph/dgraph.go:344-358` (`RemoveFollower`, raw concatenation), `pkg/dgraph/clusterscan.go:57-63` (`strconv.Quote`)
-- Current mitigation: Pubkeys are validated as 64-char hex via `nostr.GetPublicKey` before reaching most write paths (`pkg/crawler/crawler.go:266`, `:507`); `%q` and `strconv.Quote` escape embedded quotes.
-- Recommendations: `RemoveFollower` does NOT validate its inputs and uses raw `+` concatenation — route it through `Vars` or validate inputs like the other paths. Standardize on parameterized `Vars` for all value-bearing queries to remove the injection surface entirely.
+**`discover-relays` command length**
+- File: `web-of-trust/cmd/discover-relays/main.go` — 498 lines in a single `main.go`, mixing CLI arg parsing, HTTP fetching, WebSocket relay probing, latency testing, and config writing.
+- Fix: extract relay-probe logic into `pkg/relayprobe` for testability.
 
-**No authentication on Dgraph or relay connections:**
-- Risk: Dgraph gRPC uses `insecure.NewCredentials()` (no TLS, no auth) and relays connect over plain WebSocket. Anyone with network access to `localhost:9080` can read/write the graph.
-- Files: `pkg/dgraph/dgraph.go:40-44`
-- Current mitigation: Relies on the service binding to localhost / private network only (per `CLAUDE.md` infra notes).
-- Recommendations: Acceptable for a localhost sidecar, but document the trust boundary explicitly; if Dgraph is ever exposed beyond localhost, TLS + ACL become mandatory.
+**Spam module uses `.expect()` and `.unwrap()` in production code**
+- Files: `spam/src/lmdb/scan.rs` (lines 234, 320, 439, 466, 532, 581 and more), `spam/src/lmdb/payload.rs` (line 280), `spam/src/lmdb/meta.rs` (lines 236, 251)
+- Production LMDB scanning code uses `.unwrap()` for slice-to-array conversions (e.g., `value[0..8].try_into().unwrap()`) and `.last().unwrap()` on batch results. While these are guarded by preconditions (e.g., `batch.len() > 0`), an unexpected LMDB corruption or format change would panic the entire GraphQL server.
+- Impact: `lev_id` extraction (line 439 and similar) is called per LMDB key during scan; a corrupted database would cause service failure without a graceful error.
+- Fix: replace `.unwrap()` with `?` and structured error returns; add defensive checks for slice bounds and batch emptiness before unwrap sites.
 
-## Performance Bottlenecks
-
-**Frontier selection can load hundreds of thousands of stubs into one response:**
-- Problem: `GetStalePubkeys` runs `frontier(func: has(pubkey), first: limit) @filter(NOT has(last_attempt))` and the gRPC client raises `MaxCallRecvMsgSize` to 256 MiB specifically because this response "can return well over gRPC's default 4MB cap."
-- Files: `pkg/dgraph/dgraph.go:34-44`, `:451-457`
-- Cause: An unindexed-style filter over the whole pubkey set with a large `first:` materializes a huge result. The 256 MiB cap is a band-aid that lets large batches succeed but also masks unbounded memory growth.
-- Improvement path: Keep `limit` small (the main loop uses `batchSize = 500`, which is fine), but the cap suggests other callers pass large limits. Audit all `GetStalePubkeys` callers; consider an index/order strategy so the frontier query is bounded and cheap.
-
-**Trust-propagation and weak-bridge queries scan the entire graph:**
-- Problem: `ExpandTrustedSet` and `GetWeakBridges` both use `cand as var(func: has(pubkey)) @filter(NOT uid(trusted))` — a full scan of every pubkey node, with a `count(~follows ...)` evaluated per node, on every propagation round.
-- Files: `pkg/dgraph/clusterscan.go:102-111` (`ExpandTrustedSet`), `:151-168` (`GetWeakBridges`)
-- Cause: No pagination and no narrowing; trust closure loops until no new nodes, re-scanning the whole graph each round.
-- Improvement path: This is acceptable for an offline read-only CLI but will not scale to multi-million-node graphs. Consider expanding only from the newly-added frontier each round (nodes followed by the round's new members) rather than re-scanning all candidates.
-
-**`GetPubkeysWithMinFollowers` (non-paginated) materializes all matches:**
-- Problem: The non-paginated variant returns every matching pubkey in one query with no `first:`.
-- Files: `pkg/dgraph/dgraph.go:618-653`
-- Cause: No batching; superseded by `GetPubkeysWithMinFollowersPaginated` but still exported.
-- Improvement path: Deprecate/remove the non-paginated version or document that it is unsafe for large graphs.
-
-## Fragile Areas
-
-**Manual upsert in `AddFollowers` races against `@unique` schema:**
-- Files: `pkg/dgraph/dgraph.go:80-321`, schema at `:60-74`, cleanup tool at `cmd/healthcheck/main.go`
-- Why fragile: Stub followees are created with a query-then-create pattern (`bulkQuery` to find existing, then `_:new_followee_N` blank nodes for missing ones) inside one transaction. Two transactions creating the same stub pubkey concurrently can both observe "not present" and both insert it. The existence of `healthcheck`'s duplicate-detection-and-purge logic confirms duplicates do occur in practice despite the `@unique` directive.
-- Safe modification: Do not weaken the dedup logic in `healthcheck`. Prefer Dgraph upsert blocks (`uid(var)` with `@upsert`) over query-then-insert for stub creation. Always stop the crawler before running `healthcheck -purge` (the tool warns about this at `cmd/healthcheck/main.go:142`).
-- Test coverage: No test exercises concurrent stub creation or the upsert race.
-
-**In-memory relay state lost on restart:**
-- Files: `pkg/crawler/crawler.go:39-46`, `:170-256`
-- Why fragile: Relay liveness, backoff timers, and failure counts live only in the `relayState` slice. On restart all relays start "fresh," so a relay that was being backed off gets hammered again immediately. `markRelayDead` and `ReconnectRelays` mutate `c.relays` in place using the `c.relays[:0]` reuse trick — correct but easy to break.
-- Safe modification: When editing the relay-pruning loops, preserve the slice-reuse invariant; do not hold references to `c.relays` across these calls. Relay state is not persisted by design.
-- Test coverage: No tests for `markRelayDead` / `ReconnectRelays` backoff transitions.
-
-**Config mutation via global Viper singleton:**
-- Files: `pkg/config/config.go:146-166`
-- Why fragile: `SaveForwardRelayURL` and `RemoveRelayURL` operate on the package-global Viper instance, which must have been populated by `LoadConfig` first. Calling them out of order, or from a context where Viper was re-initialized (e.g. `discover-relays` also calls `viper.SetConfigName`), can write to the wrong file or lose keys. `discover-relays` deliberately bypasses Viper write and edits YAML by hand (`writeRelayURLsToConfig`) to preserve formatting.
-- Safe modification: Keep config writes going through the same Viper instance that loaded; do not introduce a second loader in the same process. Never edit the live `~/deepfry/web-of-trust.yaml` in tests — use a temp `HOME`.
-- Test coverage: No tests for config save/remove round-trips.
-
-## Scaling Limits
-
-**Single-process, single-loop crawler:**
-- Current capacity: One crawler process draining one batch of 500 stale pubkeys at a time, with all DB writes serialized behind `dbUpdateMutex`.
-- Limit: Throughput is bounded by sequential Dgraph commit latency. The `8pc_crawled.md` analysis shows the graph has tens of thousands of known accounts and a far larger stub frontier; at one-event-at-a-time write throughput, full frontier coverage is slow.
-- Scaling path: Parallelize Dgraph writes (per-pubkey locking instead of global mutex), and/or shard the frontier across multiple crawler instances keyed by pubkey prefix.
-
-**gRPC receive cap as a proxy for unbounded memory:**
-- Current capacity: 256 MiB max receive message (`pkg/dgraph/dgraph.go:39`).
-- Limit: A single query response is held entirely in memory and JSON-unmarshalled; very large frontier/popular queries can approach the cap and the corresponding RAM.
-- Scaling path: Enforce small `first:`/batch sizes on every materializing query; never rely on the 256 MiB headroom.
-
-## Dependencies at Risk
-
-**`github.com/dgraph-io/dgo/v210` pinned to a pre-release pseudo-version:**
-- Risk: Version is `v210.0.0-20230328113526-b66f8ae53a2d` — a commit-pinned pseudo-version from 2023, not a tagged release. Dgraph's Go client has had multiple major reorganizations.
-- Impact: All graph reads/writes flow through this client; an upstream breaking change or an abandoned `v210` line could strand the project.
-- Migration plan: Track Dgraph's current supported Go client line; plan a deliberate upgrade with the integration test as the gate. The DQL queries themselves are the portable part.
-
-**`go-nostr` is the only relay library and is fast-moving:**
-- Risk: `github.com/nbd-wtf/go-nostr` v0.52.0 — the project relies on internal error-string shapes (`cleanSubscribeError` parses `"couldn't subscribe to"` substrings, and `queryRelay` matches `"not connected"` / `"failed to write"` substrings).
-- Impact: A library change to those error messages silently breaks transport-vs-subscription error classification, which drives the relay dead/reconnect logic.
-- Migration plan: Replace substring matching on error text with typed-error checks if go-nostr exposes them; pin and review go-nostr upgrades carefully.
-
-## Missing Critical Features
-
-**No automated verification harness:**
-- Problem: Per `CLAUDE.md` and `8pc_crawled.md` §6, verifying crawler behavior requires manually running it against live Dgraph + relays on the strfry host. There is no scripted way to assert "the crawler expands the frontier" in CI.
-- Blocks: Confident regression detection on the core value ("must continuously expand the web of trust"). The recent frontier-first fix is only guarded by one integration test that itself needs a live Dgraph.
-
-**No metrics/observability beyond log lines:**
-- Problem: "Metrics" are JSON blobs printed via `log.Printf` (`METRICS:`, `RELAY_ERROR:`, `DEBUG_METRICS:`), several gated behind `c.debug`.
-- Files: `pkg/crawler/crawler.go:555-618`
-- Blocks: No way to track frontier-coverage progress, write throughput, or relay health over time without scraping logs. No counters for the "only 8% crawled" problem to confirm the fix in production.
-
-## Test Coverage Gaps
-
-**Almost no test suite exists:**
-- What's not tested: There is exactly one test file (`pkg/dgraph/dgraph_stale_test.go`), gated behind `//go:build integration` and requiring a live Dgraph on `localhost:9080`. It covers only the frontier-selection path of `GetStalePubkeys`. `CLAUDE.md` states "No unit-test suite exists yet."
-- Files: `pkg/dgraph/dgraph_stale_test.go` (only test); untested: all of `pkg/crawler/`, `pkg/config/`, `pkg/dgraph/clusterscan.go`, every `cmd/`.
-- Risk: Pure-logic units that are trivially unit-testable without Dgraph are untested and have known defects — e.g. `cleanSubscribeError` (error parsing), `normalizeSeedPubkeys` (dedup/decode), `processFollowsInChunks` chunk math + the version-guard bug, `rankNodes`, `dedupURLs`/`normalizeAndDedup`. The chunked-follow-list bug above would be caught by a unit test of the chunk path.
-- Priority: High — add unit tests for the pure helpers first (no infra needed), then for the AddFollowers version-guard / chunk interaction.
-
-**Aged top-up path untested:**
-- What's not tested: Phase 2 of `GetStalePubkeys` (`aged(...) orderasc: last_attempt @filter(lt(last_attempt, ...))`). Only Phase 1 (frontier) is asserted.
-- Files: `pkg/dgraph/dgraph.go:462-475`, `pkg/dgraph/dgraph_stale_test.go`
-- Risk: The re-crawl scheduling that prevents staleness is unverified; a regression here recreates the "only re-refresh known accounts" failure mode from a different angle.
-- Priority: Medium.
-
-**Concurrent write / upsert race untested:**
-- What's not tested: Concurrent `AddFollowers` calls creating the same stub followee (the duplicate source `healthcheck` cleans up).
-- Files: `pkg/dgraph/dgraph.go:208-305`
-- Risk: Silent duplicate-node growth.
-- Priority: Medium.
+**Spam module RwLock poison checks incomplete**
+- File: `spam/src/lmdb/payload.rs` (lines 162, 190, 203, 212: `.expect("DictCache RwLock poisoned")`)
+- The DictCache holds an RwLock over the decompression dictionary cache. Poison checks log a panic message but do not gracefully degrade; a poisoned lock (from a panicked reader/writer) will crash the entire HTTP server.
+- Impact: any panic in dictionary access will propagate as a process crash.
+- Fix: use `lock.read().unwrap_or_else(|e| e.into_inner())` or a TryLock-based fallback; document recovery strategy.
 
 ---
 
-*Concerns audit: 2026-06-09*
+## Security Considerations
+
+**Private keys via environment variables — no rotation mechanism**
+- Keys (`STRFRY_PRIVATE_KEY`, `NOSTR_SYNC_SECKEY_LIVE`, `NOSTR_SYNC_SECKEY_HISTORY`) are passed to containers via Docker environment variables sourced from `.env`. Docker inspect reveals env vars to any user with Docker socket access.
+- Mitigation in place: `.env` is gitignored; `.env.example` documents required vars without values.
+- Risk: no documented key rotation procedure. No key-expiry detection. If a key is compromised, all affected containers must be manually re-deployed.
+
+**Whitelist plugin fails open on Dgraph unavailability at startup**
+- If Dgraph is unreachable when `whitelist-server` starts and all retries fail, `whitelist_refresher.go` logs the failure but the whitelist starts empty. The hardcoded 5 pubkeys are still admitted, but the entire web-of-trust list is missing — effectively open to anyone not checked by Dgraph (all events are rejected since the whitelist has only 5 entries). This is fail-closed for unknown pubkeys but may drop legitimate events.
+- Mitigation: `whitelist-server` container has `depends_on: dgraph: condition: service_healthy` in `docker-compose.dgraph.yml`, reducing the window.
+- Residual risk: Dgraph can become unreachable after startup (network partition, OOM, restart).
+
+**Quarantine relay port exposed on host**
+- `docker-compose.strfry.yml` exposes `7778:7778` for `strfry-quarantine`. Any Nostr client that knows the port can write events directly to quarantine, bypassing the router plugin.
+- Fix: bind quarantine port to `127.0.0.1:7778` or remove host-side port mapping; quarantine is only needed within `deepfry-net`.
+
+**No rate limiting or connection throttling on StrFry**
+- `strfry.conf` sets `nofiles = 1000000` but has no per-IP connection limit or event-rate limit beyond `maxSubsPerConnection = 20`. The whitelist plugin rejects writes from non-whitelisted pubkeys, but read subscriptions (REQs) from arbitrary IPs are unlimited.
+- Fix: add a reverse proxy (nginx/caddy) with rate limiting in front of port `7777`.
+
+**Spam module GraphQL endpoint has no authentication**
+- File: `spam/src/main.rs` (lines 84–94), `spam/src/graphql/resolvers.rs`
+- The lmdb2graphql GraphQL server binds to `127.0.0.1:8080` by default (loopback safety, CR-01) but has zero authentication. If an operator configures a non-loopback bind address, the entire strfry corpus (all events, all metadata, full GraphQL introspection) is exposed unauthenticated to any network peer.
+- Mitigation: config defaults to `127.0.0.1:8080`; a loud warn log fires on non-loopback bind. Operator must edit YAML to expose.
+- Residual risk: no bearer token, mTLS, or API-key support; operators deploying spam module over a network or to a shared environment must rely entirely on network isolation.
+- Fix: add JWT/token validation; support mTLS; document network-isolation requirements.
+
+---
+
+## Scalability & Performance
+
+**Single Dgraph instance is the trust/whitelist single point of failure**
+- All subsystems depend on one Dgraph standalone container. Dgraph standalone mode (`dgraph/standalone`) is not HA. An OOM, disk full, or container restart brings down both the whitelist-server refresh path and the web-of-trust crawler.
+- Dgraph memory limit is set to 8 GB (`docker-compose.dgraph.yml`); with a large graph this cap will be hit.
+- Fix: document Dgraph memory sizing; add monitoring/alerting on heap usage; plan migration to Dgraph cluster or alternative if graph exceeds ~10M nodes.
+
+**gRPC message size raised to 256 MiB as a workaround**
+- File: `web-of-trust/pkg/dgraph/dgraph.go` (line 39: `maxRecvMsgSize = 256 << 20`)
+- The limit was raised because `GetStalePubkeys` returns response payloads over gRPC's default 4 MB cap. This is a scaling smell: as the graph grows, even 256 MiB may not be enough.
+- Fix: paginate `GetStalePubkeys` server-side or stream results instead of returning a single large payload.
+
+**Event-forwarder one-instance-per-relay creates N×M container sprawl**
+- `docker-compose.evtfwd.yml` runs 6 containers (3 relays × 2 modes: live + history). Adding a new relay requires manually adding 2 more services to the compose file. There is no dynamic relay configuration.
+- Fix: add a forwarder config-driven relay list with live/history mode per entry; run one container that manages multiple relay connections.
+
+**StrFry LMDB grows unbounded**
+- No retention policy is configured (`rejectEventsOlderThanSeconds = 315360000` accepts events up to 10 years old). The LMDB `data.mdb` on disk was already 2.3 GB at last snapshot (`data/strfry-db/data.mdb`). With 6 active forwarder streams, this will continue to grow.
+- Fix: set a reasonable `rejectEventsOlderThanSeconds` and periodically run `strfry compact`; document backup procedure before compaction.
+
+**Web-of-trust crawler uses a single DB mutex for all writes**
+- File: `web-of-trust/pkg/crawler/crawler.go` (field `dbUpdateMutex sync.Mutex`)
+- All Dgraph mutations are serialised behind a single mutex even when processing results from multiple relays concurrently. This limits write throughput as the graph grows.
+- Fix: batch mutations from multiple relays before acquiring the mutex, or use per-pubkey sharding.
+
+**Spam module scan loops can exceed MAX_ROUNDS budget**
+- File: `spam/src/query/engine.rs` (const `MAX_ROUNDS = 8`)
+- The query engine caps execution rounds at 8 per query to prevent DoS; once `emit_limit` events are collected, execution breaks. However, if a single timestamp holds more events than `emit_limit`, subsequent queries must resume from the cursor; this is correct but means a large burst of same-timestamp events could require many sequential queries to fully enumerate.
+- Impact: moderate; the default `limit=100` and cursor model allow pagination. This is by design (D-11, CR-01).
+- Mitigation: clients should follow cursor pagination; no known issue yet.
+
+**Spam module test batch_size=2 vs production batch_size=256**
+- File: `spam/.planning/research/` and memory notes
+- Integration tests use `batch_size=2` for coverage granularity; production scans use `batch_size=256`. A code path exercised at size 2 may fail at size 256 if LMDB or cursor state behaves differently under bulk reads.
+- Fix: add parameterized tests or a second test suite that runs against size-256 batches.
+
+---
+
+## Operational Risks
+
+**Three separate docker-compose files with no orchestration layer**
+- Startup order requires: `docker-compose.dgraph.yml` first (creates `deepfry-net`), then `docker-compose.strfry.yml` (uses external network), then `docker-compose.evtfwd.yml`. Getting this order wrong produces silent failures. `docker-compose.strfry.yml` declares `deepfry-net` as `external: true` and will fail if the dgraph compose hasn't been started yet.
+- Fix: add a startup script or a root compose file with correct dependency ordering.
+
+**No centralised logging or metrics**
+- All subsystems log to stderr/stdout via `log.Printf` (Go) or `tracing::info!` (Rust). Log retention relies entirely on Docker's `json-file` log driver (`max-size: 10m, max-file: 3`). There is no centralised log aggregation, no metrics endpoint (Prometheus etc.), and no alerting.
+- Fix: add structured JSON logging (e.g. `log/slog` with JSON handler in Go; tracing is already JSON in spam module) and a log aggregation sidecar or remote sink.
+
+**Config files committed to repo include production Dgraph URLs**
+- `config/whitelist/whitelist-server.yaml` contains `dgraph_graphql_url: "http://dgraph:8080/graphql"` and `config/whitelist/whitelist.yaml` contains `server_url: "http://whitelist-server:8081"`. These are committed defaults that work for the standard compose topology but will silently fail in non-standard deployments.
+- Risk: an operator who forks or modifies the compose network name gets a broken deploy with no obvious error.
+
+**No backup or disaster recovery procedure documented**
+- The LMDB databases (`data/strfry-db/`, `data/strfry-quarantine-db/`) and Dgraph data (`data/dgraph/`) have no documented backup schedule or restore procedure. Loss of the Dgraph volume means loss of the entire web-of-trust graph.
+- Fix: document backup/restore; add a scheduled `strfry compact` + snapshot job.
+
+**Quarantine relay's DB guard is a shell script**
+- File: `config/strfry/quarantine-db-guard.sh`
+- The guard exits with code 4 if the mainline LMDB path is accidentally mounted in the quarantine container. This is a safety net but relies on correct Docker volume mapping. A future change to the compose file could silently break the guard if `QUARANTINE_EXPECTED_DB` or `MAINLINE_DB_PATH` env vars are not kept in sync.
+
+**Web-of-trust crawler removes failed relays from config file**
+- File: `web-of-trust/pkg/config/config.go` (`RemoveRelayURL`)
+- After `maxConsecutiveFailures` (5), a relay is removed from `~/deepfry/web-of-trust.yaml`. This is irreversible without manual config editing. An extended network partition could silently drain the relay list, leaving the crawler with no sources.
+- Fix: add a relay-recovery mechanism (re-add relays from a seed list on empty relay list); log prominently when the relay list drops below a threshold.
+
+**Spam module startup gate chain has no timeout**
+- File: `spam/src/main.rs` (steps 6–9)
+- If the LMDB fixture fails to open, the Meta read hangs, or the comparator self-check deadlocks, the process will hang indefinitely waiting for the gate chain. There is no startup timeout; the process will be stuck forever without an explicit SIGKILL.
+- Fix: add a configurable timeout (e.g., 60s) to the gate chain; fail-closed if exceeded.
+
+**Spam module startup success is silent outside logs**
+- No systemd health check or process manager integration. If a deploy watcher relies on exit code 0 but the process runs with an internal hang (e.g., LMDB open never returns), the deploy will succeed but the service will be dead.
+- Fix: ensure /ready endpoint is checked by orchestration (Kubernetes readiness probe, systemd service, etc.).
+
+---
+
+## Incomplete/Placeholder Subsystems
+
+**`embeddings-generator/`**
+- Status: README only. No implementation.
+- Purpose per README: generate embeddings from Nostr events for semantic search.
+- Blocks: `search-plugin/`, semantic search capability.
+
+**`embeddings/`**
+- Status: `pipeline.md` and `PLAN.md` only. Not even a subsystem directory yet.
+- Blocks: embeddings pipeline.
+
+**`search-plugin/`**
+- Status: README only. No implementation.
+- Purpose: StrFry write-policy plugin that routes events through semantic search index.
+- Blocks: full text / semantic search on the relay.
+
+**`profile-builder/`**
+- Status: README only. No implementation.
+- Purpose: build enriched Nostr profile objects from raw events.
+
+**`thread-inference/`**
+- Status: README only. No implementation.
+- Purpose: infer conversation threads from Nostr event graphs.
+
+**`quarantine-cleaner/`**
+- Status: `FLOW.md`, `PRD.md`, `SPEC.md` only — a very detailed behavioural spec (30+ FRs) but zero Go code.
+- Impact: `quarantine-rescuer` (implemented) and `quarantine-cleaner` (specified but unimplemented) overlap in purpose.
+
+---
+
+## Missing Capabilities
+
+**No semantic / full-text search**
+- `search-plugin/`, `embeddings-generator/`, and `embeddings/` are all stubs. Nostr `REQ` filtering is the only query mechanism available.
+
+**No monitoring or alerting**
+- No Prometheus exporter, no Grafana dashboard, no on-call alerting. The `/stats` endpoint on the whitelist-server (`server.go`) provides basic counters but nothing consumes them. Spam module has no metrics endpoint.
+
+**No automated key rotation for event forwarders**
+- The `NOSTR_SYNC_SECKEY_LIVE` and `NOSTR_SYNC_SECKEY_HISTORY` keys are static. There is no key rotation flow, no expiry detection, and no key-compromise response playbook.
+
+**No test coverage for quarantine-rescuer LMDB reader against real strfry DB**
+- Unit tests for `lmdbreader` use synthetic fixtures. There is no integration test that runs against a real strfry LMDB to catch schema changes.
+
+**No integration tests for web-of-trust in CI/CD**
+- Per `web-of-trust/CLAUDE.md`: "No unit-test suite exists yet." Integration tests gate on a live Dgraph and are not run in CI.
+
+**Spam module has no load testing / performance benchmarks**
+- No benchmarks for query execution, LMDB scan throughput, or GraphQL resolver performance. Capacity planning for production deployment is guesswork.
+- Fix: add benchmarks in `spam/benches/` or `spam/tests/perf_*.rs` to measure query latency under varied payload sizes and batch counts.
+
+---
+
+## Known Limitations (By Design)
+
+**Spam module does not support event write filtering**
+- The lmdb2graphql endpoint is read-only. Event ingestion and filtering is handled by the whitelist plugin and strfry's native plugin interface. Spam detection scores or reputation queries can be done via GraphQL but cannot block writes in real-time.
+- Impact: spam/phishing events are accepted by strfry; clients must filter on read.
+- Mitigation: future integration of spam scoring into the whitelist plugin's write-decision logic.
+
+**Spam module LMDB access is read-only and non-transactional**
+- File: `spam/src/lmdb/scan.rs`, `spam/src/lmdb/payload.rs`
+- Snapshot isolation is provided by LMDB's read-only cursors. Concurrent writes from strfry and reads from lmdb2graphql can race; results may lag strfry by up to a few seconds (depending on LMDB flush cadence).
+- Impact: GraphQL queries return eventual-consistent results, not real-time state.
+- Mitigation: acceptable for spam analysis and reputation scoring, not for transactional consistency.
+
+**Web-of-trust Dgraph writes are serialized by mutex**
+- By design (see scalability section). Multiple relays feed pubkey updates concurrently but the database write is single-threaded.
+- Justification: Dgraph standalone has limits; batch writes reduce contention.
+
+---
+
+*Concerns audit: 2026-06-15*
