@@ -1,9 +1,16 @@
 ---
 phase: 09-phase-8-hardening-resilience-follow-ups
 verified: 2026-06-13T14:45:00Z
-status: human_needed
-score: 5/5 must-haves verified (3 static, 2 pending live-host confirmation)
+status: passed
+score: 5/5 must-haves verified (static + live-host human-approved)
 overrides_applied: 0
+human_verification_resolved: true
+human_verification_note: >
+  The 3 runtime items below (HARD-03 drain-loop survival, RESIL-01 transient
+  bounce-recovery, RESIL-01 fatal loud-exit) were live-approved by the user on
+  2026-06-15 at the end-of-phase checkpoint, following the same posture as the
+  Phase 08 close. Static structure, build, vet, and `go test -short` were all
+  verified green; the user confirmed the runtime behaviour on the strfry host.
 human_verification:
   - test: "Run crawler for at least one batch on strfry host; confirm batch completes and events are forwarded normally"
     expected: "Batch complete log line appears; forward-relay receives events; MarkAttempted runs; no stall or hang"

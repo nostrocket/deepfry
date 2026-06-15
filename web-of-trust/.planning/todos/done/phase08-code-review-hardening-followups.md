@@ -1,8 +1,10 @@
 ---
 title: Phase 8 code-review hardening follow-ups (WR-02/03/04/05 + info)
 area: crawler
-status: pending
+status: resolved
 created: 2026-06-13T12:44:51.805Z
+resolved: 2026-06-15
+resolution: Closed in Phase 9 — WR-03→HARD-01 (paginated BackfillNextAttempt), WR-02→HARD-02 (MarkAttempted recovery-txn hygiene), WR-04→HARD-03 (bounded forwardEvent publish), WR-05→HARD-04 (large-frontier sort-cap doc), plus IN-03 (HitRefreshCadence param). IN-01/02/04 left as future nice-to-haves. Live-approved 2026-06-15.
 source: 08-REVIEW.md (Phase 8 code review)
 ---
 

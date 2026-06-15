@@ -47,11 +47,11 @@ Production logs are dominated by per-relay, per-event lines: ~100 `Reconnected t
 
 Deferred Phase 8 code-review warnings (`08-REVIEW.md` WR-02/03/04/05) plus a transient-Dgraph-error retry surfaced during the 08-02 live-host verification run. These are latent failure modes the live run happened to dodge.
 
-- [ ] **HARD-01**: `BackfillNextAttempt` paginates its `has(last_attempt) ∧ ¬has(next_attempt)` query (`first:`/`offset:`) and commits stamps in `batchSize` windows so a large legacy frontier cannot exceed the gRPC message cap and silently skip backfill (defeating D-06). (WR-03)
-- [ ] **HARD-02**: `MarkAttempted`'s in-place recovery transaction is discarded on every exit path without accumulating undiscarded txns across the recover/purge/stamp sequence; stamp-vs-recovery independence and retry-safety are documented. VALID-03 behavior preserved verbatim. (WR-02)
-- [ ] **HARD-03**: `forwardEvent` publishes within a short bounded context (e.g. `c.timeout`) so a hung forward relay cannot stall the single-threaded drain loop or delay `MarkAttempted` / the next batch. (WR-04)
-- [ ] **HARD-04**: The >1000-row frontier sort-cap regime is covered by an integration test (frontier larger than the order-by sort cap, proving top-N is honored not pre-truncated), or the live-verified D-09 guarantee is documented as standing evidence. (WR-05)
-- [ ] **RESIL-01**: The main crawl loop classifies transient Dgraph gRPC errors (`codes.Unavailable`, EOF, deadline-exceeded) and retries with backoff instead of exiting; genuinely fatal errors still terminate loudly. (08-02 live-host finding)
+- [x] **HARD-01**: `BackfillNextAttempt` paginates its `has(last_attempt) ∧ ¬has(next_attempt)` query (`first:`/`offset:`) and commits stamps in `batchSize` windows so a large legacy frontier cannot exceed the gRPC message cap and silently skip backfill (defeating D-06). (WR-03)
+- [x] **HARD-02**: `MarkAttempted`'s in-place recovery transaction is discarded on every exit path without accumulating undiscarded txns across the recover/purge/stamp sequence; stamp-vs-recovery independence and retry-safety are documented. VALID-03 behavior preserved verbatim. (WR-02)
+- [x] **HARD-03**: `forwardEvent` publishes within a short bounded context (e.g. `c.timeout`) so a hung forward relay cannot stall the single-threaded drain loop or delay `MarkAttempted` / the next batch. (WR-04)
+- [x] **HARD-04**: The >1000-row frontier sort-cap regime is covered by an integration test (frontier larger than the order-by sort cap, proving top-N is honored not pre-truncated), or the live-verified D-09 guarantee is documented as standing evidence. (WR-05)
+- [x] **RESIL-01**: The main crawl loop classifies transient Dgraph gRPC errors (`codes.Unavailable`, EOF, deadline-exceeded) and retries with backoff instead of exiting; genuinely fatal errors still terminate loudly. (08-02 live-host finding)
 
 ## v1.1 Requirements (Complete)
 
@@ -119,11 +119,11 @@ SEC-01/02 (RemoveFollower injection hardening) from v1.1 Phase 4 — deferred in
 | TIMEOUT-01 | Phase 8 | Complete |
 | TIMEOUT-02 | Phase 8 | Complete |
 | METRIC-01 | Phase 8 | Complete |
-| HARD-01 | Phase 9 | Pending |
-| HARD-02 | Phase 9 | Pending |
-| HARD-03 | Phase 9 | Pending |
-| HARD-04 | Phase 9 | Pending |
-| RESIL-01 | Phase 9 | Pending |
+| HARD-01 | Phase 9 | Complete |
+| HARD-02 | Phase 9 | Complete |
+| HARD-03 | Phase 9 | Complete |
+| HARD-04 | Phase 9 | Complete |
+| RESIL-01 | Phase 9 | Complete |
 
 **Coverage:**
 

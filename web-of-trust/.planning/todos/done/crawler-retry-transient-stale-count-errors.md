@@ -1,8 +1,10 @@
 ---
 title: Retry transient Dgraph errors in the main crawl loop instead of exiting
 area: crawler
-status: pending
+status: resolved
 created: 2026-06-13T12:44:51.805Z
+resolved: 2026-06-15
+resolution: Implemented as RESIL-01 in Phase 9 (09-02). isDgraphTransient() classifies Unavailable/DeadlineExceeded/ResourceExhausted; the three count/stale call sites retry 5x with 5s→2m backoff then exit loudly; MarkAttempted retries best-effort. Live-approved 2026-06-15.
 source: 08-02 live-host verification (Phase 8)
 ---
 
