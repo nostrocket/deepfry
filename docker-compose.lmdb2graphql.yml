@@ -1,0 +1,55 @@
+# docker-compose.lmdb2graphql.yml
+#
+# lmdb2graphql — DeepFry sidecar service (OPS-02)
+#
+# Co-located with strfry; mounts the strfry LMDB database read-only (:ro).
+# Start alongside the strfry stack:
+#
+#   docker compose -f docker-compose.strfry.yml \
+#                  -f docker-compose.lmdb2graphql.yml up -d
+#
+# Prerequisites:
+#   1. deepfry-net external network must exist:
+#        docker network create deepfry-net
+#   2. Operator-supplied config at ./config/lmdb2graphql.yaml (see example at
+#      spam/config/lmdb2graphql.yaml.example). The config MUST set:
+#        bind_address: "0.0.0.0:8080"
+#      Inside the container the default 127.0.0.1 loopback address is unreachable
+#      from outside the container. See RESEARCH.md Pitfall 2.
+
+services:
+  lmdb2graphql:
+    build:
+      context: spam/
+      dockerfile: Dockerfile
+    container_name: lmdb2graphql
+    restart: unless-stopped
+    environment:
+      RUST_LOG: "info,lmdb2graphql=info"
+    volumes:
+      # Mount strfry's LMDB read-only. STRFRY_DB_PATH must match docker-compose.strfry.yml.
+      # :ro enforces kernel-level read-only even if a code bug attempted a write txn (T-05-05).
+      - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db:ro
+      # Operator-supplied config. MUST set bind_address: "0.0.0.0:8080" for in-container use.
+      - ${LMDB2GRAPHQL_CONFIG:-./config/lmdb2graphql.yaml}:/root/deepfry/lmdb2graphql.yaml:ro
+    ports:
+      # Loopback-only publish (CR-01 / ASVS V4): GraphQL endpoint is NOT publicly reachable.
+      # The in-container bind_address 0.0.0.0:8080 only binds inside the container namespace;
+      # this publish rule is the actual host-level exposure control (T-05-06).
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # IMPORTANT: use /health (liveness), NOT /ready.
+      # /ready returns 503 before the LMDB self-check completes; using it here would
+      # trigger Docker restart loops during startup. (RESEARCH.md Pitfall 5 / T-05-08)
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - deepfry-net
+
+networks:
+  deepfry-net:
+    external: true
+    name: deepfry-net
