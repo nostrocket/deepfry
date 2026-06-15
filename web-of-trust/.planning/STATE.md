@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: ready_to_close
-last_updated: "2026-06-15T00:00:00.000Z"
-last_activity: 2026-06-15 -- Phase 09 complete (live-approved); v1.2 ready to close
+status: Awaiting next milestone
+last_updated: "2026-06-15T03:24:05.049Z"
+last_activity: 2026-06-15 — Milestone v1.2 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
@@ -25,10 +25,10 @@ progress:
 
 ## Current Position
 
-Phase: 09 (phase-8-hardening-resilience-follow-ups) — COMPLETE (live-approved 2026-06-15)
-Plan: 2 of 2 complete
-Status: v1.2 ready to close — all 5 phases complete
-Last activity: 2026-06-15 -- Phase 09 complete; re-running /gsd-complete-milestone
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-15 — Milestone v1.2 completed and archived
 
 ## Performance Metrics
 
@@ -112,3 +112,7 @@ None.
 - [Phase 07-03]: markRelayDead removed from queryRelay (per-relay goroutine); structural single-threaded fix for data race CR-02 — no mutex needed
 - [Phase 07-03]: New() startup connect failure: relay kept in pool alive=false, failTransport++, no OnConnectFail call — T-07-DOS mitigation
 - [Phase 07-03]: handleCapRejection extracted as testable seam for at-cap/floor rejection path (WR-05: real-seam tests, not inline copies)
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

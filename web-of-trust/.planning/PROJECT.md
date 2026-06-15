@@ -8,11 +8,13 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current Milestone: v1.2 Crawler Reliability & Efficiency — COMPLETE (2026-06-13)
+## Current State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
 
 **Goal:** Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management that ejects bad relays without manual intervention.
 
-**Status:** All 16 requirements delivered across Phases 05–08 (VALID, FILTER, RELAY, LOG, PERF, TIMEOUT, METRIC). Phase 08 (frontier prioritization, 15s timeout, EOSE-quorum, honest staleRemaining) verified live on the production host.
+**Status:** All 21 requirements delivered across Phases 05–09 (VALID, FILTER, RELAY, LOG, PERF, TIMEOUT, METRIC, HARD, RESIL). Phases 08 and 09 (frontier prioritization, 15s timeout, EOSE-quorum, honest staleRemaining; then the deferred hardening follow-ups + transient-error resilience) were verified live on the production host. Full archive: `milestones/v1.2-ROADMAP.md` and `milestones/v1.2-REQUIREMENTS.md`.
+
+**Next milestone:** not yet defined — run `/gsd-new-milestone`.
 
 **Target fixes:**
 - **VALID**: `updateFollowsFromEvent` uses `nostr.GetPublicKey` as a validator (semantically wrong — it's a private-key→public-key derivation); 19 garbage pubkeys already in DB re-enter every batch permanently. Fix validator to hex regex; purge bad nodes; stamp invalid pubkeys in `MarkAttempted` via UID to age them out.
@@ -43,10 +45,12 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **PERF-01/02** — frontier ordered by `count(~follows) DESC`; geometric backoff (`next_attempt`/`miss_count`) for chronic-miss stubs — shipped v1.2 (Phase 08)
 - ✓ **TIMEOUT-01/02** — per-batch timeout 30s→15s; EOSE-quorum early exit at ≥70% — shipped v1.2 (Phase 08)
 - ✓ **METRIC-01** — honest `staleRemaining` via `CountStalePubkeys` — shipped v1.2 (Phase 08)
+- ✓ **HARD-01/02/03/04** — paginated `BackfillNextAttempt`; inline-discard `MarkAttempted` recovery-txn hygiene; bounded `forwardEvent` publish; documented large-frontier sort-cap guarantee — shipped v1.2 (Phase 09)
+- ✓ **RESIL-01** — main crawl loop classifies transient Dgraph gRPC errors and retries with backoff instead of exiting — shipped v1.2 (Phase 09)
 
 ### Active
 
-_All v1.2 requirements delivered (Phases 05–08). Milestone v1.2 complete — no active requirements. Code-review hardening follow-ups (WR-02/03/04/05) and a transient-Dgraph-error retry are tracked in `.planning/todos/pending/` for a future cycle._
+_All v1.2 requirements delivered (Phases 05–09). Milestone v1.2 shipped — no active requirements. The Phase 8 code-review follow-ups (WR-02/03/04/05) and the transient-Dgraph-error retry were closed in Phase 9 (HARD-01..04, RESIL-01); the source todos are resolved in `.planning/todos/done/`. Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, OBS, TUNE, TEST-05) await the next milestone — run `/gsd-new-milestone`._
 
 ### Out of Scope
 
@@ -78,11 +82,12 @@ _All v1.2 requirements delivered (Phases 05–08). Milestone v1.2 complete — n
 | Add `last_attempt` predicate distinct from `last_db_update` | Distinguishes "tried" from "successfully ingested" so un-fetchable pubkeys converge | ✓ Shipped v1.0 |
 | v1.1 scoped to write-path integrity + hardening | Chunk data-drop is high-severity (silent loss undercutting core value); bundled with the adjacent leak and test-coverage gaps | ✓ Shipped v1.1 |
 | Defer `RemoveFollower` injection hardening (SEC-01/02) | Latent dead code with no callers; low urgency; documented as future idea rather than blocking a milestone | ✓ Deferred v1.1 Phase 4 |
-| v1.2 auto-ejection over manual relay removal | Hard-coded relay blacklists don't scale and require manual ops; classify failure reasons and auto-eject based on configurable thresholds | — Pending |
-| Reduce `batchSize` 500 → 100 | 40% of relay pool rejects 500-author filters; 100 stays within all known relay limits including StrFry default | — Pending |
-| Frontier ordered by follower count | High-follower stubs more likely to have kind-3 events; reduces wasted cycles from 99.24% | — Pending |
-| Persist learned filter caps across reconnects (RELAY-03) | Reverses Phase 6's reset-on-reconnect: re-learning the cap every batch re-runs the halving cascade, re-kills floor-capped relays, and floods logs | — Pending |
-| Logging noise (LOG-01/02/03) folded into Phase 7 | All three touch the relay state machine Phase 7 already rewrites; avoids touching the same code in two phases | — Pending |
+| v1.2 auto-ejection over manual relay removal | Hard-coded relay blacklists don't scale and require manual ops; classify failure reasons and auto-eject based on configurable thresholds | ✓ Shipped v1.2 (Phase 07) |
+| Reduce `batchSize` 500 → 100 | 40% of relay pool rejects 500-author filters; 100 stays within all known relay limits including StrFry default | ✓ Shipped v1.2 (Phase 06) |
+| Frontier ordered by follower count | High-follower stubs more likely to have kind-3 events; reduces wasted cycles from 99.24% | ✓ Shipped v1.2 (Phase 08) |
+| Persist learned filter caps across reconnects (RELAY-03) | Reverses Phase 6's reset-on-reconnect: re-learning the cap every batch re-runs the halving cascade, re-kills floor-capped relays, and floods logs | ✓ Shipped v1.2 (Phase 07) |
+| Logging noise (LOG-01/02/03) folded into Phase 7 | All three touch the relay state machine Phase 7 already rewrites; avoids touching the same code in two phases | ✓ Shipped v1.2 (Phase 07) |
+| Open Phase 9 follow-up rather than carry Phase 8 review warnings as tech debt | At the v1.2 close gate, the deferred WR-02/03/04/05 + transient-retry todos were resolved in a dedicated phase (Phase 08 was already verified, so a follow-up phase beat a `--force` replan) | ✓ Shipped v1.2 (Phase 09) |
 
 ## Evolution
 
@@ -102,4 +107,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-13 — Phase 08 complete; milestone v1.2 fully delivered (PERF-01/02, TIMEOUT-01/02, METRIC-01 shipped, verified live)*
+*Last updated: 2026-06-15 after v1.2 milestone — all 5 phases (05–09) shipped, 21/21 requirements delivered and live-verified; Phase 9 closed the deferred Phase 8 hardening warnings + transient-error resilience*
