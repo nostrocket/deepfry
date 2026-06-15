@@ -54,14 +54,13 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **METRIC-01** — honest `staleRemaining` via `CountStalePubkeys` — shipped v1.2 (Phase 08)
 - ✓ **HARD-01/02/03/04** — paginated `BackfillNextAttempt`; inline-discard `MarkAttempted` recovery-txn hygiene; bounded `forwardEvent` publish; documented large-frontier sort-cap guarantee — shipped v1.2 (Phase 09)
 - ✓ **RESIL-01** — main crawl loop classifies transient Dgraph gRPC errors and retries with backoff instead of exiting — shipped v1.2 (Phase 09)
+- ✓ **RETRY-01/02/03** — indefinite transient-retry via generic `retryDgraph[T]` helper; read calls break `mainLoop` on fatal, `MarkAttempted` warns-and-continues — shipped v1.3 (Phase 10)
+- ✓ **BACKOFF-01/02** — backoff 1m→2m→4m→5m (capped), applied to all four main-loop Dgraph calls — shipped v1.3 (Phase 10)
+- ✓ **SHUTDOWN-01** — mid-backoff `select` on `ctx.Done()` interrupts immediately; fatal non-transient errors still exit loudly — shipped v1.3 (Phase 10)
+- ✓ **OBS-01** — per-call-type cumulative-average duration logged each batch via `callMetrics` — shipped v1.3 (Phase 10)
+- ✓ **TEST-01** — deterministic `package main` unit tests (backoff sequence, ctx-cancel, fatal passthrough, transient+success) via injected sleep — shipped v1.3 (Phase 10)
 
-### Active (v1.3)
-
-- ☐ **RETRY-01**: Crawler retries transient Dgraph gRPC errors indefinitely instead of exiting after 5 attempts — refines RESIL-01.
-- ☐ **BACKOFF-01**: Retry backoff starts at 1 min, doubles, caps at 5 min, applied to all four main-loop Dgraph calls (`GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`).
-- ☐ **SHUTDOWN-01**: `ctx` cancellation (SIGINT/SIGTERM) still breaks the retry loop immediately; fatal non-transient errors still exit loudly.
-
-_v1.2 requirements all delivered (Phases 05–09). Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, OBS, TUNE, TEST-05) remain deferred to a later milestone._
+_v1.2 requirements all delivered (Phases 05–09); v1.3 requirements all delivered (Phase 10). Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, TUNE, TEST-05) remain deferred to a later milestone._
 
 ### Out of Scope
 
@@ -100,7 +99,8 @@ _v1.2 requirements all delivered (Phases 05–09). Remaining nice-to-haves (IN-0
 | Logging noise (LOG-01/02/03) folded into Phase 7 | All three touch the relay state machine Phase 7 already rewrites; avoids touching the same code in two phases | ✓ Shipped v1.2 (Phase 07) |
 | Open Phase 9 follow-up rather than carry Phase 8 review warnings as tech debt | At the v1.2 close gate, the deferred WR-02/03/04/05 + transient-retry todos were resolved in a dedicated phase (Phase 08 was already verified, so a follow-up phase beat a `--force` replan) | ✓ Shipped v1.2 (Phase 09) |
 | v1.3 retries transient Dgraph errors forever (not bounded) | RESIL-01's 5-attempt cap (~2.5min) still exits the crawler on longer Dgraph outages; an unattended crawler should recover whenever Dgraph returns rather than dying. Operator SIGINT/SIGTERM remains the only stop. | Planned v1.3 |
-| v1.3 backoff 1min start, 5min cap (was 5s → 2min) | A down Dgraph won't recover in seconds; starting at 1min avoids log spam and pointless rapid retries, 5min cap keeps recovery prompt once it returns | Planned v1.3 |
+| v1.3 backoff 1min start, 5min cap (was 5s → 2min) | A down Dgraph won't recover in seconds; starting at 1min avoids log spam and pointless rapid retries, 5min cap keeps recovery prompt once it returns | ✓ Shipped v1.3 (Phase 10) |
+| v1.3 single generic `retryDgraph[T]` helper over four near-identical blocks | Collapses four bounded retry blocks into one indefinite-retry helper; injected sleep fn enables deterministic unit tests without a live Dgraph | ✓ Shipped v1.3 (Phase 10) |
 
 ## Evolution
 
@@ -120,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 — milestone v1.3 (Unbounded Dgraph Retry Resilience) opened; refines v1.2's RESIL-01 to retry transient Dgraph errors indefinitely with 1min→5min backoff*
+*Last updated: 2026-06-15 — Phase 10 complete: all v1.3 requirements (RETRY/BACKOFF/SHUTDOWN/OBS/TEST) delivered via the generic `retryDgraph[T]` helper; milestone v1.3 ready for audit*
