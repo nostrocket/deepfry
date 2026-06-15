@@ -34,6 +34,12 @@ const (
 // surfaces as codes.Unavailable. Fatal codes (InvalidArgument, NotFound,
 // PermissionDenied, Internal, Unimplemented) and non-gRPC errors return false
 // so they still exit the loop loudly (RESIL-01).
+//
+// WR-01: codes.ResourceExhausted is treated as FATAL, not transient. It is the
+// code Dgraph/grpc emits when a message exceeds the ~4MB gRPC limit (CLAUDE.md
+// "Large Follow-Lists" anti-pattern). That condition is structurally fixed for a
+// given payload — the same oversized request fails identically on every retry —
+// so under indefinite retry it would livelock instead of surfacing the error.
 func isDgraphTransient(err error) bool {
 	if err == nil {
 		return false
@@ -43,9 +49,9 @@ func isDgraphTransient(err error) bool {
 		return false
 	}
 	switch st.Code() {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+	case codes.Unavailable, codes.DeadlineExceeded:
 		return true
-	default:
+	default: // ResourceExhausted and all other codes fall through to fatal
 		return false
 	}
 }
