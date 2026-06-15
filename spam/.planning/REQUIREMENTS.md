@@ -41,9 +41,9 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Operations & Deployment
 
 - [x] **OPS-01**: LMDB2GraphQL exposes `/health` and `/ready` endpoints (`/ready` gates on env open + passing the comparator self-check)
-- [ ] **OPS-02**: LMDB2GraphQL ships as a Docker subsystem with a `docker-compose` service, co-located with strfry, mounting `strfry-db` read-only (`:ro`)
-- [ ] **OPS-03**: CI pins the **same strfry version/digest the parent DeepFry stack deploys** (per LMDB-10), generates a fixture `strfry-db` from it, and asserts LMDB2GraphQL (a) decodes both `0x00` and `0x01` payloads and (b) reproduces strfry's index scan order via the reimplemented comparators
-- [ ] **OPS-04**: `stats` / startup output surfaces the expected (pinned) strfry version and the detected on-disk `dbVersion`, so operators can spot drift if the parent's `dockurr/strfry` image moves
+- [x] **OPS-02**: LMDB2GraphQL ships as a Docker subsystem with a `docker-compose` service, co-located with strfry, mounting `strfry-db` read-only (`:ro`)
+- [x] **OPS-03**: CI pins the **same strfry version/digest the parent DeepFry stack deploys** (per LMDB-10), generates a fixture `strfry-db` from it, and asserts LMDB2GraphQL (a) decodes both `0x00` and `0x01` payloads and (b) reproduces strfry's index scan order via the reimplemented comparators
+- [x] **OPS-04**: `stats` / startup output surfaces the expected (pinned) strfry version and the detected on-disk `dbVersion`, so operators can spot drift if the parent's `dockurr/strfry` image moves
 
 ## v2 Requirements
 
@@ -104,9 +104,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-05 | Phase 4 | Complete |
 | API-06 | Phase 4 | Complete |
 | OPS-01 | Phase 5 | Complete |
-| OPS-02 | Phase 5 | Pending |
-| OPS-03 | Phase 5 | Pending |
-| OPS-04 | Phase 5 | Pending |
+| OPS-02 | Phase 5 | Complete |
+| OPS-03 | Phase 5 | Complete |
+| OPS-04 | Phase 5 | Complete |
 
 **Coverage:**
 
