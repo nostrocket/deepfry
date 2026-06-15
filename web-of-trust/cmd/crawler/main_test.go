@@ -87,6 +87,49 @@ func TestRetryDgraph_CtxCancelMidBackoff(t *testing.T) {
 	}
 }
 
+// TestRetryDgraph_TransientOnCancelledCtx verifies WR-03: the most operationally-
+// likely cancellation path. An in-flight Dgraph call cancelled at shutdown commonly
+// surfaces as codes.Unavailable (classified transient). With fakeSleep (which fires
+// immediately, racing ctx.Done()), the old code could log "retrying in 1m" and loop.
+// The ctx.Err() short-circuit at the loop top must instead return a non-nil error
+// within a bounded number of iterations and must NOT loop indefinitely.
+func TestRetryDgraph_TransientOnCancelledCtx(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel: ctx.Err() is non-nil from the first iteration
+
+	var slept []time.Duration
+	calls := 0
+	fn := func() (int, error) {
+		calls++
+		// Surface a transient code, as an interrupted in-flight call typically would.
+		return 0, status.Error(codes.Unavailable, "transient during shutdown")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := retryDgraph(ctx, "CancelDuringCall", fn, newCallMetrics(), fakeSleep(&slept))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected non-nil error when ctx cancelled, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("retryDgraph did not return within bounded time; looped %d times", calls)
+	}
+
+	// The short-circuit returns before fn() is invoked, so fn must not run and
+	// no backoff delay may be requested.
+	if calls != 0 {
+		t.Errorf("expected fn not to be called on a pre-cancelled ctx, got %d calls", calls)
+	}
+	if len(slept) != 0 {
+		t.Errorf("expected 0 recorded delays on cancelled ctx, got %d: %v", len(slept), slept)
+	}
+}
+
 // TestRetryDgraph_FatalPassthrough verifies RETRY-03:
 // a fn returning a fatal code (codes.Unauthenticated) must be returned immediately
 // with zero retries — the sleepFn must record zero delays.

@@ -103,6 +103,15 @@ func retryDgraph[T any](
 	var zero T
 	delay := dgraphRetryInitial
 	for {
+		// WR-03: short-circuit on cancellation deterministically, before calling
+		// fn() or classifying its error. Without this, an in-flight call cancelled
+		// at shutdown can surface as codes.Unavailable/DeadlineExceeded (classified
+		// transient), causing a spurious "retrying in 1m" log and relying on the
+		// select's ctx.Done() arm — which races the (ready) sleepFn channel.
+		// Checking ctx.Err() here makes shutdown exit independent of the gRPC code.
+		if err := ctx.Err(); err != nil {
+			return zero, err
+		}
 		start := time.Now()
 		v, err := fn()
 		if err == nil {
