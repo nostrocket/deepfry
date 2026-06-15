@@ -137,3 +137,105 @@ Files verified present:
 Commits verified:
 - 37ec74f — FOUND (feat(05-03): add build_probe_router and restructure main.rs startup ordering)
 - ac816f9 — FOUND (test(05-03): add ready_window_test.rs)
+
+---
+
+## Code-Review Fix (CR-01 / CR-02) — 2026-06-15
+
+**Review file:** `.planning/phases/05-hardening-docker-packaging/05-REVIEW.md`
+
+The code review of the original plan 05-03 implementation identified two BLOCKERs (CR-01,
+CR-02), four WARNINGs (WR-01–04), and one INFO item (IN-01). All were addressed in a single
+design change: **bind-once / zero-gap gated router**.
+
+### Design Change (Rule 3 — planned approach replaced)
+
+The original "probe-shutdown → re-bind" approach is structurally incapable of satisfying
+OPS-01 without a connection-refused gap: shutting down `axum::serve` on the probe listener
+releases the TCP address; the window between that release and the subsequent `bind()` is a
+period in which the orchestrator receives `ECONNREFUSED` instead of `503` or `200`. No
+implementation variant of the probe-shutdown design can close this window — it is a property
+of the approach, not of the implementation.
+
+**Corrected design:** Bind the listener ONCE before the gate chain. Serve a single
+`axum::serve` call on that listener for the entire process lifetime. Gate the data surface
+(`POST /graphql`) behind an `Arc<OnceCell<AppSchema>>`: while the cell is empty (gates
+running), the handler returns 503 and executes no query; after the gate chain completes and
+the cell is populated, subsequent POSTs are executed normally. No probe server, no
+`Notify`/graceful-shutdown handshake, no re-bind.
+
+This is security-equivalent to the probe-router design for T-05-05-SC (no corpus reachable
+while not ready — `None` from `schema.get()` executes no query and reads no LMDB data) and
+is the only approach that satisfies OPS-01's continuous-observability requirement.
+
+### CR-01 — Probe-shutdown → re-bind connection-refused gap (BLOCKER)
+
+**Original sequence:** `store(true)` → `notify_one()` + `probe_handle.await` (address
+released) → `NetListener::bind(...)` (re-bind) → `axum::serve`. Between probe shutdown and
+re-bind, no socket is listening. `ECONNREFUSED` during that window defeats OPS-01.
+
+**Fix:** Single `TcpListener::bind` before the gate chain; one continuous `axum::serve`
+for the entire process lifetime. No re-bind.
+
+### CR-02 — Ephemeral-port re-bind lands on different port (BLOCKER)
+
+**Original:** If `cfg.bind_address` was `127.0.0.1:0`, the probe bind picked port P1 and
+the post-gate re-bind picked a different port P2; `local_addr` was logged as P1 (wrong).
+
+**Fix:** Eliminated by removing the re-bind (single bind; one `local_addr`).
+
+### WR-01 — Probe `axum::serve` result discarded (WARNING)
+
+**Fix:** Probe task removed. The single serve task result is surfaced via:
+```rust
+match serve.await {
+    Ok(Ok(())) => Ok(()),
+    Ok(Err(e)) => Err(e).context("axum serve"),
+    Err(e) => Err(anyhow::anyhow!(e)).context("serve task panicked"),
+}
+```
+
+### WR-02 — `probe_handle.await` JoinError discarded (WARNING)
+
+**Fix:** Probe task removed. JoinError from the single serve task is surfaced via the
+`Err(e) => Err(anyhow::anyhow!(e)).context("serve task panicked")` arm above.
+
+### WR-03 — `Notify::notify_one()` subtlety risk (WARNING)
+
+**Fix:** `Notify` and graceful-shutdown handshake removed entirely (no probe task).
+
+### WR-04 — Non-loopback comment overstated guarantee (WARNING)
+
+**Fix:** Comment reworded from "fires right after bind, regardless of gate outcome" to
+"fires right after a successful bind, before the gate chain runs" — correctly reflecting
+that `?` exits before the warning if `bind()` or `local_addr()` fail.
+
+### IN-01 — Stale doc block from `build_router` attached to `build_probe_router` (INFO)
+
+**Fix:** `build_probe_router` removed entirely; `server.rs` has a single `build_router`
+with one accurate doc block per function. The misplaced four-route/body-limit doc that
+preceded `build_probe_router` in source is gone.
+
+### Updated Key Files
+
+| File | Change |
+|------|--------|
+| `spam/src/server.rs` | `build_probe_router` removed; `build_router` signature changed to `(state: AppRouterState) -> Router`; `AppRouterState` struct added (`Arc<AtomicBool>` + `Arc<OnceCell<AppSchema>>`); `graphql_handler` added (gated on schema cell); `ready_handler` updated to use `AppRouterState`; stale doc block removed (IN-01) |
+| `spam/src/main.rs` | Single bind; single `tokio::spawn(axum::serve(...))` before gate chain; schema cell + ready flip after gates; `match serve.await` surfaces errors; `Notify`/`NetListener`/`build_probe_router` removed |
+| `spam/tests/ready_window_test.rs` | Rewritten to drive `build_router(AppRouterState)`: asserts /ready 503 (flag false + empty cell), /health 200, POST /graphql 503 (empty cell, T-05-05-SC), /ready 503→200 transition after `schema_cell.set` + `ready.store(true)` |
+| `spam/tests/health_ready_test.rs` | Updated to `build_router(AppRouterState {...})` signature |
+| `spam/tests/body_limit_test.rs` | Updated to `build_router(AppRouterState {...})` signature; schema cell populated so oversized-body 413 test still hits the handler path |
+
+### Review Fix Commits
+
+- `c02240a` — fix(05-03): bind-once readiness-gated router — close CR-01 connection-refused window + CR-02 ephemeral-port bug
+- `c9ae7cf` — test(05-03): drive /ready 503→200 and /graphql-gated-503 through the single served router
+
+### Post-fix Verification
+
+- `cargo build` — PASS
+- `cargo test --all-targets` — PASS: 133 tests (108 lib + 25 integration), 0 failures
+- Source-order: `TcpListener::bind` (line 76) precedes `run_comparator_self_check` (line 155): PASS
+- Source-order: `store(true` (line 167) follows `run_comparator_self_check` (line 155): PASS
+- `grep -q 'NON-LOOPBACK' src/main.rs`: PASS
+- `grep -c 'NetListener\|build_probe_router\|with_graceful_shutdown\|Notify' src/main.rs` = 0: PASS
