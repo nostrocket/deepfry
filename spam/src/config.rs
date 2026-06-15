@@ -4,6 +4,7 @@
 /// NEVER writes to or deletes `~/deepfry/` — tests must use `tempfile::tempdir()`.
 use anyhow::Context;
 use serde::Deserialize;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 /// Phase 1 minimal config.
@@ -59,6 +60,14 @@ fn default_bind_address() -> String {
     "127.0.0.1:8080".to_string()
 }
 
+/// Pinned strfry Docker image digest written into an auto-created config.
+/// Mirrors `config/lmdb2graphql.yaml.example` (D-08/D-09).
+const PINNED_STRFRY_VERSION: &str =
+    "dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5";
+
+/// Pinned hoytech/strfry git commit corresponding to [`PINNED_STRFRY_VERSION`].
+const PINNED_STRFRY_COMMIT: &str = "f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135";
+
 /// Load config from `~/deepfry/lmdb2graphql.yaml`.
 ///
 /// # Errors
@@ -71,7 +80,56 @@ fn default_bind_address() -> String {
 pub fn load() -> anyhow::Result<Config> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
     let path = home.join("deepfry").join("lmdb2graphql.yaml");
+
+    // Auto-create on first run: if no config exists and we have an interactive
+    // terminal, prompt the operator for the strfry DB path and write a config
+    // with the pinned defaults. Never overwrites an existing file (CLAUDE.md).
+    if !path.exists() && std::io::stdin().is_terminal() {
+        prompt_and_create(&path)?;
+    }
+
     load_from(&path)
+}
+
+/// Interactively prompt for the strfry DB path and write a new config file.
+///
+/// Only called when `path` does not already exist and stdin is a TTY. Writes the
+/// pinned strfry version/commit defaults so the operator only supplies the DB path.
+fn prompt_and_create(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    println!("No config found at {}.", path.display());
+    print!("Enter the path to strfry's LMDB directory (containing data.mdb): ");
+    std::io::stdout().flush().context("flush prompt")?;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("read strfry DB path from stdin")?;
+    let db_path = input.trim();
+    anyhow::ensure!(!db_path.is_empty(), "strfry DB path must not be empty");
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create config dir {}", parent.display()))?;
+    }
+
+    let contents = format!(
+        "# lmdb2graphql.yaml — auto-generated on first run.\n\
+         strfry_db_path: {db_path}\n\
+         bind_address: \"{}\"\n\
+         map_size: {}\n\
+         pinned_strfry_version: \"{}\"\n\
+         pinned_strfry_commit: \"{}\"\n",
+        default_bind_address(),
+        default_map_size(),
+        PINNED_STRFRY_VERSION,
+        PINNED_STRFRY_COMMIT,
+    );
+    std::fs::write(path, contents).with_context(|| format!("write config to {}", path.display()))?;
+    println!("Wrote config to {}.", path.display());
+
+    Ok(())
 }
 
 /// Load config from an explicit path.
