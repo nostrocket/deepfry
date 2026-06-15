@@ -53,20 +53,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RETRY-01 | TBD | Pending |
-| RETRY-02 | TBD | Pending |
-| RETRY-03 | TBD | Pending |
-| BACKOFF-01 | TBD | Pending |
-| BACKOFF-02 | TBD | Pending |
-| SHUTDOWN-01 | TBD | Pending |
-| OBS-01 | TBD | Pending |
-| TEST-01 | TBD | Pending |
+| RETRY-01 | Phase 10 | Pending |
+| RETRY-02 | Phase 10 | Pending |
+| RETRY-03 | Phase 10 | Pending |
+| BACKOFF-01 | Phase 10 | Pending |
+| BACKOFF-02 | Phase 10 | Pending |
+| SHUTDOWN-01 | Phase 10 | Pending |
+| OBS-01 | Phase 10 | Pending |
+| TEST-01 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 8 total
-- Mapped to phases: 0 (filled by roadmap)
-- Unmapped: 8 ⚠️ (until roadmap created)
+- Mapped to phases: 8 (Phase 10)
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-15*
-*Last updated: 2026-06-15 after initial definition*
+*Last updated: 2026-06-15 — traceability filled by roadmap creation*
