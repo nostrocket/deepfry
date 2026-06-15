@@ -31,9 +31,9 @@ use std::sync::{
 };
 
 use anyhow::Context;
-use lmdb2graphql::graphql::schema::{AppState, build_schema};
+use lmdb2graphql::graphql::schema::{build_schema, AppState};
 use lmdb2graphql::lmdb;
-use lmdb2graphql::server::{AppRouterState, build_router};
+use lmdb2graphql::server::{build_router, AppRouterState};
 use tokio::sync::OnceCell;
 
 #[tokio::main]
@@ -46,14 +46,12 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        "lmdb2graphql starting"
-    );
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "lmdb2graphql starting");
 
     // 2. Load config from ~/deepfry/lmdb2graphql.yaml.
     //    Config load is cheap and cfg.bind_address is needed to bind the listener.
-    let cfg = lmdb2graphql::config::load().context("load config from ~/deepfry/lmdb2graphql.yaml")?;
+    let cfg =
+        lmdb2graphql::config::load().context("load config from ~/deepfry/lmdb2graphql.yaml")?;
     tracing::info!(
         strfry_db_path = %cfg.strfry_db_path.display(),
         pinned_strfry_version = %cfg.pinned_strfry_version,
@@ -135,12 +133,11 @@ async fn main() -> anyhow::Result<()> {
         "Meta gates passed — dbVersion verified"
     );
 
-    // 8. Run comparator self-check (fail-closed: any mismatch → exit non-zero).
-    let golden = lmdb::self_check::GoldenVectors::load_committed()
-        .context("load committed golden vectors for self-check")?;
-
-    lmdb::self_check::run_comparator_self_check(&env, &golden)
-        .context("comparator self-check failed — LMDB indexes do not match golden vectors")?;
+    // 8. Run fixture-free comparator self-check (fail-closed: any fault → exit non-zero).
+    //    Validates the registered golpe comparators against the live B-tree's physical order
+    //    (Phase A) and via MDB_SET_RANGE seek round-trips (Phase B). No fixture/golden vectors.
+    lmdb::self_check::run_comparator_self_check(&env)
+        .context("comparator self-check failed — registered comparators do not match the live strfry B-tree order")?;
 
     tracing::info!(
         indexes_verified = lmdb::indexes::ALL_EVENT_INDEXES.len(),
