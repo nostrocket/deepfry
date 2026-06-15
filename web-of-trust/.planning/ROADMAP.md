@@ -10,7 +10,7 @@
 
 ### v1.3 Unbounded Dgraph Retry Resilience
 
-- [ ] **Phase 10: Unbounded Retry & Backoff Hardening** — Replace bounded 5-attempt Dgraph retry with indefinite transient-error retry (1 min→5 min exponential backoff), context-cancel shutdown, and call-duration observability across all four main-loop Dgraph calls
+- [x] **Phase 10: Unbounded Retry & Backoff Hardening** — Replace bounded 5-attempt Dgraph retry with indefinite transient-error retry (1 min→5 min exponential backoff), context-cancel shutdown, and call-duration observability across all four main-loop Dgraph calls (completed 2026-06-15)
 
 <details>
 <summary>✅ v1.2 Crawler Reliability & Efficiency (Phases 5–9) — SHIPPED 2026-06-15</summary>
@@ -59,4 +59,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 7. Relay Health Management | v1.2 | 3/3 | Complete | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | v1.2 | 2/2 | Complete | 2026-06-13 |
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
-| 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete   | 2026-06-15 |
+| 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete    | 2026-06-15 |
