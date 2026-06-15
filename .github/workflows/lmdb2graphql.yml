@@ -1,0 +1,72 @@
+name: lmdb2graphql CI
+
+# Triggers on pushes and PRs that touch the spam/ subtree or this workflow file.
+# Paths filter keeps CI fast — other DeepFry subsystem changes skip this job.
+on:
+  push:
+    paths:
+      - 'spam/**'
+      - '.github/workflows/lmdb2graphql.yml'
+  pull_request:
+    paths:
+      - 'spam/**'
+      - '.github/workflows/lmdb2graphql.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # liblmdb-dev: provides lmdb.h at /usr/include/lmdb.h for build.rs probe path 4.
+      # g++: needed by build.rs to compile reference/golpe_comparators.cpp (C++17).
+      # pkg-config: used by build.rs pkg-config probe for lmdb.h.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends liblmdb-dev g++ pkg-config
+
+      # Install Rust stable via the official rustup installer over TLS.
+      # Using rustup directly avoids third-party action name verification (RESEARCH.md
+      # Open Question 2 / Assumption A5 — dtolsma/rust-toolchain@v1 name is [ASSUMED]).
+      - name: Install Rust stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      # CRITICAL: rust-toolchain.toml pins "stable-x86_64-apple-darwin" which fails
+      # on the ubuntu-latest runner. Remove it before any cargo command.
+      # (RESEARCH.md Pitfall 1 — same landmine as the Dockerfile)
+      - name: Remove macOS-pinned rust-toolchain.toml
+        run: rm -f spam/rust-toolchain.toml
+
+      # Pull the pinned strfry image by immutable digest — not a mutable tag.
+      # This is the same digest used in Dockerfile.strfry and config.rs pinned_strfry_version.
+      # Pulling by digest prevents comparator/fixture drift if the tag is re-pushed (T-05-07).
+      - name: Pull pinned strfry image
+        run: |
+          docker pull dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5
+
+      # Regenerate tests/fixture/data.mdb from the pinned strfry image.
+      # This proves the fixture is reproducible from the pinned digest and guards
+      # against strfry schema/comparator drift (OPS-03).
+      - name: Generate fixture from pinned strfry
+        working-directory: spam
+        run: bash tests/generate_fixture.sh
+
+      # OPS-03 correctness gate:
+      #   - self_check tests assert comparator scan-order parity (golden vectors)
+      #   - payload_test asserts 0x00 decode (fixture) + 0x01 decode (synthetic round-trip)
+      # The 0x01 gate uses the existing round-trip test in payload_test.rs rather than
+      # a compaction-produced LMDB file (per RESEARCH.md Open Question 3).
+      - name: Run tests (comparator + payload decode gate — OPS-03)
+        working-directory: spam
+        env:
+          RUST_LOG: "error"
+        run: cargo test --all-targets -- --nocapture
+
+      - name: Clippy
+        working-directory: spam
+        run: cargo clippy -- -D warnings
