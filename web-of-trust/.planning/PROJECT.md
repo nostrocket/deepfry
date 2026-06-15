@@ -8,14 +8,13 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current Milestone: v1.3 Unbounded Dgraph Retry Resilience
+## Current State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 
 **Goal:** The crawler must survive any-length Dgraph outage without exiting — retrying transient gRPC errors indefinitely with exponential backoff instead of giving up after 5 attempts.
 
-**Target fixes:**
-- **RETRY**: Replace v1.2's bounded 5-attempt-then-`break mainLoop` retry (RESIL-01) with indefinite retry on transient gRPC errors (`codes.Unavailable` / `DeadlineExceeded` / `ResourceExhausted`). The crawler must not exit on the observed `count stale pubkeys failed: rpc error: code = Unavailable desc = error reading from server: EOF`.
-- **BACKOFF**: Backoff starts at 1 min, doubles, caps at 5 min (was 5s → 2min). Applies to all four main-loop Dgraph calls: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`.
-- **SHUTDOWN**: Preserve clean shutdown — `ctx` cancellation (SIGINT/SIGTERM) still breaks the retry loop immediately; fatal (non-transient) errors still exit loudly.
+**Status:** All 8 requirements delivered in a single phase (Phase 10). A generic `retryDgraph[T]` helper replaced the four bounded 5-attempt retry blocks: indefinite transient-error retry, 1m→2m→4m→5m capped backoff, ctx-cancel-aware sleep (clean SIGINT/SIGTERM shutdown mid-backoff), and per-call-type cumulative-average duration logging. `ResourceExhausted` was reclassified fatal during code review to prevent indefinite-retry livelock on the ~4MB gRPC message-size limit. Full archive: `milestones/v1.3-ROADMAP.md`, `milestones/v1.3-REQUIREMENTS.md`, `milestones/v1.3-MILESTONE-AUDIT.md`.
+
+**Next milestone:** Not yet defined. Candidate: TUNE-01 (config-driven retry backoff via `web-of-trust.yaml`), plus the deferred v1.2 nice-to-haves (IN-01/02/04) and Future Requirements backlog (DISC, SEC, TEST-05).
 
 ## Previous State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
 
@@ -120,4 +119,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 — Phase 10 complete: all v1.3 requirements (RETRY/BACKOFF/SHUTDOWN/OBS/TEST) delivered via the generic `retryDgraph[T]` helper; milestone v1.3 ready for audit*
+*Last updated: 2026-06-15 after v1.3 milestone — Unbounded Dgraph Retry Resilience shipped (8/8 requirements, Phase 10); tagged v1.3*

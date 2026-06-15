@@ -1,5 +1,15 @@
 # Milestones
 
+## v1.3 Unbounded Dgraph Retry Resilience (Shipped: 2026-06-15)
+
+**Phases completed:** 1 phases, 1 plans, 0 tasks
+
+**Key accomplishments:**
+
+- Generic `retryDgraph[T]` helper with 1m→5m indefinite backoff, ctx-cancel-aware sleep, and per-call-type cumulative-average observability replaces four bounded 5-attempt retry blocks in the crawler main loop.
+
+---
+
 ## v1.2 Crawler Reliability & Efficiency (Shipped: 2026-06-15)
 
 **Phases completed:** 5 phases, 11 plans, 21 tasks
