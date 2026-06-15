@@ -12,7 +12,7 @@
 - [x] **Phase 6: Filter Size & Per-Relay Cap Detection** - Reduce batch size to 100 and detect per-relay filter caps from NOTICE messages and connection-drop-on-REQ patterns (completed 2026-06-11)
 - [x] **Phase 7: Relay Health Management** - Persist and decay failure counters and learned filter caps across reconnects, classify failure reasons into buckets, auto-eject relays that exceed configurable per-class thresholds, and collapse per-relay log spam into one-line-per-state-change summaries (completed 2026-06-13)
 - [x] **Phase 8: Frontier Prioritization, Timeout & Observability** - Order the stale frontier by follower count, apply exponential backoff to long-miss stubs, cut relay timeout to 15s, add EOSE-quorum early exit, and fix the staleRemaining metric (completed 2026-06-13)
-- [ ] **Phase 9: Phase 8 Hardening & Resilience Follow-ups** - Close the deferred Phase 8 code-review warnings (paginate BackfillNextAttempt, MarkAttempted transaction safety, bounded forward-publish, large-frontier test coverage) and make the main crawl loop retry transient Dgraph errors instead of exiting
+- [x] **Phase 9: Phase 8 Hardening & Resilience Follow-ups** - Close the deferred Phase 8 code-review warnings (paginate BackfillNextAttempt, MarkAttempted transaction safety, bounded forward-publish, large-frontier test coverage) and make the main crawl loop retry transient Dgraph errors instead of exiting (completed 2026-06-15)
 
 ## Phase Details
 
@@ -113,7 +113,7 @@
 | 6. Filter Size & Per-Relay Cap Detection | 2/2 | Complete   | 2026-06-11 |
 | 7. Relay Health Management | 3/3 | Complete    | 2026-06-13 |
 | 8. Frontier Prioritization, Timeout & Observability | 2/2 | Complete    | 2026-06-13 |
-| 9. Phase 8 Hardening & Resilience Follow-ups | 2/2 | Code complete (live-host check pending) | 2026-06-13 |
+| 9. Phase 8 Hardening & Resilience Follow-ups | 2/2 | Complete    | 2026-06-15 |
 
 ### Phase 9: Phase 8 Hardening & Resilience Follow-ups
 
