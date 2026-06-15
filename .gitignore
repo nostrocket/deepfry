@@ -78,3 +78,9 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+
+# Compiled crawler binary (build output — should be built, not committed)
+web-of-trust/crawler
+
+# GSD research cache (ephemeral)
+spam/.planning/research/.cache/
