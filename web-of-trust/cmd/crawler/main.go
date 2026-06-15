@@ -20,12 +20,12 @@ import (
 	"web-of-trust/pkg/dgraph"
 )
 
-// Retry parameters for transient Dgraph gRPC errors (RESIL-01).
-// Consistent with the relay backoff constants in pkg/crawler/crawler.go (initialBackoff=30s, maxBackoff=5m).
+// Retry parameters for transient Dgraph gRPC errors (RETRY-01/BACKOFF-01/02).
+// Consistent with the relay backoff constants in pkg/crawler/crawler.go (maxBackoff=5m).
+// dgraphRetryAttempts removed — retry is indefinite for transient errors (D-04).
 const (
-	dgraphRetryInitial  = 5 * time.Second
-	dgraphRetryMax      = 2 * time.Minute
-	dgraphRetryAttempts = 5
+	dgraphRetryInitial = 1 * time.Minute // D-04: first wait 1m
+	dgraphRetryMax     = 5 * time.Minute // D-04: cap at 5m; aligns with relay maxBackoff
 )
 
 // isDgraphTransient returns true for gRPC status codes that indicate a
@@ -47,6 +47,76 @@ func isDgraphTransient(err error) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// callMetrics accumulates cumulative call duration per call type (D-06/D-07/D-08).
+// Records successful calls only; retried/failed attempts are excluded so the average
+// reflects normal-op latency, not outage stalls. Single-threaded main loop — no mutex.
+type callMetrics struct {
+	sum   map[string]time.Duration
+	count map[string]int
+}
+
+// newCallMetrics constructs an empty callMetrics accumulator.
+func newCallMetrics() *callMetrics {
+	return &callMetrics{
+		sum:   make(map[string]time.Duration),
+		count: make(map[string]int),
+	}
+}
+
+// record adds a successful call duration for the named call type (D-07: success-only).
+func (m *callMetrics) record(callName string, d time.Duration) {
+	m.sum[callName] += d
+	m.count[callName]++
+}
+
+// avg returns the cumulative average duration for the named call type.
+// Returns 0 when no successful calls have been recorded to avoid divide-by-zero.
+func (m *callMetrics) avg(callName string) time.Duration {
+	c := m.count[callName]
+	if c == 0 {
+		return 0
+	}
+	return m.sum[callName] / time.Duration(c)
+}
+
+// retryDgraph executes fn, retrying indefinitely on transient gRPC errors with
+// exponential backoff (dgraphRetryInitial→dgraphRetryMax, doubling). Fatal errors
+// and context cancellation return immediately — the caller decides whether to
+// break or continue (D-01/D-02). Successful call duration is recorded in metrics
+// (D-07/D-08). sleepFn is injectable for deterministic testing (D-03).
+func retryDgraph[T any](
+	ctx context.Context,
+	callName string,
+	fn func() (T, error),
+	metrics *callMetrics,
+	sleepFn func(time.Duration) <-chan time.Time,
+) (T, error) {
+	var zero T
+	delay := dgraphRetryInitial
+	for {
+		start := time.Now()
+		v, err := fn()
+		if err == nil {
+			metrics.record(callName, time.Since(start)) // D-07: success-only timing
+			return v, nil
+		}
+		if !isDgraphTransient(err) {
+			return zero, err // D-02: fatal/non-transient — let caller decide
+		}
+		// Transient: log with literal "retrying in %v" so SC#2 is observable in console.
+		log.Printf("Transient Dgraph error %s: %v; retrying in %v", callName, err, delay)
+		select {
+		case <-sleepFn(delay): // D-03: injectable; time.After in production
+		case <-ctx.Done():
+			return zero, ctx.Err() // SHUTDOWN-01: ctx-cancel exits mid-backoff
+		}
+		delay *= 2 // BACKOFF-02: doubling 1m→2m→4m→…
+		if delay > dgraphRetryMax {
+			delay = dgraphRetryMax // cap at 5m
+		}
 	}
 }
 
@@ -132,6 +202,10 @@ func main() {
 	startTime := time.Now()
 	startingPubkeys, _ := dgraphClient.CountPubkeys(ctx)
 
+	// Cumulative per-call-type duration accumulator (D-06/D-08; OBS-01).
+	// Created once here and threaded into every retryDgraph call.
+	metrics := newCallMetrics()
+
 	// Main processing loop
 mainLoop:
 	for {
@@ -144,66 +218,24 @@ mainLoop:
 			// Continue execution
 		}
 
-		// Get stale pubkeys to process (RESIL-01: retry on transient gRPC errors).
-		var pubkeys map[string]int64
-		{
-			var retryDelay = dgraphRetryInitial
-			for attempt := 0; attempt < dgraphRetryAttempts; attempt++ {
-				pubkeys, err = dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.RelayFilterBatchSize)
-				if err == nil {
-					break
-				}
-				if !isDgraphTransient(err) {
-					log.Printf("Fatal Dgraph error getting stale pubkeys: %v", err)
-					break mainLoop
-				}
-				log.Printf("Transient Dgraph error getting stale pubkeys (attempt %d/%d): %v; retrying in %v",
-					attempt+1, dgraphRetryAttempts, err, retryDelay)
-				select {
-				case <-time.After(retryDelay):
-				case <-ctx.Done():
-					break mainLoop
-				}
-				retryDelay *= 2
-				if retryDelay > dgraphRetryMax {
-					retryDelay = dgraphRetryMax
-				}
-			}
-			if err != nil {
-				log.Printf("Dgraph unavailable after %d attempts getting stale pubkeys, exiting: %v", dgraphRetryAttempts, err)
-				break mainLoop
-			}
+		// Get stale pubkeys to process (RETRY-01: indefinite transient retry).
+		pubkeys, err := retryDgraph(ctx, "GetStalePubkeys",
+			func() (map[string]int64, error) {
+				return dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.RelayFilterBatchSize)
+			}, metrics, time.After)
+		if err != nil {
+			log.Printf("Dgraph getting stale pubkeys failed: %v", err)
+			break mainLoop
 		}
 
-		// Count total pubkeys (RESIL-01: retry on transient gRPC errors).
-		var totalPubkeys int
-		{
-			var retryDelay = dgraphRetryInitial
-			for attempt := 0; attempt < dgraphRetryAttempts; attempt++ {
-				totalPubkeys, err = dgraphClient.CountPubkeys(ctx)
-				if err == nil {
-					break
-				}
-				if !isDgraphTransient(err) {
-					log.Printf("Fatal Dgraph error counting pubkeys: %v", err)
-					break mainLoop
-				}
-				log.Printf("Transient Dgraph error counting pubkeys (attempt %d/%d): %v; retrying in %v",
-					attempt+1, dgraphRetryAttempts, err, retryDelay)
-				select {
-				case <-time.After(retryDelay):
-				case <-ctx.Done():
-					break mainLoop
-				}
-				retryDelay *= 2
-				if retryDelay > dgraphRetryMax {
-					retryDelay = dgraphRetryMax
-				}
-			}
-			if err != nil {
-				log.Printf("Dgraph unavailable after %d attempts counting pubkeys, exiting: %v", dgraphRetryAttempts, err)
-				break mainLoop
-			}
+		// Count total pubkeys (RETRY-01: indefinite transient retry).
+		totalPubkeys, err := retryDgraph(ctx, "CountPubkeys",
+			func() (int, error) {
+				return dgraphClient.CountPubkeys(ctx)
+			}, metrics, time.After)
+		if err != nil {
+			log.Printf("Dgraph counting pubkeys failed: %v", err)
+			break mainLoop
 		}
 
 		// Initialize with seed if database is empty
@@ -221,35 +253,14 @@ mainLoop:
 		// METRIC-01 (D-15/D-16/D-17): query the honest stale count every batch.
 		// CountStalePubkeys counts frontier + aged-eligible, matching GetStalePubkeys
 		// selection semantics, so staleRemaining is never the always-zero (totalStale - batch).
-		// (RESIL-01: retry on transient gRPC errors.)
-		var totalStale int
-		{
-			var retryDelay = dgraphRetryInitial
-			for attempt := 0; attempt < dgraphRetryAttempts; attempt++ {
-				totalStale, err = dgraphClient.CountStalePubkeys(ctx)
-				if err == nil {
-					break
-				}
-				if !isDgraphTransient(err) {
-					log.Printf("Fatal Dgraph error counting stale pubkeys: %v", err)
-					break mainLoop
-				}
-				log.Printf("Transient Dgraph error counting stale pubkeys (attempt %d/%d): %v; retrying in %v",
-					attempt+1, dgraphRetryAttempts, err, retryDelay)
-				select {
-				case <-time.After(retryDelay):
-				case <-ctx.Done():
-					break mainLoop
-				}
-				retryDelay *= 2
-				if retryDelay > dgraphRetryMax {
-					retryDelay = dgraphRetryMax
-				}
-			}
-			if err != nil {
-				log.Printf("Dgraph unavailable after %d attempts counting stale pubkeys, exiting: %v", dgraphRetryAttempts, err)
-				break mainLoop
-			}
+		// (RETRY-01: indefinite transient retry.)
+		totalStale, err := retryDgraph(ctx, "CountStalePubkeys",
+			func() (int, error) {
+				return dgraphClient.CountStalePubkeys(ctx)
+			}, metrics, time.After)
+		if err != nil {
+			log.Printf("Dgraph counting stale pubkeys failed: %v", err)
+			break mainLoop
 		}
 
 		// Reconnect any dead relays before processing
@@ -282,35 +293,13 @@ mainLoop:
 			Cap:               cfg.MissBackoff.Cap,
 			HitRefreshCadence: cfg.MissBackoff.HitRefreshCadence,
 		}
-		// RESIL-01: MarkAttempted retry is best-effort (PERF-02 stamping) — on
-		// persistent transient failure, log WARN and continue; do NOT exit the loop.
-		{
-			var markErr error
-			var retryDelay = dgraphRetryInitial
-			for attempt := 0; attempt < dgraphRetryAttempts; attempt++ {
-				markErr = dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), hitSet, backoffParams)
-				if markErr == nil {
-					break
-				}
-				if !isDgraphTransient(markErr) {
-					log.Printf("Warning: non-transient error marking batch attempted: %v", markErr)
-					break // best-effort: log and continue
-				}
-				log.Printf("Transient Dgraph error marking attempted (attempt %d/%d): %v; retrying in %v",
-					attempt+1, dgraphRetryAttempts, markErr, retryDelay)
-				select {
-				case <-time.After(retryDelay):
-				case <-ctx.Done():
-					break mainLoop
-				}
-				retryDelay *= 2
-				if retryDelay > dgraphRetryMax {
-					retryDelay = dgraphRetryMax
-				}
-			}
-			if markErr != nil {
-				log.Printf("Warning: failed to mark batch attempted after %d attempts (best-effort): %v", dgraphRetryAttempts, markErr)
-			}
+		// RETRY-02/D-09: MarkAttempted retries transient errors indefinitely; on fatal
+		// or ctx-cancel, log WARN and continue (best-effort write — do NOT break mainLoop).
+		if _, err := retryDgraph(ctx, "MarkAttempted",
+			func() (struct{}, error) {
+				return struct{}{}, dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), hitSet, backoffParams)
+			}, metrics, time.After); err != nil {
+			log.Printf("Warning: failed to mark batch attempted (best-effort): %v", err)
 		}
 
 		// Clamp at 0 (WR-01): totalStale is recounted before this batch is stamped,
@@ -318,6 +307,9 @@ mainLoop:
 		staleRemaining := max(0, totalStale-len(pubkeys))
 		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
 			len(pubkeys), len(hitSet), staleRemaining, totalPubkeys)
+		// OBS-01 (D-05/D-06): cumulative avg per call type, success-only, since process start.
+		log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
+			metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
 	}
 
 	// Generate final report
