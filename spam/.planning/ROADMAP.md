@@ -178,7 +178,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Gap closure** *(closes the OPS-01 BLOCKER from 05-VERIFICATION.md)*
 
-- [x] 05-03-PLAN.md — Bind the listener and serve a probe-only /health+/ready router BEFORE the gate chain; store(true) only after the comparator self-check passes; full GraphQL router on a re-bound listener after gates — makes the /ready 503→200 window observable to a real orchestrator (OPS-01)
+- [x] 05-03-PLAN.md — Bind the listener and serve a probe-only /health+/ready router BEFORE the gate chain; store(true) only after the comparator self-check passes; full GraphQL router on a re-bound listener after gates — makes the /ready 503→200 window observable to a real orchestrator (OPS-01) [code-review fix CR-01/CR-02: redesigned as bind-once gated router — single TcpListener::bind, one axum::serve for process lifetime, POST /graphql gated behind Arc<OnceCell<AppSchema>>, eliminates connection-refused window and ephemeral-port re-bind bug]
 
 ## Progress
 

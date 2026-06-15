@@ -107,6 +107,7 @@ Recent decisions affecting current work:
 - [Phase 05 P01]: OPS-01 — /health (200 always) + /ready (503 before gates, 200 after) via Arc<AtomicBool> set after run_comparator_self_check. OPS-04 — pinnedStrfryVersion in AppState+StatsResult+stats resolver. 125 tests pass.
 - [Phase ?]: build_probe_router: probe-only startup surface (/health + /ready, no /graphql) served before gate chain so 503→200 transition is observable to real orchestrators (OPS-01 gap-closure)
 - [Phase ?]: NetListener alias for post-gate re-bind: preserves source-order awk acceptance criterion unambiguity (single TcpListener::bind before self-check)
+- [Phase 05-03 CR-01/CR-02 fix]: bind-once gated-router design — single TcpListener::bind before gate chain; one axum::serve for entire process lifetime; POST /graphql gated behind Arc<OnceCell<AppSchema>> (503 while empty, execute when populated); eliminates connection-refused gap (CR-01) and ephemeral-port re-bind bug (CR-02) from probe-shutdown approach; AppRouterState replaces separate schema+ready parameters; build_probe_router and Notify/re-bind removed
 
 ### Pending Todos
 
@@ -131,7 +132,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-15T04:48:11.273Z
-Stopped at: Completed 05-03-PLAN.md
-Resume: execute Phase 04 — GraphQL API
+Last session: 2026-06-15T06:00:00.000Z
+Stopped at: Completed 05-03 code-review fix (CR-01/CR-02/WR-01-04/IN-01)
+Resume: None — phase 05 fully complete
 Resume file: None
