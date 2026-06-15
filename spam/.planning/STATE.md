@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 Phase: 05
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-06-15
+Last activity: 2026-06-15 - Completed quick task 260615-1e6: fixture-free comparator self-check
 
 Progress: [████████░░] 90% (Phases 1-4 complete; Phase 05 both plans executed, 1 verification gap open)
 
@@ -124,6 +124,12 @@ Recent decisions affecting current work:
 - RESOLVED: Parent DeepFry stack Dockerfile.strfry pinned to digest in Plan 01-02 Task 3 (commit 2f8e2e8)
 - RESOLVED: Docker/Colima no-egress issue — orchestrator pre-pulled dockurr/strfry:1.1.0 image; import ran successfully offline
 - RESOLVED: Phase 1 spike A3 (Meta struct field offsets) — FlatBuffer vtable walker implemented; dbVersion at abs byte 40, endianness at abs byte 32; confirmed from onAppStartup.cpp
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260615-1e6 | Fixture-free comparator self-check (ran against live DB → fail-closed + 243MB log dump; now Phase A monotonicity + Phase B seek round-trip, no fixture/golden vectors at runtime) | 2026-06-15 | 08af6ee | [260615-1e6-fixture-free-self-check](./quick/260615-1e6-fixture-free-self-check/) |
 
 ## Deferred Items
 
