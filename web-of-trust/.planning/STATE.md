@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Unbounded Dgraph Retry Resilience
 status: Roadmapped — awaiting `/gsd-plan-phase 10`
-last_updated: "2026-06-15T04:45:55.351Z"
+last_updated: "2026-06-15T04:55:18.278Z"
 last_activity: 2026-06-15 — v1.3 roadmap created
 progress:
   total_phases: 1
