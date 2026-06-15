@@ -1,11 +1,11 @@
-/// build.rs — compile golpe's vendored C++ comparators via the cc crate
-///
-/// SPIKE A4 resolution: lmdb-master-sys (used by heed) does NOT emit DEP_LMDB_INCLUDE.
-/// We use pkg-config / Homebrew path as fallback to find lmdb.h. On Alpine/CI,
-/// the system lmdb.h from the `lmdb-dev` package is used (added to Docker build stage).
-///
-/// SPIKE A7 resolution: mdb_cmp_memn is not in the public lmdb.h (internal LMDB symbol).
-/// The inline equivalent is implemented directly in golpe_comparators.cpp.
+//! build.rs — compile golpe's vendored C++ comparators via the cc crate
+//!
+//! SPIKE A4 resolution: lmdb-master-sys (used by heed) does NOT emit DEP_LMDB_INCLUDE.
+//! We use pkg-config / Homebrew path as fallback to find lmdb.h. On Alpine/CI,
+//! the system lmdb.h from the `lmdb-dev` package is used (added to Docker build stage).
+//!
+//! SPIKE A7 resolution: mdb_cmp_memn is not in the public lmdb.h (internal LMDB symbol).
+//! The inline equivalent is implemented directly in golpe_comparators.cpp.
 
 fn main() {
     // Rerun only when these source files change

@@ -1,6 +1,10 @@
 /// server.rs — axum HTTP router for the lmdb2graphql GraphQL API.
 ///
 /// Provides:
+///   - `build_probe_router(ready)` — startup-window surface: mounts ONLY `GET /health`
+///     and `GET /ready` (no GraphQL/data routes). Served on the bound TCP listener while
+///     the gate chain runs so orchestrators can observe the 503→200 transition (OPS-01,
+///     T-05-05-SC: no corpus reachable while `ready=false`).
 ///   - `build_router(schema, ready)` — mounts `POST /graphql` (GraphQL service),
 ///     `GET /graphql` (GraphiQL playground), `GET /health` (liveness), and
 ///     `GET /ready` (readiness) on the same router (Pattern 5 / Pitfall 4 / OPS-01).
@@ -53,6 +57,60 @@ use crate::graphql::schema::AppSchema;
 /// which the server buffers — a trivial memory/CPU amplification vector. A query document
 /// large enough to be legitimate does not approach this ceiling.
 const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
+
+/// Build the axum router for the GraphQL API (Pattern 5 / RESEARCH.md / OPS-01).
+///
+/// Mounts four routes:
+/// - `GET  /graphql` → GraphiQL playground (HTML, for browser use)
+/// - `POST /graphql` → GraphQL Tower Service (for programmatic clients)
+/// - `GET  /health`  → liveness probe: always 200 (OPS-01, T-05-03)
+/// - `GET  /ready`   → readiness probe: 200 if `ready` flag is true, 503 otherwise (OPS-01)
+///
+/// `post_service` is called on the `MethodRouter` returned by `get(graphiql)` (Pitfall 4 —
+/// NOT a free `axum::routing::post_service` function).
+///
+/// ## Readiness flag (OPS-01 / T-05-04)
+///
+/// `ready` is an `Arc<AtomicBool>` initialized `false` in `main.rs` and set `true` only
+/// after all startup gates pass (`run_comparator_self_check` succeeds). Using `AtomicBool`
+/// (not `Mutex<bool>` or `RwLock<bool>`) avoids lock contention on every probe — the readiness
+/// state is a single bit that only ever transitions false → true (per RESEARCH anti-patterns).
+///
+/// ## Layer ordering (WR-02-LAYER)
+///
+/// `.with_state(ready)` injects the `Arc<AtomicBool>` into the router state.
+/// `.layer(RequestBodyLimitLayer::new(...))` is applied AFTER `.with_state()` so it is the
+/// outermost layer — enforces the body cap at the Content-Length/body-stream level regardless
+/// of extractor, returning 413 Payload Too Large before the body is buffered.
+/// Build the probe-only router for the startup gate window (OPS-01 / T-05-05-SC).
+///
+/// This router is served on the bound TCP listener BEFORE the gate chain runs, giving
+/// orchestrators a real HTTP surface to poll during startup. It mounts:
+/// - `GET /health` → `health_handler`: 200 always (liveness)
+/// - `GET /ready`  → `ready_handler`: 503 while `ready=false`; 200 after `store(true)`
+///
+/// Critically, this router does NOT mount `/graphql` and does NOT include the GraphQL
+/// Tower service or `AppState`. No event data is reachable while `ready=false` — the
+/// data/GraphQL surface is only mounted in `build_router` after gates pass (T-05-05-SC).
+///
+/// No `RequestBodyLimitLayer` is needed here — both handlers accept no request body.
+///
+/// ## Startup sequence
+///
+/// In `main.rs`:
+/// 1. `let listener = TcpListener::bind(addr).await?;`
+/// 2. `let probe = build_probe_router(Arc::clone(&ready)); // ready=false`
+/// 3. `tokio::spawn(axum::serve(listener, probe).with_graceful_shutdown(...))`
+/// 4. Run gate chain (env open → Meta gates → comparator self-check)
+/// 5. On `Ok`: `ready.store(true, Ordering::Release)` → probe now returns 200
+/// 6. Graceful-shutdown the probe server; re-bind; serve `build_router`
+/// 7. On any gate `Err`: `?` propagates to `main`, process exits non-zero — `/ready` never reaches 200
+pub fn build_probe_router(ready: Arc<AtomicBool>) -> Router {
+    Router::new()
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
+        .with_state(ready)
+}
 
 /// Build the axum router for the GraphQL API (Pattern 5 / RESEARCH.md / OPS-01).
 ///
