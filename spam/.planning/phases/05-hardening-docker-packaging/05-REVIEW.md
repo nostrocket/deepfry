@@ -13,7 +13,8 @@ findings:
   warning: 4
   info: 2
   total: 8
-status: issues_found
+status: resolved
+resolution: "All 2 BLOCKERs (CR-01, CR-02) and 4 WARNINGs (WR-01..04) fixed in commits c02240a/c9ae7cf via the bind-once readiness-gated-router redesign; confirmed RESOLVED by independent re-review (no new blockers)."
 ---
 
 # Phase 05: Code Review Report
