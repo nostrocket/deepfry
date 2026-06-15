@@ -40,6 +40,40 @@
 
 ---
 
+## Milestone: v1.3 — Unbounded Dgraph Retry Resilience
+
+**Shipped:** 2026-06-15
+**Phases:** 1 (10) | **Plans:** 1 | **Requirements:** 8/8
+
+### What Was Built
+- Generic `retryDgraph[T]` helper replacing four near-identical bounded 5-attempt retry blocks in the crawler main loop: indefinite transient-error retry, 1m→2m→4m→5m capped backoff, `select`-based ctx-cancel-aware sleep (clean SIGINT/SIGTERM shutdown mid-backoff), and a `callMetrics` accumulator logging per-call-type cumulative-average duration each batch (Phase 10).
+- Deterministic `package main` unit tests via an injected sleep function — backoff sequence, ctx-cancel interruption, fatal passthrough, transient-then-success — runnable under `make test` without a live Dgraph.
+
+### What Worked
+- Single coarse phase for all 8 tightly-coupled requirements (all touching the same main-loop retry code) kept plan count at 1 with no dependency loss — the granularity decision recorded at roadmap time held up.
+- The auto code-review→fix loop earned its keep: it caught a genuine **bounded→indefinite regression** (WR-01: `ResourceExhausted` would livelock forever on the permanent ~4MB gRPC limit) that neither the executor nor the verifier flagged, plus a real flaky test (WR-04: wall-clock assertion truncating to 0ns).
+- Injected-clock testing made the backoff/cancel behavior fully deterministic — 50/50 stable runs after the WR-04 fix.
+
+### What Was Inefficient
+- The initial implementation carried `ResourceExhausted` as transient straight from v1.2's RESIL-01 classification without re-examining it against the now-indefinite loop — a context-shift the plan should have flagged. Caught at review, not at plan time.
+- A test asserted on `avg > 0` over a no-op function (wall-clock dependent) — a flakiness class that a "assert on count, not duration" rule would have prevented up front.
+
+### Patterns Established
+- When converting a *bounded* retry to an *unbounded* one, re-audit the transient/fatal error classification: an error that was tolerable to retry a fixed number of times may be a permanent livelock under indefinite retry. `ResourceExhausted` (message-size limit) is fatal, not transient.
+- Interrupt-safe waits use `select { case <-sleepFn(delay): case <-ctx.Done(): return ctx.Err() }` with a loop-top `ctx.Err()` short-circuit — never a bare `time.Sleep`.
+- Test recorded effects by count/identity, not wall-clock duration, to stay deterministic on fast machines.
+
+### Key Lessons
+1. The cheapest place to catch a regression introduced by a behavior-broadening refactor (bounded → indefinite) is an adversarial code-review pass, not verification — verification confirms the goal, review questions the side effects.
+2. A no-op function under test takes 0ns; assert on what was recorded (count), not how long it took (duration).
+
+### Cost Observations
+- Model mix: orchestration on Opus; executor / reviewer / fixer / verifier / integration-checker subagents on Sonnet.
+- Sessions: 1 autonomous run (discuss+plan pre-existing; execute → review → fix×2 → re-review → audit → complete).
+- Notable: 2 fix iterations sufficed to converge clean; the 3-iteration cap was not reached.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -48,6 +82,7 @@
 |-----------|--------|------------|
 | v1.1 | 1–4 | Write-path correctness + regression coverage established |
 | v1.2 | 5–9 | Operational reliability; first use of live-host human-verify checkpoints and a milestone-close follow-up phase |
+| v1.3 | 10 | Single coarse phase; auto code-review→fix loop caught a refactor regression + flaky test the verifier missed |
 
 ### Cumulative Quality
 
@@ -55,6 +90,7 @@
 |-----------|-------|-------|
 | v1.1 | unit + integration (chunk/version-guard) | write-path covered |
 | v1.2 | unit + `//go:build integration` (validator, filter-cap, frontier order, recover/purge) | runtime behavior live-verified; broad non-write-path coverage (TEST-05) still open |
+| v1.3 | unit (`package main`, injected-clock retry/backoff/cancel) | retry helper deterministically covered without a live Dgraph; first `cmd/crawler` unit-test file |
 
 ### Top Lessons (Verified Across Milestones)
 
