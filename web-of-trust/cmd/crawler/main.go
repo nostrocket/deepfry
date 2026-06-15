@@ -230,7 +230,13 @@ mainLoop:
 				return dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.RelayFilterBatchSize)
 			}, metrics, time.After)
 		if err != nil {
-			log.Printf("Dgraph getting stale pubkeys failed: %v", err)
+			// WR-02: distinguish clean shutdown (ctx cancelled) from a real Dgraph
+			// failure so SIGINT/SIGTERM does not log as an outage (SHUTDOWN-01).
+			if ctx.Err() != nil {
+				log.Println("Shutdown requested during GetStalePubkeys, breaking main loop")
+			} else {
+				log.Printf("Dgraph getting stale pubkeys failed: %v", err)
+			}
 			break mainLoop
 		}
 
@@ -240,7 +246,12 @@ mainLoop:
 				return dgraphClient.CountPubkeys(ctx)
 			}, metrics, time.After)
 		if err != nil {
-			log.Printf("Dgraph counting pubkeys failed: %v", err)
+			// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
+			if ctx.Err() != nil {
+				log.Println("Shutdown requested during CountPubkeys, breaking main loop")
+			} else {
+				log.Printf("Dgraph counting pubkeys failed: %v", err)
+			}
 			break mainLoop
 		}
 
@@ -265,7 +276,12 @@ mainLoop:
 				return dgraphClient.CountStalePubkeys(ctx)
 			}, metrics, time.After)
 		if err != nil {
-			log.Printf("Dgraph counting stale pubkeys failed: %v", err)
+			// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
+			if ctx.Err() != nil {
+				log.Println("Shutdown requested during CountStalePubkeys, breaking main loop")
+			} else {
+				log.Printf("Dgraph counting stale pubkeys failed: %v", err)
+			}
 			break mainLoop
 		}
 
