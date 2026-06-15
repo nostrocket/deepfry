@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Payload Decoding & Index Scan Primitives** - Decode EventPayload in both formats and build bounded cursor scans over every Event__* index (3 plans complete 2026-06-11; LMDB-07/08/09 satisfied)
 - [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — 11 plans incl. gap-closures 03-05..03-11; final fat-group cursor-stranding + ts=0 non-termination blockers closed via debug fix (lev_id_floor in merge_windowed, commit f4ec868); verification PASSED 5/5 must-haves (completed 2026-06-13)
 - [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
-- [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap closure pending)
+- [ ] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap-closure plan 05-03 created)
 
 ## Phase Details
 
@@ -144,7 +144,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. Queries exceeding the hard limit ceiling are capped, not rejected; cursor pagination on `(created_at, lev_id)` allows traversal without scanning the full DB
   6. The GraphQL schema exposes no mutations
 
-**Plans**: 2 plans (2 waves)
+**Plans**: 3 plans (2 waves + gap closure)
 
 **Wave 1**
 
@@ -175,6 +175,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 2** *(blocked on Wave 1: docker-compose healthcheck consumes /health)*
 
 - [x] 05-02-PLAN.md — Alpine multi-stage Dockerfile + docker-compose service mounting strfry-db :ro co-located with strfry, and CI workflow + fixture-generation script asserting comparator scan order + 0x00/0x01 decode against the pinned strfry digest (OPS-02, OPS-03)
+
+**Gap closure** *(closes the OPS-01 BLOCKER from 05-VERIFICATION.md)*
+
+- [ ] 05-03-PLAN.md — Bind the listener and serve a probe-only /health+/ready router BEFORE the gate chain; store(true) only after the comparator self-check passes; full GraphQL router on a re-bound listener after gates — makes the /ready 503→200 window observable to a real orchestrator (OPS-01)
 
 ## Progress
 
