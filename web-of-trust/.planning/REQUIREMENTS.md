@@ -9,26 +9,26 @@ Refines v1.2's RESIL-01 (Phase 9), which retries transient Dgraph errors but giv
 
 ### Resilience
 
-- [ ] **RETRY-01**: When a main-loop Dgraph call returns a transient gRPC error (`codes.Unavailable`, `codes.DeadlineExceeded`, `codes.ResourceExhausted`), the crawler retries indefinitely instead of exiting after a fixed attempt cap.
-- [ ] **RETRY-02**: The indefinite-retry behavior is applied uniformly to all four main-loop Dgraph calls: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, and `MarkAttempted`.
-- [ ] **RETRY-03**: Non-transient (fatal) Dgraph errors still terminate the read-path loop loudly with a logged error — behavior unchanged from v1.2.
+- [x] **RETRY-01**: When a main-loop Dgraph call returns a transient gRPC error (`codes.Unavailable`, `codes.DeadlineExceeded`, `codes.ResourceExhausted`), the crawler retries indefinitely instead of exiting after a fixed attempt cap.
+- [x] **RETRY-02**: The indefinite-retry behavior is applied uniformly to all four main-loop Dgraph calls: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, and `MarkAttempted`.
+- [x] **RETRY-03**: Non-transient (fatal) Dgraph errors still terminate the read-path loop loudly with a logged error — behavior unchanged from v1.2.
 
 ### Backoff
 
-- [ ] **BACKOFF-01**: The first retry waits 1 minute after the transient error is encountered (was 5 s).
-- [ ] **BACKOFF-02**: Backoff grows exponentially (doubling) and is capped at 5 minutes (was capped at 2 min); the cap is sustained for all subsequent retries during a prolonged outage.
+- [x] **BACKOFF-01**: The first retry waits 1 minute after the transient error is encountered (was 5 s).
+- [x] **BACKOFF-02**: Backoff grows exponentially (doubling) and is capped at 5 minutes (was capped at 2 min); the cap is sustained for all subsequent retries during a prolonged outage.
 
 ### Shutdown
 
-- [ ] **SHUTDOWN-01**: Context cancellation (SIGINT/SIGTERM) interrupts an in-progress retry wait immediately and shuts the crawler down cleanly, even mid-backoff.
+- [x] **SHUTDOWN-01**: Context cancellation (SIGINT/SIGTERM) interrupts an in-progress retry wait immediately and shuts the crawler down cleanly, even mid-backoff.
 
 ### Observability
 
-- [ ] **OBS-01**: Each main-loop Dgraph call's execution time is measured, and the crawler periodically logs the average call duration (per call type: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`) to the console.
+- [x] **OBS-01**: Each main-loop Dgraph call's execution time is measured, and the crawler periodically logs the average call duration (per call type: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`) to the console.
 
 ### Testing
 
-- [ ] **TEST-01**: Unit tests cover the retry/backoff helper — indefinite retry on transient codes, immediate stop on a context-cancel, the 1m→2m→4m→5m(cap) backoff sequence, and that fatal codes are not retried.
+- [x] **TEST-01**: Unit tests cover the retry/backoff helper — indefinite retry on transient codes, immediate stop on a context-cancel, the 1m→2m→4m→5m(cap) backoff sequence, and that fatal codes are not retried.
 
 ## Future Requirements
 
@@ -53,16 +53,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RETRY-01 | Phase 10 | Pending |
-| RETRY-02 | Phase 10 | Pending |
-| RETRY-03 | Phase 10 | Pending |
-| BACKOFF-01 | Phase 10 | Pending |
-| BACKOFF-02 | Phase 10 | Pending |
-| SHUTDOWN-01 | Phase 10 | Pending |
-| OBS-01 | Phase 10 | Pending |
-| TEST-01 | Phase 10 | Pending |
+| RETRY-01 | Phase 10 | Complete |
+| RETRY-02 | Phase 10 | Complete |
+| RETRY-03 | Phase 10 | Complete |
+| BACKOFF-01 | Phase 10 | Complete |
+| BACKOFF-02 | Phase 10 | Complete |
+| SHUTDOWN-01 | Phase 10 | Complete |
+| OBS-01 | Phase 10 | Complete |
+| TEST-01 | Phase 10 | Complete |
 
 **Coverage:**
+
 - v1.3 requirements: 8 total
 - Mapped to phases: 8 (Phase 10)
 - Unmapped: 0 ✓
