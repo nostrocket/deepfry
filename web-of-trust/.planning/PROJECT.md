@@ -8,13 +8,20 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
+## Current Milestone: v1.3 Unbounded Dgraph Retry Resilience
+
+**Goal:** The crawler must survive any-length Dgraph outage without exiting — retrying transient gRPC errors indefinitely with exponential backoff instead of giving up after 5 attempts.
+
+**Target fixes:**
+- **RETRY**: Replace v1.2's bounded 5-attempt-then-`break mainLoop` retry (RESIL-01) with indefinite retry on transient gRPC errors (`codes.Unavailable` / `DeadlineExceeded` / `ResourceExhausted`). The crawler must not exit on the observed `count stale pubkeys failed: rpc error: code = Unavailable desc = error reading from server: EOF`.
+- **BACKOFF**: Backoff starts at 1 min, doubles, caps at 5 min (was 5s → 2min). Applies to all four main-loop Dgraph calls: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`.
+- **SHUTDOWN**: Preserve clean shutdown — `ctx` cancellation (SIGINT/SIGTERM) still breaks the retry loop immediately; fatal (non-transient) errors still exit loudly.
+
+## Previous State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
 
 **Goal:** Fix three high-severity operational bugs found in a 40-batch production run and build automatic relay health management that ejects bad relays without manual intervention.
 
 **Status:** All 21 requirements delivered across Phases 05–09 (VALID, FILTER, RELAY, LOG, PERF, TIMEOUT, METRIC, HARD, RESIL). Phases 08 and 09 (frontier prioritization, 15s timeout, EOSE-quorum, honest staleRemaining; then the deferred hardening follow-ups + transient-error resilience) were verified live on the production host. Full archive: `milestones/v1.2-ROADMAP.md` and `milestones/v1.2-REQUIREMENTS.md`.
-
-**Next milestone:** not yet defined — run `/gsd-new-milestone`.
 
 **Target fixes:**
 - **VALID**: `updateFollowsFromEvent` uses `nostr.GetPublicKey` as a validator (semantically wrong — it's a private-key→public-key derivation); 19 garbage pubkeys already in DB re-enter every batch permanently. Fix validator to hex regex; purge bad nodes; stamp invalid pubkeys in `MarkAttempted` via UID to age them out.
@@ -48,9 +55,13 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **HARD-01/02/03/04** — paginated `BackfillNextAttempt`; inline-discard `MarkAttempted` recovery-txn hygiene; bounded `forwardEvent` publish; documented large-frontier sort-cap guarantee — shipped v1.2 (Phase 09)
 - ✓ **RESIL-01** — main crawl loop classifies transient Dgraph gRPC errors and retries with backoff instead of exiting — shipped v1.2 (Phase 09)
 
-### Active
+### Active (v1.3)
 
-_All v1.2 requirements delivered (Phases 05–09). Milestone v1.2 shipped — no active requirements. The Phase 8 code-review follow-ups (WR-02/03/04/05) and the transient-Dgraph-error retry were closed in Phase 9 (HARD-01..04, RESIL-01); the source todos are resolved in `.planning/todos/done/`. Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, OBS, TUNE, TEST-05) await the next milestone — run `/gsd-new-milestone`._
+- ☐ **RETRY-01**: Crawler retries transient Dgraph gRPC errors indefinitely instead of exiting after 5 attempts — refines RESIL-01.
+- ☐ **BACKOFF-01**: Retry backoff starts at 1 min, doubles, caps at 5 min, applied to all four main-loop Dgraph calls (`GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`).
+- ☐ **SHUTDOWN-01**: `ctx` cancellation (SIGINT/SIGTERM) still breaks the retry loop immediately; fatal non-transient errors still exit loudly.
+
+_v1.2 requirements all delivered (Phases 05–09). Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, OBS, TUNE, TEST-05) remain deferred to a later milestone._
 
 ### Out of Scope
 
@@ -88,6 +99,8 @@ _All v1.2 requirements delivered (Phases 05–09). Milestone v1.2 shipped — no
 | Persist learned filter caps across reconnects (RELAY-03) | Reverses Phase 6's reset-on-reconnect: re-learning the cap every batch re-runs the halving cascade, re-kills floor-capped relays, and floods logs | ✓ Shipped v1.2 (Phase 07) |
 | Logging noise (LOG-01/02/03) folded into Phase 7 | All three touch the relay state machine Phase 7 already rewrites; avoids touching the same code in two phases | ✓ Shipped v1.2 (Phase 07) |
 | Open Phase 9 follow-up rather than carry Phase 8 review warnings as tech debt | At the v1.2 close gate, the deferred WR-02/03/04/05 + transient-retry todos were resolved in a dedicated phase (Phase 08 was already verified, so a follow-up phase beat a `--force` replan) | ✓ Shipped v1.2 (Phase 09) |
+| v1.3 retries transient Dgraph errors forever (not bounded) | RESIL-01's 5-attempt cap (~2.5min) still exits the crawler on longer Dgraph outages; an unattended crawler should recover whenever Dgraph returns rather than dying. Operator SIGINT/SIGTERM remains the only stop. | Planned v1.3 |
+| v1.3 backoff 1min start, 5min cap (was 5s → 2min) | A down Dgraph won't recover in seconds; starting at 1min avoids log spam and pointless rapid retries, 5min cap keeps recovery prompt once it returns | Planned v1.3 |
 
 ## Evolution
 
@@ -107,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after v1.2 milestone — all 5 phases (05–09) shipped, 21/21 requirements delivered and live-verified; Phase 9 closed the deferred Phase 8 hardening warnings + transient-error resilience*
+*Last updated: 2026-06-15 — milestone v1.3 (Unbounded Dgraph Retry Resilience) opened; refines v1.2's RESIL-01 to retry transient Dgraph errors indefinitely with 1min→5min backoff*
