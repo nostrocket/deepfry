@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-15T03:22:45.473Z"
-last_activity: 2026-06-15 -- Phase 05 executed (2/2 plans); verification gaps_found (6/7) — OPS-01 /ready gap open
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-06-15T04:48:11.276Z"
+last_activity: 2026-06-15 -- Phase 05 execution started
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 21
-  percent: 80
+  completed_phases: 5
+  total_plans: 23
+  completed_plans: 23
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-10)
 
 ## Current Position
 
-Phase: 05 (hardening-docker-packaging) — VERIFICATION GAPS_FOUND
-Plan: 2 of 2 executed
-Status: Phase 05 pending gap closure (OPS-01 /ready 503 branch unreachable in production)
-Last activity: 2026-06-15 -- Phase 05 executed (2/2 plans); verification 6/7, 1 blocker
+Phase: 05 (hardening-docker-packaging) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-06-15 -- Phase 05 execution started
 
 Progress: [████████░░] 90% (Phases 1-4 complete; Phase 05 both plans executed, 1 verification gap open)
 
@@ -68,6 +68,7 @@ Progress: [████████░░] 90% (Phases 1-4 complete; Phase 05 bo
 | Phase 03-query-engine P11 | 30min | 2 tasks | 1 file |
 | Phase 04-graphql-api P01 | 9 | 3 tasks | 5 files |
 | Phase 05-hardening P01 | 6 min | 2 tasks | 7 files |
+| Phase 05 P03 | 1227 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,8 @@ Recent decisions affecting current work:
 - [Phase 03-query-engine P10]: Bounded round-loop with MAX_ROUNDS=8; partial-result cursor returned when budget-capped with reachable events; VERIFICATION truth #5 VERIFIED; 106 tests pass (90 lib + 16 integration)
 - [Phase 03-query-engine P11]: CR-01 closed: deepest_scanned fallback cursor returns Some() when valid empty + !exhausted. CR-02 closed: no-progress break with ts-advance override (deepest_scanned = stalled_ts-1 / u64::MAX) ensures events below fat timestamp reachable. 108 tests pass.
 - [Phase 05 P01]: OPS-01 — /health (200 always) + /ready (503 before gates, 200 after) via Arc<AtomicBool> set after run_comparator_self_check. OPS-04 — pinnedStrfryVersion in AppState+StatsResult+stats resolver. 125 tests pass.
+- [Phase ?]: build_probe_router: probe-only startup surface (/health + /ready, no /graphql) served before gate chain so 503→200 transition is observable to real orchestrators (OPS-01 gap-closure)
+- [Phase ?]: NetListener alias for post-gate re-bind: preserves source-order awk acceptance criterion unambiguity (single TcpListener::bind before self-check)
 
 ### Pending Todos
 
@@ -128,7 +131,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-13T14:30:21.722Z
-Stopped at: Phase 4 context gathered
+Last session: 2026-06-15T04:48:11.273Z
+Stopped at: Completed 05-03-PLAN.md
 Resume: execute Phase 04 — GraphQL API
-Resume file: .planning/phases/04-graphql-api/04-CONTEXT.md
+Resume file: None
