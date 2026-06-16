@@ -854,6 +854,24 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 		// send its result and exit once Subscribe eventually unblocks (e.g. when the
 		// dispatcher closes the connection on timeout — HANG-03). Without this buffer
 		// the goroutine would block on the send forever.
+		//
+		// CR-02: the buffered send prevents the child from blocking on its own send, but
+		// it does NOT bound a subscription leak on the ctx.Done() abandonment path. If
+		// queryRelay has already returned ctx.Err() (the parent stopped consuming
+		// subResultCh) and relay.Subscribe then succeeds — the connection was merely
+		// slow, not dead — the returned *nostr.Subscription would sit unconsumed in the
+		// buffer and never be Unsub()'d, leaking a live subscription on the
+		// quorum-cancel path (which never closes the connection via markRelayDead).
+		//
+		// When the parent abandons the call on ctx.Done() it hands ownership of the
+		// (still pending) result to a short cleanup goroutine: that goroutine blocks on
+		// the buffered channel until the Subscribe child eventually delivers, then
+		// Unsub()s any subscription it obtained. Handing cleanup to a dedicated reader —
+		// rather than a flag the child re-checks — avoids a TOCTOU race where the child
+		// could read the flag before the parent sets it and skip the unsub. The cleanup
+		// goroutine's lifetime is bounded by the Subscribe child completing (which the
+		// buffered send guarantees it eventually will, even on a wedged Fire(), once the
+		// connection is closed).
 		subscribeStart := time.Now()
 		type subscribeResult struct {
 			sub *nostr.Subscription
@@ -872,9 +890,16 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			sub, err = res.sub, res.err
 		case <-ctx.Done():
 			// relayQueryContext expired while Subscribe was blocked (e.g. Fire() parked
-			// on a half-open TCP write queue). Return ctx.Err() immediately; the child
-			// goroutine is abandoned here but its lifetime is bounded by the dispatcher
-			// closing the connection on the timeout path (HANG-03, Task 2).
+			// on a half-open TCP write queue). Spawn a cleanup goroutine that owns the
+			// abandoned result so a slow-but-successful Subscribe does not leak a live
+			// Subscription (the quorum-cancel path never closes the connection via
+			// markRelayDead), then return ctx.Err() immediately.
+			go func() {
+				res := <-subResultCh
+				if res.sub != nil {
+					res.sub.Unsub()
+				}
+			}()
 			return ctx.Err()
 		}
 
