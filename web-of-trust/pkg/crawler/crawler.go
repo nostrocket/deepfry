@@ -105,6 +105,15 @@ type Crawler struct {
 	ejectionThresholds map[failureClass]int32
 	// Phase 8: EOSE-quorum fraction (D-12/D-13). 0 disables early exit.
 	quorum float64
+
+	// queryRelayFn is the per-relay query step invoked by FetchAndUpdateFollows.
+	// It defaults to (*Crawler).queryRelay; production code never reassigns it.
+	// This is a testable seam (WR-05 precedent): tests inject a function that
+	// blocks indefinitely — ignoring the relay-query context exactly as go-nostr's
+	// Subscription.Fire does (see HANG-FINDINGS.md) — to prove FetchAndUpdateFollows
+	// still returns on its own timeout. A nil value falls back to c.queryRelay so
+	// Crawlers built as struct literals (not via New) behave unchanged.
+	queryRelayFn func(ctx context.Context, rs *relayState, filter nostr.Filter, eventsChan chan<- *nostr.Event) error
 }
 
 type Config struct {
@@ -476,6 +485,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// Per-batch EOSE-quorum counter (D-13). Function-local — not shared across batches.
 	var done atomic.Int32
 
+	// Resolve the per-relay query step (test seam; defaults to the real method).
+	queryRelay := c.queryRelayFn
+	if queryRelay == nil {
+		queryRelay = c.queryRelay
+	}
+
 	// Launch goroutines for each alive relay
 	for _, rs := range c.relays {
 		if !rs.alive {
@@ -484,7 +499,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		wg.Add(1)
 		go func(rs *relayState) {
 			defer wg.Done()
-			err := c.queryRelay(relayQueryContext, rs, filter, eventsChan)
+			err := queryRelay(relayQueryContext, rs, filter, eventsChan)
 			if err != nil {
 				errorsChan <- relayError{url: rs.url, err: err}
 				// D-14: errors count toward quorum (move batch forward, not stall it).
@@ -729,8 +744,40 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 		chunkFilter := filter
 		chunkFilter.Authors = chunk
 
+		// HANG-02: go-nostr's Subscription.Fire() (subscription.go:187) blocks on a
+		// bare channel receive over the relay write queue and ignores the context
+		// passed to relay.Subscribe. Wrap Subscribe in a child goroutine and select
+		// on the result vs ctx.Done() so queryRelay returns promptly on timeout even
+		// when Fire() is wedged by a half-open TCP connection.
+		//
+		// The result channel is buffered (size 1) so the abandoned child goroutine can
+		// send its result and exit once Subscribe eventually unblocks (e.g. when the
+		// dispatcher closes the connection on timeout — HANG-03). Without this buffer
+		// the goroutine would block on the send forever.
 		subscribeStart := time.Now()
-		sub, err := relay.Subscribe(ctx, []nostr.Filter{chunkFilter})
+		type subscribeResult struct {
+			sub *nostr.Subscription
+			err error
+		}
+		subResultCh := make(chan subscribeResult, 1)
+		go func() {
+			s, e := relay.Subscribe(ctx, []nostr.Filter{chunkFilter})
+			subResultCh <- subscribeResult{sub: s, err: e}
+		}()
+
+		var sub *nostr.Subscription
+		var err error
+		select {
+		case res := <-subResultCh:
+			sub, err = res.sub, res.err
+		case <-ctx.Done():
+			// relayQueryContext expired while Subscribe was blocked (e.g. Fire() parked
+			// on a half-open TCP write queue). Return ctx.Err() immediately; the child
+			// goroutine is abandoned here but its lifetime is bounded by the dispatcher
+			// closing the connection on the timeout path (HANG-03, Task 2).
+			return ctx.Err()
+		}
+
 		if err != nil {
 			// Skip logging for context cancellation, as it's expected during graceful shutdown
 			if ctx.Err() != nil {
