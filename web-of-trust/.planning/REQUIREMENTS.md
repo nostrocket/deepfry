@@ -42,16 +42,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HANG-01 | TBD | Pending |
-| HANG-02 | TBD | Pending |
-| HANG-03 | TBD | Pending |
-| TEST-02 | TBD | Pending |
+| HANG-01 | Phase 11 | Pending |
+| HANG-02 | Phase 11 | Pending |
+| HANG-03 | Phase 11 | Pending |
+| TEST-02 | Phase 11 | Pending |
 
 **Coverage:**
 
 - v1.4 requirements: 4 total
-- Mapped to phases: filled by roadmap creation
-- Unmapped: TBD
+- Mapped to phases: 4 / 4
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-16*

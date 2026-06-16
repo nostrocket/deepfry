@@ -5,6 +5,7 @@
 - ✅ **v1.1 Write-Path Correctness** — Phases 1–4 (shipped)
 - ✅ **v1.2 Crawler Reliability & Efficiency** — Phases 5–9 (shipped 2026-06-15)
 - ✅ **v1.3 Unbounded Dgraph Retry Resilience** — Phase 10 (shipped 2026-06-15)
+- **v1.4 Crawler Hang Fix (Relay-Query Liveness)** — Phase 11 (active)
 
 ## Phases
 
@@ -41,6 +42,23 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 
 </details>
 
+### v1.4 Crawler Hang Fix (Relay-Query Liveness)
+
+- [ ] **Phase 11: Relay-Query Liveness** - Fix dispatcher to return on relay-query timeout; bound queryRelay against context-ignoring go-nostr Fire(); harden websocket write deadlines; pass regression test.
+
+## Phase Details
+
+### Phase 11: Relay-Query Liveness
+**Goal**: A stuck or half-open relay can never wedge FetchAndUpdateFollows — the dispatcher always returns within a bounded multiple of its relay-query timeout.
+**Depends on**: Phase 10
+**Requirements**: HANG-01, HANG-02, HANG-03, TEST-02
+**Success Criteria** (what must be TRUE):
+  1. `FetchAndUpdateFollows` returns within a small bounded multiple of `c.timeout` even when every per-relay query goroutine blocks indefinitely and ignores its context.
+  2. `queryRelay` returns when the relay-query context expires regardless of whether the underlying `relay.Subscribe` / go-nostr `Fire()` respects that context.
+  3. A half-open relay connection cannot park its write-loop goroutine indefinitely — websocket write deadlines or equivalent keepalive bounds the time any single relay can stay wedged.
+  4. `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` (pkg/crawler/crawler_hang_test.go) passes GREEN, and `make test` (run from the web-of-trust module directory) is fully green with no failures or skips in the unit suite.
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans | Status | Completed |
@@ -51,3 +69,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 8. Frontier Prioritization, Timeout & Observability | v1.2 | 2/2 | Complete | 2026-06-13 |
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
+| 11. Relay-Query Liveness | v1.4 | 0/TBD | Not started | - |

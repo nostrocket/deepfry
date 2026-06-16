@@ -3,38 +3,42 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Crawler Hang Fix (Relay-Query Liveness)
 status: planning
-last_updated: "2026-06-16T04:22:24.320Z"
+last_updated: "2026-06-16"
 last_activity: 2026-06-16
 progress:
-  total_phases: 0
+  total_phases: 1
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
   percent: 0
 ---
 
-# Project State: Web-of-Trust Crawler — v1.3 Unbounded Dgraph Retry Resilience
+# Project State: Web-of-Trust Crawler — v1.4 Crawler Hang Fix (Relay-Query Liveness)
 
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
 
 ## Project Reference
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 10 — Unbounded Retry & Backoff Hardening
+**Current focus:** Phase 11 — Relay-Query Liveness
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 11 (Relay-Query Liveness)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-16 — Milestone v1.4 started
+Status: Roadmap created; ready to plan
+Last activity: 2026-06-16 — Milestone v1.4 roadmap written; Phase 11 defined
 
 ## Performance Metrics
 
-- Phases complete (v1.3): 0 / 1
-- Requirements delivered (v1.3): 0 / 8
-- Plans complete (v1.3): 0 / TBD
+- Phases complete (v1.4): 0 / 1
+- Requirements delivered (v1.4): 0 / 4
+- Plans complete (v1.4): 0 / TBD
+
+- Phases complete (v1.3): 1 / 1
+- Requirements delivered (v1.3): 8 / 8 (RETRY-01/02/03, BACKOFF-01/02, SHUTDOWN-01, OBS-01, TEST-01)
+- Plans complete (v1.3): 1 / 1
 
 - Phases complete (v1.2): 5 / 5
 - Requirements delivered (v1.2): 21 / 21 (VALID-01/02/03, FILTER-01/02, RELAY-01/02/03, LOG-01/02/03, PERF-01/02, TIMEOUT-01/02, METRIC-01, HARD-01/02/03/04, RESIL-01)
@@ -46,30 +50,30 @@ Last activity: 2026-06-16 — Milestone v1.4 started
 
 | Decision | Rationale |
 |----------|-----------|
-| Continue numbering from Phase 10 | v1.2 ended at Phase 9; sequential numbering per config |
-| Single phase for all 8 v1.3 requirements | Coarse granularity + tight coupling: all 8 requirements touch the main-loop retry/backoff code in cmd/crawler/main.go; no natural delivery boundary splits them |
-| Phase 10 = unbounded retry + backoff + shutdown + observability + tests | RETRY/BACKOFF/SHUTDOWN are inseparable (removing the attempt cap while keeping bounded backoff produces no useful intermediate state); OBS-01 and TEST-01 ship in the same pass to validate the new behavior |
-| v1.2 decisions | (see v1.2 archived state below) |
-| Phase 10 P01 | 166 | 2 tasks | 2 files |
+| Continue numbering from Phase 10 | v1.3 ended at Phase 10; sequential numbering per config |
+| Single phase for all 4 v1.4 requirements | Coarse granularity + inseparable coupling: HANG-01 (dispatcher exit) and HANG-02 (bound Subscribe) neither produces a useful intermediate state alone; HANG-03 targets the same subsystem; TEST-02 validates all three. No natural delivery boundary splits them. |
+| Phase 11 = dispatcher fix + queryRelay bound + websocket hardening + regression test | The regression test (TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks) is the explicit acceptance gate for the entire milestone; it validates HANG-01+HANG-02 together. HANG-03 ships in the same pass as hardening. |
+| Dispatcher abandons stuck goroutines (HANG-01) rather than waiting | Fix #1 from HANG-FINDINGS.md: return on relayQueryContext done + drain buffered events; stuck goroutines bounded but may leak until reconnect / relay eject. Acceptable per HANG-FINDINGS analysis. |
+| queryRelay wraps relay.Subscribe in child goroutine with ctx-select (HANG-02) | Fix #2: reduces goroutine leak frequency; goroutine still leaks but no longer blocks the batch. Combined with #1 so leaks are bounded. |
+| Websocket write deadline / keepalive hardening (HANG-03) | Fix #3: makes half-open connections die, cancelling connectionContext, unblocking Fire() — reduces leak frequency. Does not replace #1+#2 but shortens the window. |
 
 ### Important Facts
 
-- v1.3 target: `cmd/crawler/main.go` only — retry constants at lines 26-28, four near-identical retry blocks, `isDgraphTransient` already at lines 37-51.
-- RESIL-01 (Phase 9) added the retry skeleton with 5s initial, 2m cap, 5 attempts max — v1.3 removes the attempt cap and changes timing to 1m initial / 5m cap.
-- The four main-loop Dgraph calls requiring indefinite retry: `GetStalePubkeys`, `CountPubkeys`, `CountStalePubkeys`, `MarkAttempted`.
-- Context-cancel shutdown must interrupt `time.Sleep`-style waits — use `select` on `ctx.Done()` vs a timer channel, not a bare sleep.
-- OBS-01 requires per-call-type average duration logging; implementation likely uses a sliding window or running average per call type.
-- TEST-01 covers the retry/backoff helper in isolation: indefinite transient retry, context-cancel interruption, 1m→2m→4m→5m cap sequence, fatal-code passthrough.
-- Live config at `~/deepfry/web-of-trust.yaml` must not be edited for testing; use a temp `HOME`.
-- Integration tests gate on live Dgraph via `//go:build integration` / `make test-integration`.
+- Root cause confirmed via SIGQUIT goroutine dump: two query goroutines wedged 48 minutes in go-nostr `subscription.go:187` (bare channel receive on write queue, no ctx select).
+- Affected files: `pkg/crawler/crawler.go` (FetchAndUpdateFollows dispatcher ~lines 432–642, queryRelay ~line 686+).
+- The `queryRelayFn` seam already exists on `Crawler` (WR-05 precedent from Phase 7); the regression test uses it to inject a blocking stub.
+- `make test` runs with `-short` flag; no live Dgraph required for these unit tests — pure `pkg/crawler` logic.
+- go-nostr v0.52.0's `Subscription.Fire()` (subscription.go:187) ignores caller ctx; only `r.connectionContext` (relay's own lifetime ctx) can unblock it.
+- EOSE-quorum early-exit (TIMEOUT-02) is orthogonal; do not modify quorum logic unless the liveness fix requires it.
+- Relay health / auto-ejection thresholds (RELAY-01/02/03) are out of scope; ejection already works.
 
 ### Todos
 
-- [ ] Plan Phase 10 (`/gsd-plan-phase 10`)
+- [ ] Plan Phase 11 (`/gsd-plan-phase 11`)
 
 ### Roadmap Evolution
 
-- Phase 10 added 2026-06-15: "Unbounded Retry & Backoff Hardening" — v1.3 opens a single phase extending RESIL-01 to remove the 5-attempt cap, raise backoff timing to 1m→5m, add context-cancel-aware sleep, call-duration observability, and unit tests for the retry helper.
+- Phase 11 added 2026-06-16: "Relay-Query Liveness" — v1.4 opens a single phase fixing the 48-minute hang: dispatcher returns on relay-query timeout (HANG-01), queryRelay bounded against context-ignoring Fire() (HANG-02), websocket write deadline / keepalive hardening (HANG-03), regression test gate (TEST-02).
 
 ### Blockers
 
@@ -84,7 +88,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md`. v1.3 has one phase (Phase 10) covering all 8 requirements (RETRY-01/02/03, BACKOFF-01/02, SHUTDOWN-01, OBS-01, TEST-01). All work targets `cmd/crawler/main.go`. Run `/gsd-plan-phase 10` to produce the execution plan.
+**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md`. v1.4 has one phase (Phase 11) covering all 4 requirements (HANG-01, HANG-02, HANG-03, TEST-02). All work targets `pkg/crawler/crawler.go`. The acceptance gate is `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` passing GREEN under `make test`. Run `/gsd-plan-phase 11` to produce the execution plan.
 
 ## Decisions
 
@@ -94,8 +98,8 @@ None.
 - [Phase 07-02]: markRelayDead is single log-line owner; FetchAndUpdateFollows callers must not emit WARN before calling it (LOG-03/D-15)
 - [Phase 07-03]: filterRejectionError dedicated type (not annotated subscriptionError) so errors.As can distinguish it without string heuristics (D-07)
 - [Phase 07-03]: markRelayDead removed from queryRelay (per-relay goroutine); structural single-threaded fix for data race CR-02 — no mutex needed
-- [Phase ?]: Phase 10-01
+- [Phase 10-01]: Generic retryDgraph[T] helper with injected sleep fn; ResourceExhausted reclassified fatal to prevent indefinite-retry livelock on ~4MB gRPC limit
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Run `/gsd-plan-phase 11` to produce the Phase 11 execution plan
