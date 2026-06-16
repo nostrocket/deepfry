@@ -498,12 +498,20 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// broken (e.g. a relay flipped dead while goroutines are in flight), queriedRelays
 	// would no longer match the goroutine set and quorumReached could fire early or
 	// never. Keep relay-set mutation out of the batch window.
-	var queriedRelays int32
+	//
+	// WR-03 (iteration 3): make that invariant STRUCTURAL rather than relying on a
+	// comment. Capture the alive set ONCE into launchSet, derive the quorum denominator
+	// from len(launchSet), and launch goroutines exclusively over launchSet. The count
+	// and the launched set are now provably the same pass, so a future edit that mutates
+	// relay state between "count" and "launch" cannot silently desynchronise the
+	// denominator from the goroutine set.
+	launchSet := make([]*relayState, 0, len(c.relays))
 	for _, rs := range c.relays {
 		if rs.alive {
-			queriedRelays++
+			launchSet = append(launchSet, rs)
 		}
 	}
+	queriedRelays := int32(len(launchSet))
 
 	// Per-batch EOSE-quorum counter (D-13). Function-local — not shared across batches.
 	var done atomic.Int32
@@ -516,16 +524,19 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 
 	// Launch goroutines for each alive relay.
 	//
+	// WR-03 (iteration 3): launch over launchSet — the SAME captured slice the quorum
+	// denominator was derived from — so the launched goroutine set and queriedRelays
+	// cannot drift. (Previously this ranged c.relays again with a separate rs.alive
+	// gate, a second pass that could desynchronise from the count if relay state were
+	// ever mutated between the two passes.)
+	//
 	// WR-05: rs is passed explicitly as a goroutine argument (safe under any Go
 	// version). The reset loop (above) and the timeout-exit loop (below) instead rely
 	// on Go 1.22+ per-iteration loop-variable semantics; this module targets Go 1.24.1
 	// so that is correct today. Do not downgrade the toolchain `go` directive below
 	// 1.22 without revisiting those loops, and prefer passing rs as an explicit arg
 	// wherever a goroutine captures it.
-	for _, rs := range c.relays {
-		if !rs.alive {
-			continue
-		}
+	for _, rs := range launchSet {
 		wg.Add(1)
 		go func(rs *relayState) {
 			defer wg.Done()
