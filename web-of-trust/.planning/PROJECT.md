@@ -8,13 +8,25 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
+## Current Milestone: v1.4 Crawler Hang Fix (Relay-Query Liveness)
+
+**Goal:** A single stuck or half-open relay must never wedge the crawler — `FetchAndUpdateFollows` must always return on its own relay-query timeout.
+
+**Target features:**
+- Dispatcher returns on the relay-query timeout instead of gating batch exit on `wg.Wait()` / `eventsChan` close, so an unfinished query goroutine can no longer freeze the loop.
+- `relay.Subscribe` is bounded with a context-select so `queryRelay` returns on the relay-query timeout even when go-nostr's context-ignoring `Fire()` blocks.
+- Websocket write deadlines / keepalive as hardening so half-open connections die instead of parking the relay's single write loop forever.
+- Verification gate: `make test` green with the existing regression test `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` (currently RED) passing.
+
+**Motivation:** A production run hung for ~48 minutes at 0% CPU. SIGQUIT goroutine dump confirmed the root cause; full analysis and fix options in `web-of-trust/HANG-FINDINGS.md`.
+
+## Previous State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 
 **Goal:** The crawler must survive any-length Dgraph outage without exiting — retrying transient gRPC errors indefinitely with exponential backoff instead of giving up after 5 attempts.
 
 **Status:** All 8 requirements delivered in a single phase (Phase 10). A generic `retryDgraph[T]` helper replaced the four bounded 5-attempt retry blocks: indefinite transient-error retry, 1m→2m→4m→5m capped backoff, ctx-cancel-aware sleep (clean SIGINT/SIGTERM shutdown mid-backoff), and per-call-type cumulative-average duration logging. `ResourceExhausted` was reclassified fatal during code review to prevent indefinite-retry livelock on the ~4MB gRPC message-size limit. Full archive: `milestones/v1.3-ROADMAP.md`, `milestones/v1.3-REQUIREMENTS.md`, `milestones/v1.3-MILESTONE-AUDIT.md`.
 
-**Next milestone:** Not yet defined. Candidate: TUNE-01 (config-driven retry backoff via `web-of-trust.yaml`), plus the deferred v1.2 nice-to-haves (IN-01/02/04) and Future Requirements backlog (DISC, SEC, TEST-05).
+**Next milestone:** v1.4 Crawler Hang Fix (Relay-Query Liveness) — see Current Milestone above. Deferred candidates remain: TUNE-01 (config-driven retry backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
 
 ## Previous State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
 
@@ -119,4 +131,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after v1.3 milestone — Unbounded Dgraph Retry Resilience shipped (8/8 requirements, Phase 10); tagged v1.3*
+*Last updated: 2026-06-16 — v1.4 Crawler Hang Fix (Relay-Query Liveness) milestone started; continues at Phase 11.*
