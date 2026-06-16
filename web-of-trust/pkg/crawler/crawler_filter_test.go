@@ -11,7 +11,7 @@ import (
 func TestHandleFilterNotice_Halves(t *testing.T) {
 	rs := &relayState{url: "wss://example.com"}
 	rs.filterCap.Store(100)
-	handleFilterNotice(rs, "Error: filter item too large", 10)
+	handleFilterNotice(rs, "Error: filter item too large", 10, false)
 	if rs.filterCap.Load() != 50 {
 		t.Fatalf("expected filterCap 50, got %d", rs.filterCap.Load())
 	}
@@ -21,7 +21,7 @@ func TestHandleFilterNotice_Halves(t *testing.T) {
 func TestHandleFilterNotice_CaseInsensitive(t *testing.T) {
 	rs := &relayState{url: "wss://example.com"}
 	rs.filterCap.Store(100)
-	handleFilterNotice(rs, "NOTICE: Filter Too Large for subscription", 10)
+	handleFilterNotice(rs, "NOTICE: Filter Too Large for subscription", 10, false)
 	if rs.filterCap.Load() != 50 {
 		t.Fatalf("expected filterCap 50 after case-insensitive match, got %d", rs.filterCap.Load())
 	}
@@ -32,7 +32,7 @@ func TestHandleFilterNotice_CaseInsensitive(t *testing.T) {
 func TestHandleFilterNotice_Floor(t *testing.T) {
 	rs := &relayState{url: "wss://example.com"}
 	rs.filterCap.Store(10)
-	handleFilterNotice(rs, "filter item too large", 10)
+	handleFilterNotice(rs, "filter item too large", 10, false)
 	if rs.filterCap.Load() != 10 {
 		t.Fatalf("expected filterCap to stay at floor 10, got %d", rs.filterCap.Load())
 	}
@@ -43,7 +43,7 @@ func TestHandleFilterNotice_Floor(t *testing.T) {
 func TestHandleFilterNotice_HalveToFloor(t *testing.T) {
 	rs := &relayState{url: "wss://example.com"}
 	rs.filterCap.Store(12)
-	handleFilterNotice(rs, "filter item too large", 10)
+	handleFilterNotice(rs, "filter item too large", 10, false)
 	if rs.filterCap.Load() != 10 {
 		t.Fatalf("expected filterCap clamped to floor 10, got %d", rs.filterCap.Load())
 	}
@@ -54,7 +54,7 @@ func TestHandleFilterNotice_HalveToFloor(t *testing.T) {
 func TestHandleFilterNotice_UnrelatedNotice(t *testing.T) {
 	rs := &relayState{url: "wss://example.com"}
 	rs.filterCap.Store(100)
-	handleFilterNotice(rs, "your subscription has too many results", 10)
+	handleFilterNotice(rs, "your subscription has too many results", 10, false)
 	if rs.filterCap.Load() != 100 {
 		t.Fatalf("expected filterCap to remain 100 for unrelated notice, got %d", rs.filterCap.Load())
 	}

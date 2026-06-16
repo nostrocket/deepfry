@@ -1,79 +1,150 @@
 # External Integrations
 
-**Analysis Date:** 2026-06-09
+**Analysis Date:** 2026-06-15
 
-## APIs & External Services
+## Databases & Storage
 
-**Nostr Relays (WebSocket, NIP-01):**
-- Public Nostr relays - Source of kind-3 (contact list) events the crawler subscribes to, and an optional forward target it republishes events to.
-  - SDK/Client: `github.com/nbd-wtf/go-nostr` (`nostr.RelayConnect`, `relay.Subscribe`, `relay.Publish`)
-  - Implementation: `pkg/crawler/crawler.go` (connect at lines 86, 120, 215, 241; subscribe at 436; publish/forward at 152)
-  - Default relays (`pkg/config/config.go` lines 51-57): `wss://relay.damus.io`, `wss://nos.lol`, `wss://relay.nostr.band`, `wss://nostr-pub.wellorder.net`, `wss://relay.primal.net`
-  - Auth: none (public read; events are signature-verified, not authenticated connections)
+**StrFry LMDB (primary event store):**
+- Type: Embedded LMDB key-value store managed by StrFry relay
+- Access: StrFry process owns the file; other services access events only via NIP-01 WebSocket subscription
+- Data: Canonical Nostr events (all kinds)
+- Config: `config/strfry/strfry.conf` — db path `./strfry-db/`, mapsize 10 TB (virtual)
+- Container: `strfry` service, port 7777 (WebSocket)
+- Mount: `${STRFRY_DB_PATH:-./data/strfry-db}` (read-write)
 
-**nostr.watch HTTP API:**
-- Relay discovery directory - Lists online relays to test and rank for inclusion in config.
-  - Endpoint: `https://api.nostr.watch/v1/online` (`cmd/discover-relays/main.go` line 38)
-  - Client: Go stdlib `net/http`
-  - Fallback: NIP-65 relay-list discovery from seed relays when the API is unavailable (`cmd/discover-relays/main.go` lines 45-53, 190-205), using `go-nostr/nip11` for relay metadata/latency probing.
-  - Auth: none
+**StrFry LMDB (quarantine store):**
+- Separate LMDB instance for events from non-whitelisted pubkeys
+- Container: `strfry-quarantine` service, port 7778 (WebSocket)
+- Config: `config/strfry/strfry-quarantine.conf`
+- Guard script: `config/strfry/quarantine-db-guard.sh` — prevents mainline DB from being mounted here
+- Mount: `${STRFRY_QUARANTINE_DB_PATH:-./data/strfry-quarantine-db}` (read-write)
 
-## Data Storage
+**Dgraph (graph store):**
+- Type: Dgraph standalone v25.3.0 (graph database)
+- Purpose: Stores pubkey social graph (follows/followers relationships only — no event payloads)
+- HTTP/GraphQL+: `http://localhost:8080` (`DGRAPH_HTTP` or `dgraph:8080` within Docker network)
+- gRPC: `localhost:9080` / `dgraph:9080`
+- Client library: `github.com/dgraph-io/dgo/v210` via gRPC in `web-of-trust/`
+- Schema: `config/dgraph/schema.graphql` — single `Profile` type with fields: `pubkey` (@id), `follows`, `followers`, `kind3CreatedAt`, `last_db_update`
+- Data volume: `${DGRAPH_DATA_PATH:-./data/dgraph}` mounted to `/dgraph`
+- Memory limit: 8 GB container cap
+- Seed: `config/dgraph/seed_data.graphql` applied on startup
 
-**Databases:**
-- Dgraph - Stores the ID-only pubkey follow-graph (`Profile` nodes with `pubkey`, `follows`, `kind3CreatedAt`, `last_db_update`, `last_attempt`). No event payloads are stored (data-separation rule).
-  - Connection: gRPC at `dgraph_addr` (default `localhost:9080`), set via `~/deepfry/web-of-trust.yaml`
-  - Client: `github.com/dgraph-io/dgo/v210` wrapped by `Client` in `pkg/dgraph/dgraph.go`
-  - Transport tuning: insecure (plaintext) gRPC credentials; `MaxCallRecvMsgSize` raised to 256 MiB to survive large frontier-selection responses (`pkg/dgraph/dgraph.go` lines 39-44)
-  - Schema: declared and applied in-process via `EnsureSchema` (`pkg/dgraph/dgraph.go` lines 60-75) — `pubkey: string @index(exact) @upsert @unique`, `follows: [uid] @reverse`, plus int indexes. Mirrors the repo-root `config/dgraph/schema.graphql` `Profile` type.
-  - Query language: DQL only, executed over the gRPC client (no HTTP/GraphQL path in this subsystem; clusterscan computation stays in DQL per `pkg/dgraph/clusterscan.go`)
-  - Hosted via repo-root `docker-compose.dgraph.yml` (`dgraph/standalone:v25.3.0`, gRPC 9080, HTTP 8080, Ratel UI 8000)
+**LMDB Read-Only Access (lmdb2graphql):**
+- Component: `spam/` subsystem (lmdb2graphql Rust service)
+- Mount: strfry LMDB at `${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db:ro` (read-only kernel enforcement)
+- Purpose: Parse StrFry LMDB binary format, expose events via GraphQL API
+- Protocol: Query Nostr events by kind, author, time range, tags
+- HTTP endpoint: `http://localhost:8080` (GraphQL POST at `/graphql`)
+- Healthcheck: `/health` (liveness), `/ready` (readiness after self-check)
 
-**File Storage:**
-- Local filesystem only - CSV/JSON exports written locally (e.g. pubkeys exporter `cmd/pubkeys/main.go`, clusterscan reports `cmd/clusterscan/main.go`). Config YAML persisted under `~/deepfry/`.
+## External APIs & Services
 
-**Caching:**
-- None. Relay connection state (alive/dead, backoff timers) is held in-memory only and lost on restart.
+**Upstream Nostr Relays (read sources for event-forwarder):**
+- `wss://relay.damus.io` — live + historical sync forwarder instances
+- `wss://relay.primal.net` — live + historical sync forwarder instances
+- `wss://relay.nostr.lol` (nos.lol) — live + historical sync forwarder instances
+- `wss://nostr.wine` — example in docker-compose template
+- Protocol: NIP-01 WebSocket, REQ subscriptions with time-window filters
+- Auth: Nostr keypair signing (`NOSTR_SYNC_SECKEY_LIVE`, `NOSTR_SYNC_SECKEY_HISTORY`)
+- Event source: Raw Nostr events forwarded to DeepFry relay (`DEEPFRY_RELAY_URL`)
 
-## Authentication & Identity
+**Nostr Relay Discovery (NIP-65):**
+- Component: `web-of-trust/cmd/discover-relays` tool
+- Protocol: NIP-65 relay list discovery + NIP-11 relay info
+- Sources: Relay metadata events (kind 10002) from upstream relays
+- Output: Updates `~/deepfry/web-of-trust.yaml` with discovered relays
 
-**Auth Provider:**
-- None for service-to-service connections. Relay connections are unauthenticated; Dgraph uses insecure gRPC credentials (no TLS, no auth token).
-- Nostr identity handling: pubkeys are normalized to 64-char hex; npub (NIP-19 bech32) inputs are decoded via `nip19.Decode` (`pkg/config/config.go` lines 112-118, 125-144). Event integrity is enforced via signature checks before processing (per architecture notes; `event.CheckSignature()` in the crawler path).
+**Whitelist HTTP Server (internal):**
+- Purpose: Serves pubkey whitelist decisions to the StrFry whitelist plugin
+- Endpoint: `http://whitelist-server:8081` (internal Docker network)
+- Health: `GET /health` (returns 200 when ready, 503 before initial load)
+- Built from: `whitelist-plugin/cmd/server`
+- Config: `config/whitelist/whitelist-server.yaml` → mounted at `/root/deepfry/whitelist.yaml`
+- Queries Dgraph GraphQL endpoint (`http://dgraph:8080`) to determine which pubkeys may write
+- API Endpoints:
+  - `/check/{pubkey}` — POST returns 200 (whitelisted) or 403 (rejected)
+  - `/health` — GET liveness probe
+  - `/stats` — GET whitelist entry count
+  - `/version` — GET binary version info (from -buildvcs stamping)
 
-## Monitoring & Observability
+**Dgraph Ratel UI (development tool):**
+- Image: `dgraph/ratel:latest`
+- Port: `http://localhost:8000`
+- Purpose: Visual query/schema browser for Dgraph
+- Type: Not used in production; development only
 
-**Error Tracking:**
-- None. Errors are logged with `log.Printf`/`log.Fatalf`; no Sentry/APM integration.
+## Protocols & Standards
 
-**Logs:**
-- Go standard `log` package to stderr. Connection lifecycle, relay dead/retry events, batch/processing milestones. No structured logging; no raw secrets logged.
+**Nostr (NIP-01):**
+- Wire format: JSON over WebSocket
+- Message types: `REQ`, `EVENT`, `EOSE`, `CLOSE`, `AUTH` (optional)
+- All relay-to-relay communication and forwarder↔relay communication uses NIP-01
+- Event kinds used:
+  - kind 0 (metadata) — forwarded to quarantine by router plugin
+  - kind 1 (text note) — not crawled
+  - kind 3 (contact list) — crawled by web-of-trust crawler
+  - kind 10002 (relay list, NIP-65) — used by discover-relays tool
+  - kind 30078 (sync progress) — written by event-forwarder with tags: `d`, `from`, `to`
 
-## CI/CD & Deployment
+**Nostr NIP-65:**
+- Standard: Relay list metadata (kind 10002)
+- Used by: `web-of-trust/cmd/discover-relays`
+- Purpose: Discover relay URLs from user metadata
 
-**Hosting:**
-- Runs on the StrFry host as a long-running crawler or one-shot CLIs. No managed hosting config in this subsystem.
+**Nostr NIP-11:**
+- Standard: Relay information document
+- Used by: `web-of-trust/cmd/discover-relays`
+- Endpoint: `http://<relay-domain>/.well-known/nostr.json`
+- Purpose: Get relay name, description, supported NIPs
 
-**CI Pipeline:**
-- None in this subsystem. Repo root contains `.github/copilot-instructions.md` only (no Actions workflows observed here). Builds are driven by `Makefile`.
+**StrFry Plugin Protocol:**
+- Interface: stdin/stdout JSON — StrFry feeds candidate events as JSON lines; plugin responds accept/reject
+- Whitelist plugin (`whitelist-plugin/cmd/whitelist`) — pure accept/reject against Dgraph whitelist
+- Router plugin (`whitelist-plugin/cmd/router`) — accept/reject + forward rejected events to quarantine relay
+- Plugin binaries are copied into `dockurr/strfry:latest` image at `/app/plugins/whitelist` and `/app/plugins/router`
+- Config: Selected via `relay.writePolicy.plugin` in `config/strfry/strfry.conf`
 
-## Environment Configuration
+**Dgraph GraphQL+ / DQL:**
+- Schema defined in `config/dgraph/schema.graphql`
+- Seed data in `config/dgraph/seed_data.graphql`
+- Schema applied via `config/dgraph/entrypoint.sh` on container start (reloaded only on schema changes)
+- HTTP endpoint: `http://localhost:8080/graphql` or `http://dgraph:8080/graphql` (internal)
+- Used by: whitelist-plugin queries (GraphQL over HTTP)
 
-**Required configuration (file-based, not env vars):**
-- `~/deepfry/web-of-trust.yaml` - `relay_urls`, `dgraph_addr`, `pubkey` (seed), `timeout`, `stale_pubkey_threshold`, optional `forward_relay_url`, and clusterscan tuning keys.
-- Auto-created with defaults on first load if missing (`pkg/config/config.go` lines 80-99).
+**gRPC (Dgraph client):**
+- Used by: `web-of-trust` to write pubkey graph mutations and read stale pubkeys
+- Transport: `google.golang.org/grpc v1.75.1`
+- Protobuf serialization: `google.golang.org/protobuf v1.36.9`, `github.com/gogo/protobuf v1.3.2`
+- Endpoint: `localhost:9080` or `dgraph:9080` (internal)
 
-**Secrets location:**
-- No secrets consumed by this subsystem. It performs unauthenticated relay reads and in/secure Dgraph writes. (Repo-root services such as the event-forwarder use `.env`; this crawler does not.)
+**GraphQL (lmdb2graphql):**
+- Protocol: GraphQL POST queries (async-graphql 7.2.1)
+- Endpoint: `http://localhost:8080/graphql` (loopback-only via docker-compose publish rule)
+- Access: Read-only corpus queries (no mutations; LMDB is read-only)
+- Root query fields: `events`, `eventsByAuthor`, `eventsByKind`, `eventStats`
+- Pagination: Cursor-based (base64-encoded D-11 opaque cursors)
+
+**YAML Configuration:**
+- `~/deepfry/web-of-trust.yaml` — web-of-trust crawler config (parsed via `spf13/viper`)
+  - Keys: `relay_urls`, `cluster_scan`, `max_crawl_depth`
+  - Defaults provided; auto-created if missing
+- `~/deepfry/whitelist.yaml` — whitelist plugin config (parsed via `spf13/viper`)
+  - Used by both whitelist and router plugins
+- `~/deepfry/router.yaml` — router plugin config (quarantine forwarding rules)
+  - Used by router plugin for routing decisions
+- `~/deepfry/lmdb2graphql.yaml` — lmdb2graphql config (parsed via `serde_yaml_ng`)
+  - Keys: `strfry_db_path`, `bind_address`, `map_size`, `pinned_strfry_version`, `pinned_strfry_commit`
+  - Must be present at startup; failing to load causes process exit
 
 ## Webhooks & Callbacks
 
-**Incoming:**
-- None. The crawler has no HTTP server; it is a relay subscriber and Dgraph writer.
+**Incoming:** None detected.
 
-**Outgoing:**
-- Optional event forwarding: when `forward_relay_url` is configured, validated kind-3 events are republished to that relay via `forwardEvent` (`pkg/crawler/crawler.go` lines 148-160). Failures mark the forward relay dead and schedule exponential-backoff retry.
+**Outgoing:** Event forwarding to StrFry relay (via NIP-01 EVENT messages):
+- event-forwarder publishes sync progress events (kind 30078) to DeepFry relay (`DEEPFRY_RELAY_URL`)
+- Router plugin forwards rejected kind 0/1/3 events to quarantine relay (port 7778) asynchronously
 
 ---
 
-*Integration audit: 2026-06-09*
+*Integration audit: 2026-06-15*

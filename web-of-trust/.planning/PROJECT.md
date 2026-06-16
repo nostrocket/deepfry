@@ -8,13 +8,21 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
+## Current State: v1.4 Crawler Hang Fix (Relay-Query Liveness) — SHIPPED (2026-06-16)
+
+**Goal:** A single stuck or half-open relay must never wedge the crawler — `FetchAndUpdateFollows` must always return on its own relay-query timeout, without leaking goroutines unboundedly.
+
+**Status:** All 4 requirements delivered in a single phase (Phase 11), closing the ~48-minute production hang diagnosed via SIGQUIT goroutine dump (root cause in `web-of-trust/HANG-FINDINGS.md`). The dispatcher now exits independently of `wg.Wait()` / `eventsChan` close (HANG-01); `relay.Subscribe` runs in a child goroutine with a ctx-select so `queryRelay` returns on timeout even when go-nostr's `Fire()` ignores the context (HANG-02); and outstanding relays are closed + marked-dead on the timeout path / closed without penalty on the quorum-cancel path, reaping leaked goroutines (HANG-03). go-nostr exposes no write-deadline API, so the "or equivalent keepalive" clause was satisfied by connection-close rather than a literal write deadline. An adversarial code-review loop caught and fixed 2 critical concurrency defects (range-during-compaction; quorum-path subscription leak) before the milestone closed; the `completedThisBatch` boolean was hardened to a per-batch generation token. Verified: `make test` green, three liveness tests pass under `-race`. Full archive: `milestones/v1.4-ROADMAP.md`, `milestones/v1.4-REQUIREMENTS.md`, `milestones/v1.4-MILESTONE-AUDIT.md`.
+
+**Next milestone:** Not yet defined. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
+
+## Previous State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 
 **Goal:** The crawler must survive any-length Dgraph outage without exiting — retrying transient gRPC errors indefinitely with exponential backoff instead of giving up after 5 attempts.
 
 **Status:** All 8 requirements delivered in a single phase (Phase 10). A generic `retryDgraph[T]` helper replaced the four bounded 5-attempt retry blocks: indefinite transient-error retry, 1m→2m→4m→5m capped backoff, ctx-cancel-aware sleep (clean SIGINT/SIGTERM shutdown mid-backoff), and per-call-type cumulative-average duration logging. `ResourceExhausted` was reclassified fatal during code review to prevent indefinite-retry livelock on the ~4MB gRPC message-size limit. Full archive: `milestones/v1.3-ROADMAP.md`, `milestones/v1.3-REQUIREMENTS.md`, `milestones/v1.3-MILESTONE-AUDIT.md`.
 
-**Next milestone:** Not yet defined. Candidate: TUNE-01 (config-driven retry backoff via `web-of-trust.yaml`), plus the deferred v1.2 nice-to-haves (IN-01/02/04) and Future Requirements backlog (DISC, SEC, TEST-05).
+**Next milestone:** v1.4 Crawler Hang Fix (Relay-Query Liveness) — see Current Milestone above. Deferred candidates remain: TUNE-01 (config-driven retry backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
 
 ## Previous State: v1.2 Crawler Reliability & Efficiency — SHIPPED (2026-06-15)
 
@@ -58,8 +66,12 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **SHUTDOWN-01** — mid-backoff `select` on `ctx.Done()` interrupts immediately; fatal non-transient errors still exit loudly — shipped v1.3 (Phase 10)
 - ✓ **OBS-01** — per-call-type cumulative-average duration logged each batch via `callMetrics` — shipped v1.3 (Phase 10)
 - ✓ **TEST-01** — deterministic `package main` unit tests (backoff sequence, ctx-cancel, fatal passthrough, transient+success) via injected sleep — shipped v1.3 (Phase 10)
+- ✓ **HANG-01** — `FetchAndUpdateFollows` returns on its own relay-query timeout via independent dispatcher exit + non-blocking drain (no `wg.Wait()`/`eventsChan` gating) — shipped v1.4 (Phase 11)
+- ✓ **HANG-02** — `queryRelay` bounds `relay.Subscribe` in a child goroutine + ctx-select, returning on timeout even when go-nostr `Fire()` ignores the context — shipped v1.4 (Phase 11)
+- ✓ **HANG-03** — outstanding relays closed + marked-dead on timeout (closed without penalty on quorum-cancel), reaping leaked goroutines; per-batch generation token replaces the marker boolean — shipped v1.4 (Phase 11)
+- ✓ **TEST-02** — regression + partial-progress + close-on-timeout + quorum-close tests; `make test` green, all pass under `-race` — shipped v1.4 (Phase 11)
 
-_v1.2 requirements all delivered (Phases 05–09); v1.3 requirements all delivered (Phase 10). Remaining nice-to-haves (IN-01/02/04) and the v1.2 "Future Requirements" backlog (DISC, SEC, TUNE, TEST-05) remain deferred to a later milestone._
+_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Phase 11) all delivered. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05) remain deferred to a later milestone._
 
 ### Out of Scope
 
@@ -100,6 +112,8 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 requirements all deliver
 | v1.3 retries transient Dgraph errors forever (not bounded) | RESIL-01's 5-attempt cap (~2.5min) still exits the crawler on longer Dgraph outages; an unattended crawler should recover whenever Dgraph returns rather than dying. Operator SIGINT/SIGTERM remains the only stop. | Planned v1.3 |
 | v1.3 backoff 1min start, 5min cap (was 5s → 2min) | A down Dgraph won't recover in seconds; starting at 1min avoids log spam and pointless rapid retries, 5min cap keeps recovery prompt once it returns | ✓ Shipped v1.3 (Phase 10) |
 | v1.3 single generic `retryDgraph[T]` helper over four near-identical blocks | Collapses four bounded retry blocks into one indefinite-retry helper; injected sleep fn enables deterministic unit tests without a live Dgraph | ✓ Shipped v1.3 (Phase 10) |
+| v1.4 bound the hang at the crawler (dispatcher exit + conn-close) rather than fork go-nostr | go-nostr v0.52's `Fire()` ignores the per-call ctx and exposes no write-deadline API; closing the connection cancels the relay's connectionContext to reap the parked write loop + leaked goroutine — satisfies HANG-03's "or equivalent keepalive" without forking | ✓ Shipped v1.4 (Phase 11) |
+| v1.4 per-batch generation token instead of a reset-to-false marker boolean | A monotonic generation has no reset to race, eliminating the cross-batch marker race a leftover goroutine could otherwise cause | ✓ Shipped v1.4 (Phase 11) |
 
 ## Evolution
 
@@ -119,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after v1.3 milestone — Unbounded Dgraph Retry Resilience shipped (8/8 requirements, Phase 10); tagged v1.3*
+*Last updated: 2026-06-16 after v1.4 milestone — Crawler Hang Fix (Relay-Query Liveness) shipped (4/4 requirements, Phase 11); tagged v1.4.*

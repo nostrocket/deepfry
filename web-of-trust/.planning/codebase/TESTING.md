@@ -1,180 +1,339 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-06-09
+**Analysis Date:** 2026-06-15
 
 ## Test Framework
 
-**Runner:**
-- Go's built-in `testing` package (`go test`) — no third-party test runner
-- Config: none (no test config file; behaviour controlled via build tags and `go test` flags)
+### Go
 
-**Assertion Library:**
-- None. Tests use plain `if`-condition checks with `t.Fatal`, `t.Fatalf`, and `t.Errorf`. No testify or gomega.
+**Runner:** Go standard `testing` package — no third-party test runner.
+
+**Assertion style:** Manual `if`/`t.Fatalf`/`t.Errorf` — no testify or gomock. All assertions are hand-rolled.
 
 **Run Commands:**
 ```bash
-make test              # go test ./... -short -cover  (unit/short tests)
-make test-integration  # NOT defined in this module's Makefile (see note below)
-go test ./... -short   # run only short tests, skipping integration-tagged files
-go test -tags=integration ./pkg/dgraph/   # build & run integration tests
+# From within a subsystem directory:
+make test                    # go test ./... -short -cover
+make test-integration        # go test -tags=integration ./...
+make bench                   # whitelist-plugin only; configurable via BENCHPKG/BENCHFLAGS
+go test -bench=. ./...       # run benchmarks manually
 ```
 
-> **Note:** Project CLAUDE.md references `make test-integration`, but this `web-of-trust` Makefile only defines `test` (`go test ./... -short -cover`). Integration tests are gated by the `//go:build integration` tag and must be run by passing `-tags=integration` to `go test` directly, or via a sibling subsystem's target. There is no `-short` skip guard inside the test itself — the build tag is the gate.
+### Rust
 
-## Test File Organization
+**Runner:** `cargo test` — standard Rust test harness.
 
-**Location:**
-- Co-located with the code under test, in the same package and directory
-- Example: `pkg/dgraph/dgraph_stale_test.go` sits beside `pkg/dgraph/dgraph.go`
+**Assertion style:** Rust's built-in `assert_eq!`, `assert!` macros; no external assertion libraries.
 
-**Naming:**
-- `<subject>_test.go`, with an optional descriptive segment: `dgraph_stale_test.go` (tests the stale-pubkey selection path)
-- Test functions: `Test<Behaviour>` — `TestGetStalePubkeysIncludesFrontier`
-
-**Package placement:**
-- Tests live in the same package as the code (white-box): `package dgraph` (not `dgraph_test`), giving access to unexported fields such as `c.dg` (`pkg/dgraph/dgraph_stale_test.go:3`, `:65`)
-
-**Current coverage:**
-- Exactly one test file exists: `pkg/dgraph/dgraph_stale_test.go`. No unit-test suite exists for `pkg/crawler`, `pkg/config`, or the `cmd/*` entry points yet.
-
-## Test Structure
-
-**Suite Organization:**
-```go
-//go:build integration
-
-package dgraph
-
-func TestGetStalePubkeysIncludesFrontier(t *testing.T) {
-    ctx := context.Background()
-    c, err := NewClient("localhost:9080")
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer c.Close()
-    if err := c.EnsureSchema(ctx); err != nil {
-        t.Fatal(err)
-    }
-    // ... arrange (mutate), act (query), assert ...
-}
-```
-
-**Patterns:**
-- **Setup:** Each test opens a live `*Client` via `NewClient("localhost:9080")`, calls `EnsureSchema(ctx)`, and `defer c.Close()`
-- **Arrange:** Insert fixture nodes with raw RDF n-quads through the `mustMutate` helper
-- **Act/Assert:** Call the function under test (`GetStalePubkeys`), then assert on the returned map with `if _, ok := got[stub]; !ok { t.Fatalf(...) }`
-- **Assertion idiom:** `t.Fatalf` for conditions that must hold (test cannot continue), `t.Errorf` for soft checks that allow the test to keep running (`pkg/dgraph/dgraph_stale_test.go:51-57`)
-- **Build-tag gating:** The `//go:build integration` tag at the top of the file excludes it from default `go test` runs, so live-Dgraph tests never run during `make test`
-
-## Mocking
-
-**Framework:** None. There are no mock objects, fakes, or interface-based test doubles in the codebase.
-
-**Approach:**
-- Integration tests run against a **real, live Dgraph instance** at `localhost:9080` rather than mocking the client
-- The Dgraph `Client` is a concrete struct (no interface), so substitution-based mocking is not currently possible without refactoring
-
-**What is exercised live:**
-- gRPC connection, schema alteration, mutations, and read-only queries all hit the real database
-
-**What is NOT mocked:**
-- Dgraph (used live)
-- Nostr relays (not covered by any automated test)
-
-## Fixtures and Factories
-
-**Test Data:**
-```go
-// Unique fake pubkeys generated from the current nanosecond timestamp,
-// formatted as 64-hex-char strings to satisfy the pubkey index/format.
-stub    := fmt.Sprintf("%064x", time.Now().UnixNano())
-crawled := fmt.Sprintf("%064x", time.Now().UnixNano()+1)
-
-// Inserted via raw RDF n-quads in a single committed transaction.
-mustMutate(t, c, fmt.Sprintf(`_:s <pubkey> %q .
-_:s <dgraph.type> "Profile" .
-_:c <pubkey> %q .
-_:c <dgraph.type> "Profile" .
-_:c <kind3CreatedAt> "%d" .
-_:c <last_db_update> "%d" .
-_:c <last_attempt> "%d" .
-`, stub, crawled, now, now, now))
-```
-
-**Helper functions (test-local, `t.Helper()`-marked):**
-- `mustMutate(t, c, rdf)` — runs RDF n-quads in one committed transaction; fails the test on error (`pkg/dgraph/dgraph_stale_test.go:86-94`)
-- `countFrontier(t, c)` — counts never-attempted (`NOT has(last_attempt)`) nodes via a read-only DQL count query, used to size the query limit dynamically (`pkg/dgraph/dgraph_stale_test.go:62-83`)
-
-**Fixture strategy:**
-- Unique pubkeys are derived from `time.Now().UnixNano()` so each run inserts fresh nodes and does not collide with existing live-graph data
-- Query limits are sized **relative to the live graph** (`countFrontier(t, c) + 1000`) so assertions stay deterministic regardless of how many real stub nodes already exist (`pkg/dgraph/dgraph_stale_test.go:39-44`)
-
-**Location:** Fixtures are inline within the test file; there is no separate `testdata/` directory or factory package.
-
-## Coverage
-
-**Requirements:** None enforced. No coverage threshold or CI gate.
-
-**View Coverage:**
+**Run Commands:**
 ```bash
-make test          # runs with -cover, prints per-package coverage summary
-go test ./... -cover
-go test -tags=integration -coverprofile=cover.out ./pkg/dgraph/
-go tool cover -html=cover.out   # HTML report
+# From spam/ directory:
+cargo test                   # all unit + integration tests
+cargo test --lib            # unit tests only
+cargo test --test '*'        # integration tests only
+cargo bench                  # run benchmarks (unstable; use `--nightly` flag if needed)
 ```
 
-> The `-cover` flag is included in `make test`, but because the only test is integration-tagged, the default `make test` run reports 0% / no statements covered for most packages.
+**Build Commands:**
+```bash
+cargo build                  # debug binary with debug symbols
+cargo build --release        # optimized binary
+cargo fmt --check            # verify formatting (pre-commit check)
+```
+
+## Test Coverage
+
+| Subsystem | Test Files | Types Present | Notes |
+|-----------|-----------|---------------|-------|
+| `event-forwarder` | 15+ `_test.go` | Unit, integration, benchmarks | Heaviest coverage in the project |
+| `whitelist-plugin` | 10 `_test.go` | Unit, benchmarks | Covers handler, heuristics, quarantine, repository, whitelist, server, client |
+| `quarantine-rescuer` | 6 `_test.go` | Unit | Covers all `internal/` packages |
+| `web-of-trust` | 3 `_test.go` + integration | Unit, integration | `dgraph_chunks_test.go` (unit); stale/writepath tests are integration-tagged |
+| `spam/lmdb2graphql` | 10+ `.rs` tests + 7 integration tests | Unit, integration | Config, LMDB types, payload; integration tests in `tests/` |
+| `search-plugin` | None | — | Placeholder only — `README.md` present, no Go source |
+| `embeddings-generator` | None | — | Placeholder only — `README.md` present, no Go source |
+| `profile-builder` | None | — | Not a Go module |
+| `thread-inference` | None | — | Not a Go module |
 
 ## Test Types
 
-**Unit Tests:**
-- None present. No pure in-memory unit tests exist for any package.
+### Go Unit Tests (default `make test`)
 
-**Integration Tests:**
-- Scope: end-to-end behaviour of `pkg/dgraph` query/mutation logic against a real Dgraph
-- Gated by the `//go:build integration` build tag
-- Require a live Dgraph reachable at `localhost:9080` (start via `docker-compose -f docker-compose.dgraph.yml up -d` from the repo root)
+The majority of tests. Run with `-short` flag; any test requiring external services must check `testing.Short()` and skip, or use the `integration` build tag.
 
-**E2E Tests:**
-- Not automated. Full crawler verification (running against live Dgraph + Nostr relays) is a **manual step** performed on the strfry host, per the project spec and `8pc_crawled.md` §6.
+Located co-located with source: `pkg/<concern>/<file>_test.go` or `internal/<concern>/<file>_test.go`.
 
-## Common Patterns
+### Go Integration Tests (`//go:build integration`)
 
-**Live-resource setup/teardown:**
+Require live external services (real relay WebSocket, live Dgraph). Gated by build tag so they never run in `make test`.
+
+Files:
+- `event-forwarder/pkg/forwarder/forwarder_integration_test.go`
+- `event-forwarder/pkg/nsync/nsync_integration_test.go`
+- `web-of-trust/pkg/dgraph/dgraph_stale_test.go` (see line 1: `//go:build integration`)
+- `web-of-trust/pkg/dgraph/dgraph_writepath_test.go` (see line 1: `//go:build integration`)
+
+Some integration tests also double-check with `testing.Short()` for extra safety.
+
+### Rust Unit Tests
+
+Colocated in the same module file within `#[cfg(test)]` blocks (see `spam/src/config.rs:89-100`).
+
+Tests verify:
+- Default values: `test_map_size_default()`, `test_bind_address_default()`
+- Config loading: `test_load_from_tempdir()` (uses `tempfile::tempdir()`)
+- Type deserialization: `test_nostr_event_ignores_unknown_fields()`
+- Error cases: `test_nostr_event_missing_required_field_errors()`
+
+Run via `cargo test --lib` (library code only).
+
+### Rust Integration Tests
+
+Separate `tests/` directory with full integration tests (see `spam/tests/`):
+
+- `tests/scan_test.rs` — LMDB index scanning, resume-cursor validation, DUPSORT coverage
+- `tests/body_limit_test.rs` — HTTP request body size limiting (WR-02-LAYER)
+- `tests/payload_test.rs` — Payload decompression and chunking
+- `tests/ready_window_test.rs` — Server readiness gate sequencing
+- `tests/health_ready_test.rs` — Health and readiness endpoint states
+- `tests/comparator_hook_smoke.rs` — Comparator hook integration (LMDB-06)
+- `tests/self_check_test.rs` — Self-check gate (LMDB version, endianness)
+- `tests/dupsort_resume_test.rs` — DUPSORT duplicate key handling
+- `tests/fixture/` — Committed test fixture (`data.mdb`, `lock.mdb`)
+
+Run via `cargo test --test '*'` or individual test via `cargo test --test scan_test`.
+
+### Benchmarks
+
+**Go:**
+- `whitelist-plugin/pkg/whitelist/whitelist_bench_test.go` — `BenchmarkNewWhiteList` and `BenchmarkIsWhitelisted` at sizes 1k, 10k, 100k, 500k. Uses `b.ReportAllocs()`.
+- `whitelist-plugin/pkg/repository/dgraph_repository_bench_test.go` — `BenchmarkGetAll`, `BenchmarkFetchPubkeysPage`, `BenchmarkMergePubkeys` using `httptest.NewServer` for realistic pagination.
+
+**Rust:**
+- None observed in current codebase (no `#[bench]` or similar marked in the spam module).
+
+## Test Patterns
+
+### Go Subtests with `t.Run`
+
+The dominant pattern. Used in both flat and table-driven forms:
+
 ```go
-c, err := NewClient("localhost:9080")
-if err != nil {
-    t.Fatal(err)
+// Flat subtests (config validation tests)
+func TestValidate(t *testing.T) {
+    t.Run("empty config", func(t *testing.T) { ... })
+    t.Run("missing source relay", func(t *testing.T) { ... })
 }
-defer c.Close()
+
+// Table-driven (whitelist handler, message deserialization)
+var validCases = []struct{ name, msg string }{ ... }
+func TestValidInputMessageDeserialization(t *testing.T) {
+    for _, test := range validCases {
+        t.Run(fmt.Sprintf("%s is serialised", test.name), func(t *testing.T) { ... })
+    }
+}
 ```
 
-**Read-only query inside a test helper:**
+### Go Mock/Stub Construction
+
+**`testutil.MockRelay`** (`event-forwarder/pkg/testutil/mock_relay.go`) — implements `relay.Relay`. Captures calls in `QuerySyncCalls`, `PublishCalls`, etc. Errors injectable via `PublishError`, `SubscribeError`.
+
+**In-test stubs** — small structs defined at the bottom of `_test.go` files implement the interface under test. Pattern: `type stubWindowMgr struct { ... }` with function fields for overrideable behaviour:
+
 ```go
-txn := c.dg.NewReadOnlyTxn()
-defer txn.Discard(ctx)
-resp, err := txn.Query(ctx, `{ f(func: has(pubkey)) @filter(NOT has(last_attempt)) { c: count(uid) } }`)
-if err != nil {
-    t.Fatalf("count frontier failed: %v", err)
+type stubWindowMgr struct {
+    window   *nsync.Window
+    updateFn func(ctx context.Context, w nsync.Window) error
+}
+func (s *stubWindowMgr) Update(ctx context.Context, w nsync.Window) error {
+    if s.updateFn != nil { return s.updateFn(ctx, w) }
+    return nil
 }
 ```
 
-**Regression-guard assertions:**
+**`httptest.NewServer`** — used in repository and benchmark tests to mock HTTP/GraphQL endpoints without a live Dgraph (`whitelist-plugin/pkg/repository/dgraph_repository_bench_test.go`).
+
+**`t.TempDir()`** — used in `quarantine-rescuer/internal/lmdbreader/reader_test.go` to create real LMDB environments for I/O tests. Cleans up automatically.
+
+### Go Logger in Tests
+
+Tests construct a real `*log.Logger` pointing to `os.Stdout` or `io.Discard`:
+
 ```go
-// Asserts a specific previously-broken behaviour stays fixed.
-if _, ok := got[stub]; !ok {
-    t.Fatalf("frontier stub %s was NOT selected — regression of the orderasc/1000-cap bug", stub)
+func createTestLogger() *log.Logger { return log.New(os.Stdout, "[TEST] ", 0) }
+func newSilentLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+```
+
+`io.Discard` loggers are used wherever log output is not under assertion.
+
+### Go Error Path Testing
+
+Tests explicitly inject errors via mock fields and assert the returned error is non-nil:
+
+```go
+dst.PublishError = errors.New("boom")
+if err := f.processRealtimeEvent(ctx, evt); err == nil {
+    t.Fatalf("expected error when publish fails")
 }
 ```
-The test exists specifically to lock in the fix for the `GetStalePubkeys` frontier-selection bug documented in `pkg/dgraph/dgraph.go:438-442`.
 
-## Recommendations / Gaps
+### Go Immutability and Edge Case Tests
 
-- **No unit tests** for `pkg/config` (viper loading, defaults, relay add/remove), `pkg/crawler` (event validation, chunking, backoff), or `cmd/*`. These would not require a live Dgraph and could run under default `make test`.
-- **Config tests must use a temp `HOME`** — never the live `~/deepfry/web-of-trust.yaml` (per CLAUDE.md and `8pc_crawled.md` §6). Set a temporary directory via `t.Setenv("HOME", t.TempDir())` before exercising `config.LoadConfig`.
-- **`make test-integration` is referenced but not defined** in this Makefile; add the target or run `go test -tags=integration ./pkg/dgraph/` directly.
-- Consider introducing an interface over the Dgraph `Client` if mockable unit tests for `pkg/crawler` become desirable.
+Whitelist tests verify input-slice mutation does not affect the constructed whitelist (`TestNewWhiteList_immutability_of_input_slice`). LMDB tests cover bad-entry skip paths, context cancellation mid-iteration, and empty DBs.
+
+### Rust Test Organization
+
+Tests are named with `test_` prefix and grouped by concern:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_size_default() {
+        assert_eq!(
+            default_map_size(),
+            10_995_116_277_760,
+            "default map_size must match strfry.conf mapsize (10 TiB)"
+        );
+    }
+
+    #[test]
+    fn test_load_from_tempdir() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        // ... test code
+    }
+}
+```
+
+**Pattern:** Tests use `expect()` for setup failures (panic is acceptable for test harness) and `assert_eq!` for behavioral assertions.
+
+### Rust Fixture Pattern
+
+Integration tests use a committed fixture in `tests/fixture/` with real LMDB files (`data.mdb`, `lock.mdb`):
+
+```rust
+fn open_temp_fixture_env() -> (heed::Env, tempfile::TempDir) {
+    let src = std::path::Path::new("tests/fixture");
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    std::fs::copy(src.join("data.mdb"), tmp.path().join("data.mdb")).expect("copy data.mdb");
+    std::fs::copy(src.join("lock.mdb"), tmp.path().join("lock.mdb")).expect("copy lock.mdb");
+    let env = open_fixture_env(tmp.path()).expect("open fixture env copy");
+    (env, tmp)
+}
+```
+
+This pattern (seen in `tests/scan_test.rs:23-30` and `tests/self_check_test.rs`) avoids I/O to `~/deepfry/` and keeps tests hermetic.
+
+### Rust Assert Patterns
+
+**Structural assertions:**
+```rust
+assert_eq!(batch1_lev_ids, vec![4u64, 5, 6], "First batch must be [4,5,6], got {:?}", batch1_lev_ids);
+```
+
+**Helper functions in tests:**
+```rust
+fn kind_forward_low_key() -> Vec<u8> {
+    let mut k = Vec::with_capacity(16);
+    k.extend_from_slice(&0u64.to_le_bytes());
+    k.extend_from_slice(&0u64.to_le_bytes());
+    k
+}
+```
+
+### Rust Context and Cleanup
+
+Integration tests use `t.Cleanup` pattern in Go; Rust uses `defer!` or explicit cleanup:
+
+```rust
+#[test]
+fn test_add_followers_large() {
+    // ... setup and test
+    
+    // Cleanup on test exit (implicit drop of temp dir)
+    let (env, _tmp) = open_temp_fixture_env();
+    // _tmp is dropped at end of scope
+}
+```
+
+LMDB tests ensure `env.close()` is called (if applicable) before assertion to flush writes.
+
+## Testing Infrastructure
+
+**Go:**
+- No test containers / Docker in unit tests
+- Integration tests connect to real services expected to be running locally (Dgraph on `localhost:9080`, relay on `localhost:7777`)
+- No CI pipeline detected (no `.github/workflows/`, no `Jenkinsfile`, no `.circleci/`)
+- Tests are run manually via `make test`
+
+**Rust:**
+- Fixtures are committed in `tests/fixture/`
+- No external service dependencies for tests (fixtures are standalone LMDB files)
+- Real LMDB environments created in-process via `heed::Env` with `tempfile::TempDir`
+- No Docker or CI pipeline integration observed
+
+## Shared Test Utilities
+
+### Go
+
+`event-forwarder/pkg/testutil/testutil.go` — fixed Nostr key constants (`TestSKHex`, `TestPKHex`, `TestSK`, `TestPK`) used across packages to avoid generating new keys per test.
+
+`event-forwarder/pkg/testutil/telemetry_capture.go` — `CapturingPublisher` that records emitted telemetry events for assertion.
+
+### Rust
+
+`tests/` directory contains helper modules used by integration tests:
+- `open_fixture_env()` — shared fixture loader (defined in multiple test files as a reusable pattern)
+- Golden vectors (e.g., `tests/fixture/golden_vectors/Event__kind.json`) for index ordering validation
+
+## Test Execution
+
+### Go
+
+From within a Go subsystem directory (e.g., `web-of-trust/`, `event-forwarder/`):
+
+```bash
+make test                    # -short + coverage
+make test-integration        # run only //go:build integration tests
+make clean                   # remove bin/
+make lint                    # run golangci-lint (advisory)
+```
+
+### Rust
+
+From the `spam/` directory:
+
+```bash
+cargo test                   # unit + integration tests (debug build)
+cargo test --release         # optimized build
+cargo test --lib             # unit tests only
+cargo test --test 'scan_test'  # single integration test
+cargo fmt                    # auto-format (runs before compilation)
+```
+
+## Coverage Gaps
+
+### Go
+
+- **`web-of-trust/pkg/crawler/`** — `crawler.go` has no `_test.go`. The crawler's subscription and write logic is untested at unit level.
+- **`web-of-trust/pkg/config/`** — `config.go` (Viper YAML loading) has no test.
+- **`web-of-trust` cmd packages** — `cmd/crawler/`, `cmd/pubkeys/`, `cmd/discover-relays/`, `cmd/clusterscan/`, `cmd/healthcheck/` have no tests.
+- **`whitelist-plugin` cmd packages** — `cmd/whitelist/main.go`, `cmd/server/main.go`, `cmd/router/main.go` have no tests; only their subordinate `pkg/` code is tested.
+- **`quarantine-rescuer/internal/runner/`** — `runner.go` has no `_test.go`.
+- **`quarantine-rescuer/internal/event/`** — `event.go` has no `_test.go`.
+- **No E2E tests** — the full pipeline (upstream relay → event-forwarder → StrFry → whitelist-plugin → Dgraph) is not tested end-to-end.
+- **No CI enforcement** — coverage is not tracked or gated automatically.
+
+### Rust
+
+- **`spam/src/server.rs`** — HTTP server routing logic has no test coverage.
+- **`spam/src/graphql/`** — GraphQL resolvers untested directly (covered by integration tests).
+- **`spam/src/lmdb/scan.rs`** — Full scan logic tested via integration; unit tests exist for key builders but not all edge cases.
+- **No E2E tests** — the full GraphQL query execution against a live populated LMDB is not formally tested.
+- **No CI enforcement** — coverage is not tracked or gated automatically.
 
 ---
 
-*Testing analysis: 2026-06-09*
+*Testing analysis: 2026-06-15*

@@ -1,5 +1,15 @@
 # Milestones
 
+## v1.4 Crawler Hang Fix (Relay-Query Liveness) (Shipped: 2026-06-16)
+
+**Phases completed:** 1 phases, 1 plans, 3 tasks
+
+**Key accomplishments:**
+
+- Eliminated 48-minute crawler hang by making FetchAndUpdateFollows return within a bounded multiple of c.timeout via child-goroutine-bounded Subscribe (HANG-02), independent dispatcher timeout exit (HANG-01), and conn-close+mark-dead for outstanding relays on timeout (HANG-03). Adversarial code review found+fixed 2 critical concurrency defects; the marker boolean was hardened to a per-batch generation token before close.
+
+---
+
 ## v1.3 Unbounded Dgraph Retry Resilience (Shipped: 2026-06-15)
 
 **Phases completed:** 1 phases, 1 plans, 0 tasks
