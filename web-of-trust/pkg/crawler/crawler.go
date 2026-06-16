@@ -91,12 +91,19 @@ type relayState struct {
 	successStreak atomic.Int32 // incremented once per successful queryRelay call
 	probing       atomic.Bool  // true while a probe chunk is in flight; exempt from filter_rejection counting
 
-	// completedThisBatch is set by the per-relay goroutine in FetchAndUpdateFollows
-	// once queryRelay returns (success or error). The dispatcher uses it to identify
-	// relays that are still outstanding at timeout so it can close and mark them dead
-	// (HANG-01/HANG-03). Reset to false at the top of each FetchAndUpdateFollows call
-	// so stale markers from a prior batch never suppress a close.
-	completedThisBatch atomic.Bool
+	// completedGen records the batch generation (Crawler.batchSeq) in which this
+	// relay's per-relay goroutine last returned (success or error). The dispatcher
+	// treats a relay as outstanding for the current batch when completedGen != the
+	// batch's generation, so it can close and mark such relays dead (HANG-01/HANG-03).
+	//
+	// WR-01 (iteration 4): a monotonically-increasing per-batch generation replaces
+	// the prior reset-to-false boolean. The boolean had a benign cross-batch race — a
+	// leftover batch-N goroutine could Store(true) AFTER batch N+1's reset Store(false),
+	// deferring one stuck relay's close by a single batch. With a generation token there
+	// is no reset to race: a stale goroutine stamps its OWN (older) generation, which can
+	// never equal the current batch's generation, so it is always correctly seen as
+	// outstanding. Zero value (0) means "never completed any batch".
+	completedGen atomic.Int64
 }
 
 type Crawler struct {
@@ -112,6 +119,13 @@ type Crawler struct {
 	ejectionThresholds map[failureClass]int32
 	// Phase 8: EOSE-quorum fraction (D-12/D-13). 0 disables early exit.
 	quorum float64
+
+	// batchSeq is a monotonic per-batch generation counter incremented once at the
+	// top of every FetchAndUpdateFollows call. Per-relay goroutines stamp the current
+	// generation into relayState.completedGen on return; the dispatcher compares against
+	// it to identify relays still outstanding for the batch (WR-01 — replaces the
+	// race-prone reset-to-false boolean marker).
+	batchSeq atomic.Int64
 
 	// queryRelayFn is the per-relay query step invoked by FetchAndUpdateFollows.
 	// It defaults to (*Crawler).queryRelay; production code never reassigns it.
@@ -482,11 +496,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
-	// Reset per-batch completion markers so stale state from a prior batch never
-	// suppresses a close-on-timeout (HANG-03). Must happen before launching goroutines.
-	for _, rs := range c.relays {
-		rs.completedThisBatch.Store(false)
-	}
+	// WR-01: bump the per-batch generation. Per-relay goroutines stamp this value into
+	// rs.completedGen on return; the dispatcher treats rs.completedGen != currentGen as
+	// "outstanding this batch". No reset loop is needed (and none is raceable): a
+	// leftover goroutine from a prior batch stamps that batch's older generation, which
+	// can never equal currentGen, so it is always correctly seen as outstanding.
+	currentGen := c.batchSeq.Add(1)
 
 	// Count alive relays being launched for the quorum denominator (D-14).
 	//
@@ -531,11 +546,11 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	// ever mutated between the two passes.)
 	//
 	// WR-05: rs is passed explicitly as a goroutine argument (safe under any Go
-	// version). The reset loop (above) and the timeout-exit loop (below) instead rely
-	// on Go 1.22+ per-iteration loop-variable semantics; this module targets Go 1.24.1
-	// so that is correct today. Do not downgrade the toolchain `go` directive below
-	// 1.22 without revisiting those loops, and prefer passing rs as an explicit arg
-	// wherever a goroutine captures it.
+	// version). The timeout-exit / quorum-close loops (below) instead rely on Go 1.22+
+	// per-iteration loop-variable semantics; this module targets Go 1.24.1 so that is
+	// correct today. Do not downgrade the toolchain `go` directive below 1.22 without
+	// revisiting those loops, and prefer passing rs as an explicit arg wherever a
+	// goroutine captures it.
 	for _, rs := range launchSet {
 		wg.Add(1)
 		go func(rs *relayState) {
@@ -545,9 +560,9 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// the dispatcher can distinguish outstanding relays on the timeout exit
 			// (HANG-01/HANG-03). This write races with the dispatcher reading it only
 			// after relayQueryContext.Done() fires; since Done() is the signal that the
-			// timeout elapsed, any relay that did not yet set completedThisBatch by that
-			// point is correctly identified as outstanding.
-			rs.completedThisBatch.Store(true)
+			// timeout elapsed, any relay that did not yet stamp the current generation by
+			// that point is correctly identified as outstanding.
+			rs.completedGen.Store(currentGen)
 			if err != nil {
 				errorsChan <- relayError{url: rs.url, err: err}
 				// D-14: errors count toward quorum (move batch forward, not stall it).
@@ -708,7 +723,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				// number of outstanding relays and any ejection outcome.
 				var stuck []string
 				for _, rs := range c.relays {
-					if rs.alive && !rs.completedThisBatch.Load() {
+					if rs.alive && rs.completedGen.Load() != currentGen {
 						if c.debug {
 							log.Printf("Relay %s timed out with outstanding query, closing and marking dead", rs.url)
 						}
@@ -749,12 +764,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				// racing relay's connection, because the alternative (leaving it open) is the
 				// goroutine leak this phase exists to contain. We close but do NOT penalise.
 				//
-				// !completedThisBatch is the same outstanding test the timeout path uses; a
-				// relay that set it is done and excluded. The snapshot-then-act split is not
-				// needed here because we never call markRelayDead (no c.relays compaction) —
-				// we mutate per-relay fields in place while ranging, which is safe.
+				// completedGen != currentGen is the same outstanding test the timeout path
+				// uses; a relay that stamped the current generation is done and excluded. The
+				// snapshot-then-act split is not needed here because we never call
+				// markRelayDead (no c.relays compaction) — we mutate per-relay fields in place
+				// while ranging, which is safe.
 				for _, rs := range c.relays {
-					if rs.alive && !rs.completedThisBatch.Load() && rs.conn != nil {
+					if rs.alive && rs.completedGen.Load() != currentGen && rs.conn != nil {
 						if c.debug {
 							log.Printf("Relay %s outstanding at quorum exit, closing connection to reap stuck goroutines (no penalty)", rs.url)
 						}
