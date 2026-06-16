@@ -614,6 +614,19 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				}
 			}
 
+			// WR-02 (iteration 3): capture the budget/timeout-vs-quorum decision NOW —
+			// the moment the relay-query context fired — BEFORE the drain phase runs. The
+			// drain (below) acquires dbUpdateMutex and performs DB writes / forwards whose
+			// own wall-clock cost, plus scheduling jitter, can push time.Since(batchStart)
+			// across c.timeout even on a legitimate quorum early-exit. Reading the budget
+			// after the drain would then mis-classify a healthy late quorum exit as a
+			// timeout and markRelayDead(classTransport) every slow-but-alive relay,
+			// over-penalising them toward ejection. Capturing here makes the decision
+			// reflect why the dispatcher woke (deadline vs quorum cancel), not how long the
+			// drain subsequently took.
+			budgetExhausted := relayQueryContext.Err() == context.DeadlineExceeded ||
+				time.Since(batchStart) >= c.timeout
+
 			// Non-blocking drain of events already buffered in eventsChan.
 			// Process each through the same signature-check / forward / update path.
 			//
@@ -677,12 +690,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// the context records whichever cancellation won the race (first cancel wins,
 			// per the stdlib), so a genuinely-timed-out batch can mis-report
 			// context.Canceled and skip marking truly-stuck relays dead. Instead key off
-			// the actual wall-clock budget: if the batch consumed its full c.timeout, any
-			// relay still outstanding is genuinely stuck regardless of which cancel cause
-			// the context surfaced. A quorum early-exit (which fires well before the
-			// budget elapses) correctly does NOT enter this branch.
-			budgetExhausted := time.Since(batchStart) >= c.timeout
-			if relayQueryContext.Err() == context.DeadlineExceeded || budgetExhausted {
+			// the actual wall-clock budget (budgetExhausted, captured BEFORE the drain per
+			// WR-02): if the batch consumed its full c.timeout, any relay still outstanding
+			// is genuinely stuck regardless of which cancel cause the context surfaced. A
+			// quorum early-exit (which fires well before the budget elapses) correctly does
+			// NOT enter this branch.
+			if budgetExhausted {
 				// CR-01: snapshot the stuck relay URLs BEFORE calling markRelayDead.
 				// markRelayDead reassigns c.relays via in-place compaction
 				// (kept := c.relays[:0]; ...; c.relays = kept), writing into the same
