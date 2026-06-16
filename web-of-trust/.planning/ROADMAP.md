@@ -74,4 +74,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 8. Frontier Prioritization, Timeout & Observability | v1.2 | 2/2 | Complete | 2026-06-13 |
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
-| 11. Relay-Query Liveness | v1.4 | 1/1 | Complete   | 2026-06-16 |
+| 11. Relay-Query Liveness | v1.4 | 1/1 | Complete    | 2026-06-16 |
