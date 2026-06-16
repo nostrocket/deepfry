@@ -44,21 +44,25 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 
 ### v1.4 Crawler Hang Fix (Relay-Query Liveness)
 
-- [ ] **Phase 11: Relay-Query Liveness** - Fix dispatcher to return on relay-query timeout; bound queryRelay against context-ignoring go-nostr Fire(); close+mark-dead stuck relays on timeout; pass regression test.
+- [x] **Phase 11: Relay-Query Liveness** - Fix dispatcher to return on relay-query timeout; bound queryRelay against context-ignoring go-nostr Fire(); close+mark-dead stuck relays on timeout; pass regression test. (completed 2026-06-16)
 
 ## Phase Details
 
 ### Phase 11: Relay-Query Liveness
+
 **Goal**: A stuck or half-open relay can never wedge FetchAndUpdateFollows — the dispatcher always returns within a bounded multiple of its relay-query timeout.
 **Depends on**: Phase 10
 **Requirements**: HANG-01, HANG-02, HANG-03, TEST-02
 **Success Criteria** (what must be TRUE):
+
   1. `FetchAndUpdateFollows` returns within a small bounded multiple of `c.timeout` even when every per-relay query goroutine blocks indefinitely and ignores its context.
   2. `queryRelay` returns when the relay-query context expires regardless of whether the underlying `relay.Subscribe` / go-nostr `Fire()` respects that context.
   3. A half-open relay connection cannot park its write-loop goroutine indefinitely — on relay-query timeout the dispatcher closes the stuck relay's connection (cancelling its connectionContext) and marks it dead, bounding how long any single relay can stay wedged.
   4. `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` (pkg/crawler/crawler_hang_test.go) passes GREEN, and `make test` (run from the web-of-trust module directory) is fully green with no failures or skips in the unit suite.
+
 **Plans**: 1 plan
-- [ ] 11-01-PLAN.md — Bound Subscribe (HANG-02) + dispatcher timeout-exit & close-mark-dead stuck relays (HANG-01/HANG-03) + regression/partial/close tests (TEST-02)
+
+- [x] 11-01-PLAN.md — Bound Subscribe (HANG-02) + dispatcher timeout-exit & close-mark-dead stuck relays (HANG-01/HANG-03) + regression/partial/close tests (TEST-02)
 
 ## Progress
 
@@ -70,4 +74,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 8. Frontier Prioritization, Timeout & Observability | v1.2 | 2/2 | Complete | 2026-06-13 |
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
-| 11. Relay-Query Liveness | v1.4 | 0/1 | Not started | - |
+| 11. Relay-Query Liveness | v1.4 | 1/1 | Complete   | 2026-06-16 |

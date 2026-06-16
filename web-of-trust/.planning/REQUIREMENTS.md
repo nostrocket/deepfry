@@ -9,16 +9,16 @@ A production run hung for ~48 minutes at 0% CPU. A SIGQUIT goroutine dump confir
 
 ### Liveness
 
-- [ ] **HANG-01**: When one or more per-relay query goroutines never return, `FetchAndUpdateFollows` still returns within a small bounded multiple of its relay-query timeout (`c.timeout`). The dispatcher must not gate batch completion on every query goroutine finishing (`wg.Wait()` / `eventsChan` close). _(fix #1 — core)_
-- [ ] **HANG-02**: A per-relay query (`queryRelay`) returns when the relay-query context expires, even when the underlying `relay.Subscribe` / go-nostr `Fire()` ignores that context and blocks on its relay write queue. _(fix #2)_
+- [x] **HANG-01**: When one or more per-relay query goroutines never return, `FetchAndUpdateFollows` still returns within a small bounded multiple of its relay-query timeout (`c.timeout`). The dispatcher must not gate batch completion on every query goroutine finishing (`wg.Wait()` / `eventsChan` close). _(fix #1 — core)_
+- [x] **HANG-02**: A per-relay query (`queryRelay`) returns when the relay-query context expires, even when the underlying `relay.Subscribe` / go-nostr `Fire()` ignores that context and blocks on its relay write queue. _(fix #2)_
 
 ### Hardening
 
-- [ ] **HANG-03**: Relay connections enforce a bounded write deadline (or equivalent keepalive/ping timeout) so a half-open peer cannot park a relay's single write-loop goroutine — and thereby its subscriptions — indefinitely. _(fix #3 — hardening)_
+- [x] **HANG-03**: Relay connections enforce a bounded write deadline (or equivalent keepalive/ping timeout) so a half-open peer cannot park a relay's single write-loop goroutine — and thereby its subscriptions — indefinitely. _(fix #3 — hardening)_
 
 ### Testing & Verification
 
-- [ ] **TEST-02**: The existing regression test `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` (pkg/crawler/crawler_hang_test.go) passes, and the full `make test` suite for the web-of-trust module is green. The test injects a relay query that blocks while ignoring its context (faithfully reproducing go-nostr's `Fire()`) and asserts `FetchAndUpdateFollows` returns within budget. It is RED on pre-fix code and must go GREEN as the milestone's acceptance gate.
+- [x] **TEST-02**: The existing regression test `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` (pkg/crawler/crawler_hang_test.go) passes, and the full `make test` suite for the web-of-trust module is green. The test injects a relay query that blocks while ignoring its context (faithfully reproducing go-nostr's `Fire()`) and asserts `FetchAndUpdateFollows` returns within budget. It is RED on pre-fix code and must go GREEN as the milestone's acceptance gate.
 
 ## Future Requirements
 
@@ -42,10 +42,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HANG-01 | Phase 11 | Pending |
-| HANG-02 | Phase 11 | Pending |
-| HANG-03 | Phase 11 | Pending |
-| TEST-02 | Phase 11 | Pending |
+| HANG-01 | Phase 11 | Complete |
+| HANG-02 | Phase 11 | Complete |
+| HANG-03 | Phase 11 | Complete |
+| TEST-02 | Phase 11 | Complete |
 
 **Coverage:**
 

@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Crawler Hang Fix (Relay-Query Liveness)
-status: planning
-last_updated: "2026-06-16"
-last_activity: 2026-06-16
+milestone_name: Crawler Hang Fix
+status: verifying
+last_updated: "2026-06-16T06:43:47.196Z"
+last_activity: 2026-06-16 -- Phase 11 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 100
 ---
 
 # Project State: Web-of-Trust Crawler — v1.4 Crawler Hang Fix (Relay-Query Liveness)
@@ -21,14 +21,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 11 — Relay-Query Liveness
+**Current focus:** Phase 11 — relay-query-liveness
 
 ## Current Position
 
-Phase: 11 (Relay-Query Liveness)
-Plan: —
-Status: Roadmap created; ready to plan
-Last activity: 2026-06-16 — Milestone v1.4 roadmap written; Phase 11 defined
+Phase: 11 (relay-query-liveness) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-06-16 -- Phase 11 execution started
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Last activity: 2026-06-16 — Milestone v1.4 roadmap written; Phase 11 defined
 | Dispatcher abandons stuck goroutines (HANG-01) rather than waiting | Fix #1 from HANG-FINDINGS.md: return on relayQueryContext done + drain buffered events; stuck goroutines bounded but may leak until reconnect / relay eject. Acceptable per HANG-FINDINGS analysis. |
 | queryRelay wraps relay.Subscribe in child goroutine with ctx-select (HANG-02) | Fix #2: reduces goroutine leak frequency; goroutine still leaks but no longer blocks the batch. Combined with #1 so leaks are bounded. |
 | Websocket write deadline / keepalive hardening (HANG-03) | Fix #3: makes half-open connections die, cancelling connectionContext, unblocking Fire() — reduces leak frequency. Does not replace #1+#2 but shortens the window. |
+| Phase 11-relay-query-liveness P01 | 25 | 3 tasks | 2 files |
 
 ### Important Facts
 
@@ -99,6 +100,10 @@ None.
 - [Phase 07-03]: filterRejectionError dedicated type (not annotated subscriptionError) so errors.As can distinguish it without string heuristics (D-07)
 - [Phase 07-03]: markRelayDead removed from queryRelay (per-relay goroutine); structural single-threaded fix for data race CR-02 — no mutex needed
 - [Phase 10-01]: Generic retryDgraph[T] helper with injected sleep fn; ResourceExhausted reclassified fatal to prevent indefinite-retry livelock on ~4MB gRPC limit
+- [Phase ?]: Wrap relay.Subscribe in child goroutine with buffered result channel; select on result vs ctx.Done() to bound context-ignoring Fire() (HANG-02)
+- [Phase ?]: completedThisBatch atomic.Bool on relayState resets at batch start, set by goroutines on both success/error paths, read by dispatcher to identify outstanding relays (HANG-03)
+- [Phase ?]: relayQueryDoneCh case now independent exit: non-blocking eventsChan drain then return, no wg.Wait dependency (HANG-01)
+- [Phase ?]: mark-dead only on context.DeadlineExceeded not context.Canceled — EOSE-quorum early exit is normal operation, not a fault
 
 ## Operator Next Steps
 
