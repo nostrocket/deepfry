@@ -90,6 +90,13 @@ type relayState struct {
 	// Probe-up state (D-10/D-11).
 	successStreak atomic.Int32 // incremented once per successful queryRelay call
 	probing       atomic.Bool  // true while a probe chunk is in flight; exempt from filter_rejection counting
+
+	// completedThisBatch is set by the per-relay goroutine in FetchAndUpdateFollows
+	// once queryRelay returns (success or error). The dispatcher uses it to identify
+	// relays that are still outstanding at timeout so it can close and mark them dead
+	// (HANG-01/HANG-03). Reset to false at the top of each FetchAndUpdateFollows call
+	// so stale markers from a prior batch never suppress a close.
+	completedThisBatch atomic.Bool
 }
 
 type Crawler struct {
@@ -474,6 +481,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
+	// Reset per-batch completion markers so stale state from a prior batch never
+	// suppresses a close-on-timeout (HANG-03). Must happen before launching goroutines.
+	for _, rs := range c.relays {
+		rs.completedThisBatch.Store(false)
+	}
+
 	// Count alive relays being launched for the quorum denominator (D-14).
 	var queriedRelays int32
 	for _, rs := range c.relays {
@@ -500,6 +513,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		go func(rs *relayState) {
 			defer wg.Done()
 			err := queryRelay(relayQueryContext, rs, filter, eventsChan)
+			// Mark this relay's query as complete (on both success and error paths) so
+			// the dispatcher can distinguish outstanding relays on the timeout exit
+			// (HANG-01/HANG-03). This write races with the dispatcher reading it only
+			// after relayQueryContext.Done() fires; since Done() is the signal that the
+			// timeout elapsed, any relay that did not yet set completedThisBatch by that
+			// point is correctly identified as outstanding.
+			rs.completedThisBatch.Store(true)
 			if err != nil {
 				errorsChan <- relayError{url: rs.url, err: err}
 				// D-14: errors count toward quorum (move batch forward, not stall it).
@@ -537,17 +557,21 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	processedEventIDs := make(map[string]struct{})
 	// Track unique pubkeys that had events returned
 	pubkeysWithEvents := make(map[string]struct{})
-	// relayQueryDone tracks whether the relay query context has already fired.
-	// Once set, we nil out its channel in the select so the case does not spin.
+	// relayQueryDoneCh is the relay-query context's Done channel. When it fires,
+	// the dispatcher takes the independent timeout/quorum-exit path (HANG-01).
 	relayQueryDoneCh := relayQueryContext.Done()
 	// Process events from all relays using a switch loop
 	for {
 		select {
 		case <-relayQueryDoneCh:
-			// The relay query context was cancelled — either by the 15s timeout
-			// (DeadlineExceeded) or by the EOSE-quorum early exit (Canceled).
-			// In both cases, continue draining events already buffered in
-			// eventsChan; do not return an error.
+			// The relay query context was cancelled — either by the c.timeout deadline
+			// (DeadlineExceeded) or by the EOSE-quorum early exit (Canceled / cancel()).
+			//
+			// HANG-01: independent exit path — do NOT block on wg.Wait() or eventsChan
+			// close. Drain only events already buffered in eventsChan (non-blocking), then
+			// return pubkeysWithEvents with nil error. This ensures FetchAndUpdateFollows
+			// always returns within a bounded multiple of c.timeout regardless of whether
+			// any per-relay query goroutine ever returns.
 			//
 			// NOTE (WR-06): this drain is NOT lossless. A goroutine sitting between
 			// receiving from sub.Events and sending to eventsChan returns ctx.Err()
@@ -558,12 +582,64 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			if c.debug {
 				log.Printf("Relay query context cancelled while processing events: %v", relayQueryContext.Err())
 				if relayQueryContext.Err() == context.DeadlineExceeded {
-					log.Printf("Relay query timeout reached, but continuing to process received events")
+					log.Printf("Relay query timeout reached, draining buffered events and returning")
 				}
 			}
-			// Nil the channel so this case does not spin on subsequent iterations;
-			// the loop will exit only when eventsChan closes.
-			relayQueryDoneCh = nil
+
+			// Non-blocking drain of events already buffered in eventsChan.
+			// Process each through the same signature-check / forward / update path.
+			c.dbUpdateMutex.Lock()
+		drainLoop:
+			for {
+				select {
+				case ev, ok := <-eventsChan:
+					if !ok || ev == nil {
+						break drainLoop
+					}
+					if _, exists := processedEventIDs[ev.ID]; exists {
+						continue
+					}
+					if ok2, err2 := ev.CheckSignature(); !ok2 {
+						log.Printf("WARN: Invalid signature for event %s from pubkey %s: %v", ev.ID, ev.PubKey, err2)
+						c.logSignatureValidationMetrics(ev.PubKey, false)
+						continue
+					}
+					c.logSignatureValidationMetrics(ev.PubKey, true)
+					c.forwardEvent(relayContext, ev)
+					pubkeysWithEvents[ev.PubKey] = struct{}{}
+					if ev.CreatedAt > nostr.Timestamp(pubkeys[ev.PubKey]) {
+						if err2 := c.updateFollowsFromEvent(relayContext, ev); err2 != nil {
+							c.dbUpdateMutex.Unlock()
+							return pubkeysWithEvents, fmt.Errorf("failed to update follows for pubkey %s: %w", ev.PubKey, err2)
+						}
+						processedEventIDs[ev.ID] = struct{}{}
+					} else {
+						c.dgClient.TouchLastDBUpdate(relayContext, ev.PubKey)
+					}
+				default:
+					break drainLoop
+				}
+			}
+			c.dbUpdateMutex.Unlock()
+
+			// HANG-03: on the DeadlineExceeded (timeout) path, close outstanding relay
+			// connections and mark them dead (classTransport) so the existing threshold
+			// ejection (RELAY-01/02) governs repeat offenders. This runs in the
+			// single-threaded dispatcher (CR-02) — never from per-relay goroutines.
+			// The EOSE-quorum-cancel path (context.Canceled) is a normal early exit;
+			// those relays are NOT marked dead.
+			if relayQueryContext.Err() == context.DeadlineExceeded {
+				for _, rs := range c.relays {
+					if rs.alive && !rs.completedThisBatch.Load() {
+						if c.debug {
+							log.Printf("Relay %s timed out with outstanding query, closing and marking dead", rs.url)
+						}
+						c.markRelayDead(rs.url, classTransport)
+					}
+				}
+			}
+
+			return pubkeysWithEvents, nil
 
 		case <-relayContext.Done():
 			// The main context was cancelled (external cancellation — e.g. SIGINT).
