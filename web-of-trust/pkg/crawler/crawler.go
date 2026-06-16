@@ -478,6 +478,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	errorsChan := make(chan relayError, len(c.relays))
 
 	// Set timeout context for relay operations only
+	batchStart := time.Now()
 	relayQueryContext, cancel := context.WithTimeout(relayContext, c.timeout)
 	defer cancel()
 
@@ -622,20 +623,43 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			}
 			c.dbUpdateMutex.Unlock()
 
-			// HANG-03: on the DeadlineExceeded (timeout) path, close outstanding relay
-			// connections and mark them dead (classTransport) so the existing threshold
-			// ejection (RELAY-01/02) governs repeat offenders. This runs in the
-			// single-threaded dispatcher (CR-02) — never from per-relay goroutines.
-			// The EOSE-quorum-cancel path (context.Canceled) is a normal early exit;
-			// those relays are NOT marked dead.
-			if relayQueryContext.Err() == context.DeadlineExceeded {
+			// HANG-03: on the timeout path, close outstanding relay connections and mark
+			// them dead (classTransport) so the existing threshold ejection (RELAY-01/02)
+			// governs repeat offenders. This runs in the single-threaded dispatcher
+			// (CR-02) — never from per-relay goroutines. The EOSE-quorum-cancel path is a
+			// normal early exit; those relays are NOT marked dead.
+			//
+			// WR-01: do NOT discriminate on relayQueryContext.Err() alone. When the
+			// c.timeout deadline and a quorum-triggered cancel() fire near-simultaneously,
+			// the context records whichever cancellation won the race (first cancel wins,
+			// per the stdlib), so a genuinely-timed-out batch can mis-report
+			// context.Canceled and skip marking truly-stuck relays dead. Instead key off
+			// the actual wall-clock budget: if the batch consumed its full c.timeout, any
+			// relay still outstanding is genuinely stuck regardless of which cancel cause
+			// the context surfaced. A quorum early-exit (which fires well before the
+			// budget elapses) correctly does NOT enter this branch.
+			budgetExhausted := time.Since(batchStart) >= c.timeout
+			if relayQueryContext.Err() == context.DeadlineExceeded || budgetExhausted {
+				// CR-01: snapshot the stuck relay URLs BEFORE calling markRelayDead.
+				// markRelayDead reassigns c.relays via in-place compaction
+				// (kept := c.relays[:0]; ...; c.relays = kept), writing into the same
+				// backing array this loop would otherwise be ranging. Iterating c.relays
+				// directly while it is compacted mid-loop can skip an outstanding relay
+				// (its connection never gets closed — the exact leak this phase prevents)
+				// or double-process one. Decoupling the iteration source (this snapshot)
+				// from the mutation target (c.relays) makes the pass correct for any
+				// number of outstanding relays and any ejection outcome.
+				var stuck []string
 				for _, rs := range c.relays {
 					if rs.alive && !rs.completedThisBatch.Load() {
 						if c.debug {
 							log.Printf("Relay %s timed out with outstanding query, closing and marking dead", rs.url)
 						}
-						c.markRelayDead(rs.url, classTransport)
+						stuck = append(stuck, rs.url)
 					}
+				}
+				for _, url := range stuck {
+					c.markRelayDead(url, classTransport)
 				}
 			}
 
