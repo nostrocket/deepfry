@@ -3,6 +3,11 @@ services:
     image: dgraph/standalone:v25.3.0
     container_name: dgraph
     restart: unless-stopped
+    environment:
+      # Cap BadgerDB cache (default size-mb=4096) so Alpha's working set stays
+      # well under the container/VM memory ceiling. Picked up by `dgraph alpha`
+      # via the DGRAPH_ALPHA_<FLAG> env convention (same as run.sh's SECURITY).
+      - "DGRAPH_ALPHA_CACHE=size-mb=2048; percentage=40,40,20"
     deploy:
       resources:
         limits:
