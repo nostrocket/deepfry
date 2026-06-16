@@ -1,293 +1,208 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-06-15
+**Analysis Date:** 2026-06-16
 
 ## Directory Layout
 
 ```
-deepfry/
-├── config/                          # Configuration files for services
-│   ├── dgraph/                      # Dgraph GraphQL schema and entrypoint
-│   │   ├── schema.graphql           # Profile type definition
-│   │   └── entrypoint.sh            # Schema bootstrap script
-│   ├── strfry/                      # StrFry relay configuration
-│   │   ├── strfry.conf              # Main relay config
-│   │   ├── strfry-quarantine.conf   # Quarantine relay config
-│   │   └── quarantine-db-guard.sh   # Safety guard prevents mainline corruption
-│   └── whitelist/                   # Whitelist plugin configuration
-│       ├── whitelist.yaml           # Whitelist server URL
-│       └── router.yaml              # Router plugin config
-├── data/                            # Local database storage (on-disk)
-│   ├── strfry-db/                   # Main StrFry LMDB (canonical event store)
-│   ├── strfry-quarantine-db/        # Quarantine StrFry LMDB
-│   └── dgraph/                      # Dgraph data directory
-├── docs/                            # Documentation and architecture diagrams
-│   ├── architecture/                # Architecture documentation
-│   ├── images/                      # Diagrams and visual references
-│   └── *.md                         # Deployment, setup guides
-├── web-of-trust/                    # Go module: trust graph crawler & analysis
-│   ├── cmd/                         # Executable entry points
-│   │   ├── crawler/                 # Main crawler loop for pubkey discovery
-│   │   ├── clusterscan/             # Trust propagation & spam detection
-│   │   ├── pubkeys/                 # Export pubkeys with followers to CSV
-│   │   ├── discover-relays/         # NIP-65 relay discovery
-│   │   └── healthcheck/             # Dgraph health & cleanup tool
-│   ├── pkg/                         # Shared libraries
-│   │   ├── config/                  # YAML config loader (~/deepfry/web-of-trust.yaml)
-│   │   ├── crawler/                 # Relay pool, kind 3 subscription, chunking
-│   │   └── dgraph/                  # Dgraph client: upsert, queries, clusterscan
-│   ├── go.mod                       # Go module definition
-│   ├── Makefile                     # Build targets: build-crawler, build-pubkeys, test
-│   └── README.md                    # Module documentation
-├── whitelist-plugin/                # Go module: event write policy plugins
-│   ├── cmd/                         # Executable entry points
-│   │   ├── whitelist/               # StrFry plugin: stdin/stdout JSON handler
-│   │   ├── server/                  # Whitelist server: HTTP /check endpoint
-│   │   └── router/                  # StrFry plugin: route rejected events to quarantine
-│   ├── pkg/                         # Shared libraries
-│   │   ├── handler/                 # JSONL parsing, accept/reject logic
-│   │   ├── client/                  # Whitelist server client
-│   │   ├── repository/              # Dgraph repository for pubkey lookups
-│   │   ├── heuristics/              # Decision heuristics (flags, cutoffs)
-│   │   ├── quarantine/              # Router-side event publisher
-│   │   ├── server/                  # HTTP server setup, endpoints
-│   │   ├── version/                 # Build version injection
-│   │   └── config/                  # Plugin configuration
-│   ├── go.mod                       # Go module definition
-│   ├── Makefile                     # Build targets: build, test, bench
-│   └── README.md                    # Module documentation
-├── event-forwarder/                 # Go module: upstream relay event syncing
-│   ├── cmd/fwd/                     # Event forwarder CLI/TUI
-│   │   ├── main.go                  # Entry point
-│   │   ├── cli.go                   # CLI mode (quiet, progress bars)
-│   │   └── tui.go                   # TUI mode (interactive)
-│   ├── pkg/                         # Shared libraries
-│   │   ├── config/                  # Load config from env vars
-│   │   ├── forwarder/               # Main forwarder loop, modes (windowed/realtime)
-│   │   ├── crypto/                  # Key signing and derivation
-│   │   ├── telemetry/               # Metrics aggregation
-│   │   └── version/                 # Build version
-│   ├── go.mod                       # Go module definition
-│   ├── Makefile                     # Build targets: build, test-integration
-│   ├── docs/telemetry.md            # Telemetry documentation
-│   └── README.md                    # Module documentation
-├── quarantine-rescuer/              # Go module: quarantine event re-qualification
-│   ├── cmd/quarantine-rescue/       # CLI entry point
-│   ├── internal/                    # Internal packages (not exported)
-│   │   ├── lmdbreader/              # Read-only quarantine LMDB cursor
-│   │   ├── exporter/                # Export events from quarantine
-│   │   ├── whitelist/               # Check pubkey whitelist
-│   │   ├── forwarder/               # Publish to mainline StrFry
-│   │   ├── deleter/                 # Batch delete from quarantine
-│   │   ├── runner/                  # Orchestrate all phases
-│   │   ├── envfile/                 # Parse docker env files
-│   │   └── event/                   # Event types and helpers
-│   ├── go.mod                       # Go module definition
-│   ├── Makefile                     # Build targets
-│   └── README.md                    # Module documentation
-├── spam/                            # Rust crate: LMDB to GraphQL access layer
-│   ├── src/                         # Rust source
-│   │   ├── main.rs                  # Entry point: startup gate, listener bind, LMDB init
-│   │   ├── lib.rs                   # Library crate definition
-│   │   ├── config.rs                # Config loader (~/deepfry/lmdb2graphql.yaml)
-│   │   ├── server.rs                # HTTP server (axum) routing
-│   │   ├── lmdb/                    # LMDB reader, validation, payload decoding
-│   │   │   ├── env.rs               # LMDB environment setup
-│   │   │   ├── meta.rs              # Metadata validation
-│   │   │   ├── self_check.rs        # Comparator & schema validation gate
-│   │   │   ├── scan.rs              # Event iteration
-│   │   │   ├── payload.rs           # Event decoding
-│   │   │   ├── indexes.rs           # B-tree index scanning
-│   │   │   ├── types.rs             # LMDB types
-│   │   │   └── comparators.rs       # B-tree comparators
-│   │   ├── query/                   # Query engine (Phase 3)
-│   │   │   ├── engine.rs            # Query execution
-│   │   │   ├── filter.rs            # Filter logic
-│   │   │   ├── hydrate.rs           # Payload hydration
-│   │   │   ├── merge.rs             # Result merging
-│   │   │   ├── router.rs            # Request routing
-│   │   │   └── mod.rs               # Module exports
-│   │   ├── graphql/                 # GraphQL layer (Phase 4)
-│   │   │   ├── schema.rs            # Schema builder, AppState
-│   │   │   ├── types.rs             # GraphQL output types
-│   │   │   ├── resolvers.rs         # Resolver implementations
-│   │   │   └── mod.rs               # Module exports
-│   └── Cargo.toml                   # Rust manifest
-│   ├── rust-toolchain.toml          # Rust version pin
-│   ├── Makefile                     # Build targets
-│   └── README.md                    # Module documentation
-├── docker-compose.dgraph.yml        # Dgraph + Ratel + Whitelist Server services
-├── docker-compose.strfry.yml        # StrFry + StrFry Quarantine services
-├── docker-compose.evtfwd.yml        # Event Forwarders (per upstream relay)
-├── docker-compose.lmdb2graphql.yml  # LMDB to GraphQL service
-├── Dockerfile.strfry                # StrFry image with plugins
-├── Dockerfile.whitelist-server      # Whitelist Server image
-├── .env.example                     # Example environment variables
-├── .gitignore                       # Git ignore rules
-├── CLAUDE.md                        # Project context for Claude Code
-├── README.md                        # Top-level documentation
-└── LICENSE                          # License
-
-Placeholder subsystems (not yet production):
-├── search-plugin/                   # NIP-50 search plugin stub
-├── embeddings-generator/            # Embeddings generator stub
-├── profile-builder/                 # Profile aggregation stub
-├── thread-inference/                # Thread graph builder stub
-└── quarantine/                      # Quarantine relay spec and setup
+web-of-trust/
+├── cmd/                           # Command-line executables
+│   ├── crawler/                   # Main crawler entry point
+│   │   ├── main.go               # Stale-feed loop, signal handling, retryDgraph logic
+│   │   └── main_test.go          # Integration tests for main loop (SIGINT, backoff)
+│   ├── clusterscan/              # Spam cluster detection (read-only analysis)
+│   │   └── main.go               # Trust propagation, weak-bridge ranking, CSV/JSON report
+│   ├── pubkeys/                  # Export pubkeys with followers
+│   │   └── main.go               # Paginated query, CSV output
+│   ├── healthcheck/              # Database integrity scan
+│   │   └── main.go               # Validate pubkeys, find duplicates, optional purge
+│   └── discover-relays/          # Relay discovery and health testing
+│       └── main.go               # nostr.watch API polling, NIP-65, latency testing
+├── pkg/                          # Reusable Go packages
+│   ├── crawler/                  # Relay pool and event subscription
+│   │   ├── crawler.go            # Relay state machine, FetchAndUpdateFollows, queryRelay
+│   │   ├── crawler_filter_test.go # Filter cap learning and rejection handling
+│   │   ├── crawler_hang_test.go  # Generation-token hang detection (HANG-01)
+│   │   ├── crawler_quorum_test.go # EOSE quorum fraction early exit (Phase 8)
+│   │   └── chunks.go             # (historical; chunking now in dgraph.go)
+│   ├── dgraph/                   # Dgraph client and operations
+│   │   ├── dgraph.go             # Core write/read: AddFollowers, GetStalePubkeys, etc.
+│   │   ├── clusterscan.go        # Read-only: ResolvePubkeysToUIDs, ExpandTrustedSet, GetWeakBridges
+│   │   ├── backoff.go            # Miss/hit backoff scheduling (MarkAttempted, Phase 8)
+│   │   ├── validate.go           # Pubkey validation, schema operations
+│   │   ├── dgraph_writepath_test.go      # AddFollowers version guard, chunking
+│   │   ├── dgraph_stale_test.go          # GetStalePubkeys frontier + aged selection
+│   │   ├── dgraph_validation_test.go     # Pubkey format validation, health queries
+│   │   ├── dgraph_chunks_test.go         # Batch chunking under gRPC size limit
+│   │   ├── backoff_test.go               # Miss/hit backoff math
+│   │   └── validate_test.go              # ValidatePubkey edge cases
+│   └── config/                   # Configuration management
+│       ├── config.go             # LoadConfig, SaveForwardRelayURL, EjectRelayURL
+│       └── config_test.go        # Config loading, YAML round-trip, defaults
+├── queries/                      # DQL query templates (reference documentation)
+├── bin/                          # Compiled binaries (generated by `make build`)
+│   ├── crawler
+│   ├── clusterscan
+│   ├── pubkeys
+│   ├── healthcheck
+│   └── discover-relays
+├── go.mod                        # Go module definition (web-of-trust)
+├── go.sum                        # Dependency lock file
+├── Makefile                      # Build, test, fmt, vet, tidy, clean targets
+├── CLAUDE.md                     # Project constraints & conventions for Claude
+├── README.md                     # User-facing documentation
+├── HANG-FINDINGS.md              # Analysis of v1.4 hang fix (generation tokens)
+├── logic_flow.md                 # High-level crawler flow diagram
+├── fable_logic_flow.md           # Detailed phase-by-phase crawl documentation
+└── .planning/
+    └── codebase/                 # GSD codebase mapper outputs
+        ├── STACK.md              # Technology stack (dependencies, versions)
+        ├── ARCHITECTURE.md       # This file: layers, patterns, data flow
+        └── STRUCTURE.md          # This file: directory layout, naming, where to add code
 ```
 
 ## Directory Purposes
 
-**`config/`:**
-- Purpose: Configuration files for all services (shared mounts into Docker containers)
-- Contains: YAML files, shell scripts, SQL schema definitions
-- Key files: `dgraph/schema.graphql` (pubkey type), `strfry/*.conf` (relay configs), `whitelist/whitelist.yaml` (server URL)
+**`cmd/`:**
+- Purpose: Executable entry points; each is a standalone CLI tool
+- Contains: `main()` functions, signal handling, CLI flag parsing, final reporting
+- Key files: `cmd/crawler/main.go` (primary crawler), `cmd/clusterscan/main.go` (analysis), `cmd/pubkeys/main.go` (export), `cmd/healthcheck/main.go` (integrity), `cmd/discover-relays/main.go` (relay discovery)
 
-**`data/`:**
-- Purpose: Local on-disk storage for databases (volume mounts into Docker)
-- Contains: LMDB databases (StrFry, quarantine), Dgraph data directory
-- Generated: Yes (created on first run)
-- Committed: No (git-ignored)
+**`pkg/crawler/`:**
+- Purpose: Relay pooling, connection state machine, kind 3 subscription
+- Contains: Crawler struct, relay state machine, per-relay goroutine logic, filter cap learning, EOSE quorum, ejection thresholds
+- Key files: `crawler.go` (main logic, 600+ lines), `*_test.go` files (hang detection, filter cap, quorum behavior)
 
-**`web-of-trust/`:**
-- Purpose: Go module for crawling the trust graph (pubkey relationships)
-- Contains: Crawler loop, Dgraph client, clustering/analysis tools
-- Key tools: `bin/crawler` (main), `bin/clusterscan`, `bin/pubkeys`, `bin/healthcheck`
+**`pkg/dgraph/`:**
+- Purpose: All Dgraph mutations and queries; graph analysis for clusterscan
+- Contains: Client struct wrapping dgo.Dgraph, write path (AddFollowers), read path (GetStalePubkeys), analysis (trust propagation), validation, health operations
+- Key files: `dgraph.go` (500+ lines: write/read/health), `clusterscan.go` (200+ lines: read-only analysis), `backoff.go` (miss/hit scheduling), `validate.go` (pubkey validation, schema operations)
 
-**`whitelist-plugin/`:**
-- Purpose: Go module for event write policy and quarantine routing
-- Contains: StrFry plugins (stdin/stdout handlers), whitelist server (HTTP)
-- Key tools: `bin/whitelist` (plugin), `bin/server` (HTTP service), `bin/router` (plugin)
+**`pkg/config/`:**
+- Purpose: YAML configuration management
+- Contains: Config struct with viper backing, LoadConfig, relay/seed mutation functions
+- Key files: `config.go` (200+ lines: load, defaults, save), `config_test.go` (test round-trips)
 
-**`event-forwarder/`:**
-- Purpose: Go module for syncing events from upstream relays to StrFry
-- Contains: Relay subscription, windowed/realtime sync modes, TUI/CLI
-- Key tool: `bin/fwd` (main, one per upstream relay)
+**`queries/`:**
+- Purpose: Reference DQL query templates (not executed; documentation)
+- Contains: Example queries for understanding Dgraph schema and operations
 
-**`quarantine-rescuer/`:**
-- Purpose: Go module for re-qualifying and replaying quarantine events
-- Contains: LMDB reader, whitelist checker, event publisher, batch deleter
-- Key tool: `bin/quarantine-rescue` (one-shot CLI)
-
-**`spam/`:**
-- Purpose: Rust crate for read-only GraphQL access to StrFry LMDB
-- Contains: LMDB reader with validation gates, GraphQL schema, axum HTTP server
-- Key service: `lmdb2graphql` (Docker service on port 8082)
+**`bin/`:**
+- Purpose: Compiled binaries (git-ignored; generated by Makefile)
+- Contents: `crawler`, `clusterscan`, `pubkeys`, `healthcheck`, `discover-relays` (populated by `make build`)
 
 ## Key File Locations
 
 **Entry Points:**
-- `web-of-trust/cmd/crawler/main.go` — Web of Trust crawler loop (subscribes kind 3)
-- `web-of-trust/cmd/clusterscan/main.go` — Trust analysis and spam detection
-- `event-forwarder/cmd/fwd/main.go` — Event forwarder (sync upstream relays)
-- `whitelist-plugin/cmd/whitelist/main.go` — Write policy plugin (StrFry)
-- `whitelist-plugin/cmd/server/main.go` — Whitelist HTTP server
-- `whitelist-plugin/cmd/router/main.go` — Quarantine router plugin (StrFry)
-- `quarantine-rescuer/cmd/quarantine-rescue/main.go` — Rescue quarantine events
-- `spam/src/main.rs` — GraphQL service startup (Rust)
-
-**Configuration:**
-- `config/dgraph/schema.graphql` — Dgraph Profile type: `pubkey` (@id), `follows`, `followers`, `kind3CreatedAt`, `last_db_update`
-- `config/strfry/strfry.conf` — StrFry main relay config (listen port, plugin path)
-- `config/strfry/strfry-quarantine.conf` — Quarantine relay config (separate DB)
-- `config/whitelist/whitelist.yaml` — Whitelist server URL (loaded by plugin at startup)
-- `.env.example` — Template for secrets and paths (`STRFRY_PRIVATE_KEY`, `STRFRY_DB_PATH`, etc.)
+- `cmd/crawler/main.go` — Main crawler loop (line 138: main function); config load, Dgraph client, signal handling, stale-feed loop
+- `cmd/clusterscan/main.go` — Spam cluster analysis (line 39: main function); trust propagation, weak-bridge ranking
+- `cmd/pubkeys/main.go` — Pubkey export (line 14: main function); paginated query, CSV output
+- `cmd/healthcheck/main.go` — Database integrity (line 16: main function); validation, duplicate detection, optional purge
+- `cmd/discover-relays/main.go` — Relay discovery (not fully shown); nostr.watch polling, NIP-65, latency testing
 
 **Core Logic:**
-- `web-of-trust/pkg/crawler/crawler.go` — Relay pool, kind 3 subscription, event collection
-- `web-of-trust/pkg/dgraph/dgraph.go` — Dgraph client (upsert, queries, transactions)
-- `web-of-trust/pkg/config/config.go` — YAML config loading and persistence
-- `whitelist-plugin/pkg/handler/whitelist_handler.go` — Event accept/reject logic
-- `whitelist-plugin/pkg/client/client.go` — HTTP client for whitelist server checks
-- `event-forwarder/pkg/forwarder/forwarder.go` — Main forwarder loop
-- `quarantine-rescuer/internal/runner/runner.go` — Rescue orchestration
-- `spam/src/server.rs` — GraphQL HTTP server setup
+- `pkg/crawler/crawler.go` — Relay state machine, FetchAndUpdateFollows (parallel query), queryRelay (per-relay goroutine), ejection logic, filter cap learning
+- `pkg/dgraph/dgraph.go` — AddFollowers (write path: version guard, chunking, upsert), GetStalePubkeys (stale selection), MarkAttempted (backoff stamping), CountPubkeys, validation queries
+- `pkg/dgraph/clusterscan.go` — ResolvePubkeysToUIDs, ExpandTrustedSet (trust propagation), GetWeakBridges (bridge ranking), ClusterBeneath (cluster sizing)
+- `pkg/config/config.go` — LoadConfig (YAML load + defaults), SaveForwardRelayURL, EjectRelayURL (config updates), RemoveRelayURL
+
+**Configuration:**
+- `~/deepfry/web-of-trust.yaml` — Live config file (at user home); relay URLs, seed pubkeys, ejection thresholds, backoff params, EOSE quorum
 
 **Testing:**
-- `web-of-trust/cmd/crawler/main_test.go` — Crawler tests
-- `whitelist-plugin/pkg/handler/whitelist_handler_test.go` — Handler tests
-- `whitelist-plugin/pkg/handler/router_handler_test.go` — Router plugin tests
-- `event-forwarder/cmd/fwd/main_test.go` — Forwarder tests
-- `quarantine-rescuer/internal/lmdbreader/reader_test.go` — LMDB reader tests
-- `spam/tests/` — Integration tests for Rust crate
+- `cmd/crawler/main_test.go` — Integration tests for main loop (graceful shutdown, signal handling, Dgraph retry backoff)
+- `pkg/crawler/crawler_*_test.go` — Filter cap learning, EOSE quorum, hang detection (generation tokens)
+- `pkg/dgraph/dgraph_*_test.go` — Write path (version guard, chunking), stale selection, validation, duplicate detection
+- `pkg/config/config_test.go` — Config load/save, YAML round-trip, defaults
+
+**Documentation:**
+- `CLAUDE.md` — Project constraints, build commands, config rules, protocol rules
+- `README.md` — User-facing documentation
+- `HANG-FINDINGS.md` — v1.4 fix: generation tokens prevent hung relay from blocking
+- `logic_flow.md` — High-level crawl flow
+- `fable_logic_flow.md` — Detailed phase-by-phase documentation
 
 ## Naming Conventions
 
 **Files:**
-- Go: `main.go`, `crawler.go`, `handler.go`, `types.go` (lowercase with underscores)
-- Rust: `main.rs`, `lib.rs`, `server.rs`, `config.rs` (lowercase with underscores)
-- Config: `*.yaml`, `*.conf`, `*.graphql` (service-specific)
-- Tests: `*_test.go` (Go), `*_test.rs` (Rust, via `#[cfg(test)]` modules)
+- Lowercase with underscores: `crawler.go`, `dgraph.go`, `backoff.go`, `main.go`
+- Package follows directory name: `package crawler` in `pkg/crawler/`, `package dgraph` in `pkg/dgraph/`
+- Test files: `*_test.go` (e.g., `dgraph_writepath_test.go`, `crawler_hang_test.go`)
+- Entry points: `main.go` in each `cmd/*/` directory
 
-**Directories:**
-- Commands: `cmd/` (each tool is a separate `cmd/toolname/` directory)
-- Libraries: `pkg/` (Go packages shared across commands) or `src/` (Rust modules)
-- Internal: `internal/` (Go packages not exported to other modules)
-- Config: `config/servicename/` (mounted read-only into Docker)
-- Data: `data/servicename/` (persistent volumes)
+**Types & Interfaces:**
+- PascalCase for exported: `Crawler`, `Client`, `Config`, `RelayState`, `WeakBridge`, `PubkeyNode`
+- Unexported struct fields: camelCase: `conn`, `alive`, `failTransport`, `eventsChan`
+- Receiver names: single lowercase letter: `(c *Crawler)`, `(r *relayState)`, `(e *subscriptionError)`
+
+**Functions & Methods:**
+- Exported: PascalCase: `NewClient()`, `AddFollowers()`, `GetStalePubkeys()`, `FetchAndUpdateFollows()`, `ExpandTrustedSet()`
+- Unexported: camelCase: `queryRelay()`, `markRelayDead()`, `chunkSlice()`, `isDgraphTransient()`
+- Constructors: `func New(cfg Config) (*Type, error)` pattern
+
+**Variables & Constants:**
+- camelCase: `pubkeys`, `followeeList`, `dgClient`, `relayURLs`, `hitSet`
+- Booleans prefixed with verb/state: `alive`, `deleted`, `valid`, `probing`
+- Timestamps with suffix: `kind3CreatedAt`, `lastDBUpdate`, `lastAttempt`, `nextAttempt`
+- Magic numbers extracted as named constants: `maxRecvMsgSize = 256 << 20`, `batchSize = 200`, `baseTimeout = 30 * time.Second`
+- YAML keys in snake_case: `relay_urls`, `filter_rejection`, `miss_backoff`, `hit_refresh_cadence`
+
+**Struct Tags:**
+- Config: `mapstructure:"relay_urls"` (YAML key name)
+- JSON: `json:"pubkey"`, `json:"kind3CreatedAt"` (Dgraph response unmarshalling)
 
 ## Where to Add New Code
 
-**New Feature (e.g., additional crawler logic):**
-- Primary code: `web-of-trust/cmd/crawler/main.go` or `web-of-trust/pkg/crawler/` (new file)
-- Tests: `web-of-trust/cmd/crawler/main_test.go` or `web-of-trust/pkg/crawler/newfeature_test.go`
+**New Feature (e.g., relay metrics, persistence layer):**
+- Feature logic: Create new file in `pkg/` if generic; reuse existing package if it belongs in crawler/dgraph/config
+- Tests: Co-locate in `*_test.go` in the same package
+- Entry point changes: `cmd/crawler/main.go` if it's a crawler feature; `cmd/clusterscan/main.go` if it's analysis-related
+- Config: Add fields to `pkg/config/Config` struct; add YAML defaults in LoadConfig; add mapstructure tags
 
-**New GraphQL Query (Rust spam service):**
-- Schema: `spam/src/graphql/schema.rs` (add field to AppSchema)
-- Types: `spam/src/graphql/types.rs` (add output type)
-- Resolver: `spam/src/graphql/resolvers.rs` (implement resolver function)
-- Test: `spam/tests/graphql_test.rs` (integration test)
+**New CLI Tool (e.g., relay statistics):**
+- Location: Create `cmd/mytool/main.go`
+- Dependencies: Import from `pkg/config`, `pkg/dgraph`, `pkg/crawler` as needed
+- Build: Add target to Makefile: `build-mytool: go build ... ./cmd/mytool`; add to `build` phony target
+- Config: If needed, add to `pkg/config.Config` and `~/deepfry/web-of-trust.yaml`
 
-**New StrFry Plugin:**
-- Entry: `whitelist-plugin/cmd/pluginname/main.go`
-- Handler: `whitelist-plugin/pkg/handler/pluginname_handler.go`
-- IO Adapter: `whitelist-plugin/pkg/handler/pluginname_io_adapter.go`
-- Tests: `whitelist-plugin/pkg/handler/pluginname_handler_test.go`
+**New Dgraph Query (e.g., cluster-depth analysis):**
+- Location: `pkg/dgraph/dgraph.go` (if read/write path) or `pkg/dgraph/clusterscan.go` (if read-only analysis)
+- Pattern: Use read-only txn (`NewReadOnlyTxn()`) for analysis; standard txn for writes; chunk if result could exceed gRPC size limit
+- Export: Name as `func (c *Client) MyQuery(ctx context.Context, params...) (result, error)` if it's a public API
 
-**New CLI Tool (e.g., query utility):**
-- Entry: `web-of-trust/cmd/toolname/main.go`
-- Shared logic: `web-of-trust/pkg/existing-package/` (reuse existing modules)
-- Makefile target: `web-of-trust/Makefile` (add `build-toolname` target)
+**New Relay Behavior (e.g., custom filter cap learning):**
+- Location: `pkg/crawler/crawler.go` (relayState, FetchAndUpdateFollows, queryRelay)
+- Pattern: Extend `relayState` struct with new atomic counters; update queryRelay to collect the metric; update markRelayDead or ejection logic if needed
+- Testing: Add integration test in `cmd/crawler/main_test.go` or new `pkg/crawler/crawler_newfeature_test.go`
 
-**Utilities / Shared Helpers:**
-- Shared helpers (crypto, config, etc.): `web-of-trust/pkg/config/`, `event-forwarder/pkg/crypto/`
-- Test fixtures: in-package under `_test.go` files or exported from `pkg/testutil/`
+**New Validation Rule:**
+- Location: `pkg/dgraph/validate.go` (if Dgraph-specific) or separate validation package
+- Pattern: `func Validate*(s string) error` returning nil if valid, formatted error if invalid; guard all writes with validation before mutation
+- Testing: `pkg/dgraph/validate_test.go` with edge cases (empty, too long, non-hex, etc.)
 
-**Docker Services:**
-- New service: Create `docker-compose.servicename.yml` in repo root
-- Image: Add `Dockerfile.servicename` or reference existing image
-- Config: Create `config/servicename/` directory with mounted files
-- Data: Create `data/servicename/` directory if persistent storage needed
+**New Configuration Parameter:**
+- Location: `pkg/config/Config` struct + LoadConfig defaults
+- Pattern: Add exported field to Config struct; define mapstructure tag; set default in LoadConfig via `viper.SetDefault()`; update YAML example in `~/deepfry/web-of-trust.yaml`
+- Propagation: Thread the value to components that need it (e.g., Crawler, Client) via constructor Config parameter
 
 ## Special Directories
 
-**`quarantine/`:**
-- Purpose: Safety specification for the quarantine relay (prevents mainline corruption)
-- Generated: No
-- Committed: Yes
-- Contains: SPEC.md, safety guards, database isolation rules
+**`.planning/codebase/`:**
+- Purpose: Generated by GSD mapper; stores codebase analysis documents
+- Generated: Yes (via `/gsd-map-codebase arch`)
+- Committed: Yes (tracked in git for orchestrator consumption)
+- Contents: `STACK.md` (dependencies), `ARCHITECTURE.md` (layers, patterns), `STRUCTURE.md` (this file)
 
-**`.planning/`:**
-- Purpose: Phase planning and roadmap (generated by GSD tools)
-- Generated: Yes (by `/gsd-plan-phase`, `/gsd-execute-phase`)
-- Committed: Yes (tracking decision history)
+**`bin/`:**
+- Purpose: Compiled binaries from `make build`
+- Generated: Yes (by Makefile)
+- Committed: No (git-ignored; rebuilding locally ensures correct versions/commits)
 
-**`.claude/`:**
-- Purpose: Claude AI agent configuration and skills
+**`queries/`:**
+- Purpose: DQL query templates for reference (not executed)
 - Generated: No (manually maintained)
-- Committed: Yes
-
-**`.github/`:**
-- Purpose: GitHub-specific configuration (copilot instructions, workflows)
-- Generated: No (manually maintained)
-- Committed: Yes
-
-**`docs/`:**
-- Purpose: Developer and operator documentation
-- Generated: No (manually written)
-- Committed: Yes
-- Key: `docs/architecture/` (system overview), deployment guides
+- Committed: Yes (documentation)
 
 ---
 
-*Structure analysis: 2026-06-15*
+*Structure analysis: 2026-06-16*

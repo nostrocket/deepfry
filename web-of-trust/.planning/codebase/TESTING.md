@@ -1,339 +1,454 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-06-15
+**Analysis Date:** 2026-06-16
 
 ## Test Framework
 
-### Go
+**Runner:**
+- Go built-in testing framework (`testing` package)
+- No external test runner or assertion library
+- Config: Makefile targets `make test` and `make test-integration`
 
-**Runner:** Go standard `testing` package — no third-party test runner.
-
-**Assertion style:** Manual `if`/`t.Fatalf`/`t.Errorf` — no testify or gomock. All assertions are hand-rolled.
-
-**Run Commands:**
-```bash
-# From within a subsystem directory:
-make test                    # go test ./... -short -cover
-make test-integration        # go test -tags=integration ./...
-make bench                   # whitelist-plugin only; configurable via BENCHPKG/BENCHFLAGS
-go test -bench=. ./...       # run benchmarks manually
-```
-
-### Rust
-
-**Runner:** `cargo test` — standard Rust test harness.
-
-**Assertion style:** Rust's built-in `assert_eq!`, `assert!` macros; no external assertion libraries.
+**Assertion Library:**
+- Go built-in `testing.T`: `t.Fatalf()`, `t.Errorf()`, `t.Fatal()`, `t.Error()`, `t.Skip()`
+- No external assertion library (testify, etc.)
+- Manual equality checks with conditional `t.Fatalf()`: `if got != want { t.Fatalf("expected %d, got %d", want, got) }`
 
 **Run Commands:**
 ```bash
-# From spam/ directory:
-cargo test                   # all unit + integration tests
-cargo test --lib            # unit tests only
-cargo test --test '*'        # integration tests only
-cargo bench                  # run benchmarks (unstable; use `--nightly` flag if needed)
+make test                    # Run all unit tests with -short flag; coverage enabled
+make test-integration        # Run integration tests (-tags=integration)
 ```
 
-**Build Commands:**
+**Specific Commands:**
 ```bash
-cargo build                  # debug binary with debug symbols
-cargo build --release        # optimized binary
-cargo fmt --check            # verify formatting (pre-commit check)
+go test ./... -short -cover           # Unit tests only (skips //go:build integration)
+go test -tags=integration ./...       # Integration tests only
+go test -v ./pkg/crawler              # Verbose output for one package
 ```
 
-## Test Coverage
+## Test File Organization
 
-| Subsystem | Test Files | Types Present | Notes |
-|-----------|-----------|---------------|-------|
-| `event-forwarder` | 15+ `_test.go` | Unit, integration, benchmarks | Heaviest coverage in the project |
-| `whitelist-plugin` | 10 `_test.go` | Unit, benchmarks | Covers handler, heuristics, quarantine, repository, whitelist, server, client |
-| `quarantine-rescuer` | 6 `_test.go` | Unit | Covers all `internal/` packages |
-| `web-of-trust` | 3 `_test.go` + integration | Unit, integration | `dgraph_chunks_test.go` (unit); stale/writepath tests are integration-tagged |
-| `spam/lmdb2graphql` | 10+ `.rs` tests + 7 integration tests | Unit, integration | Config, LMDB types, payload; integration tests in `tests/` |
-| `search-plugin` | None | — | Placeholder only — `README.md` present, no Go source |
-| `embeddings-generator` | None | — | Placeholder only — `README.md` present, no Go source |
-| `profile-builder` | None | — | Not a Go module |
-| `thread-inference` | None | — | Not a Go module |
+**Location:**
+- Co-located with source code: `pkg/crawler/crawler.go` → `pkg/crawler/crawler_quorum_test.go`, `crawler_filter_test.go`, `crawler_hang_test.go`
+- Integration tests in same directory: `pkg/dgraph/dgraph_writepath_test.go`, `dgraph_stale_test.go`, `dgraph_validation_test.go`
+- Entry point tests: `cmd/crawler/main_test.go` (tests for retryDgraph logic)
+
+**Naming:**
+- Pattern: `[module]_[scenario]_test.go` or `[module]_test.go`
+- Examples: `crawler_quorum_test.go`, `backoff_test.go`, `config_test.go`, `dgraph_chunks_test.go`
+- Test functions: `Test[FunctionName]_[Scenario]`
+
+**Tagging:**
+- Integration tests use `//go:build integration` directive at top of file (line 1)
+- Example from `pkg/dgraph/dgraph_writepath_test.go`, `dgraph_stale_test.go`, `dgraph_validation_test.go`
+- Allows `go test ./... -short` to skip integration tests (no Dgraph dependency)
+- Full integration tests run with `go test -tags=integration ./...`
+
+## Test Structure
+
+**Suite Organization:**
+- No test suite/describe blocks (Go convention is per-function tests)
+- Tests are flat functions; no nesting
+- Test coverage organized by module: all `crawler_*_test.go` files in `pkg/crawler/` test `crawler.go` functions
+- Example test from `pkg/crawler/crawler_quorum_test.go` (lines 8-24):
+  ```go
+  func TestQuorumReached_BelowThreshold(t *testing.T) {
+      if quorumReached(6, 10, 0.70) {
+          t.Fatal("expected false when done=6 < ceil(0.70*10)=7")
+      }
+  }
+  ```
+
+**Common Setup Pattern:**
+- Each test function self-contained (minimal shared state)
+- Setup happens inline: create temp directory, write config file
+- Example from `pkg/config/config_test.go` (lines 35-53):
+  ```go
+  tmpHome := t.TempDir()
+  t.Setenv("HOME", tmpHome)
+  configDir := tmpHome + "/deepfry"
+  if err := os.MkdirAll(configDir, 0755); err != nil {
+      t.Fatal(err)
+  }
+  configContent := `relay_urls:\n  - wss://relay.damus.io\n`
+  if err := os.WriteFile(configDir+"/web-of-trust.yaml", []byte(configContent), 0644); err != nil {
+      t.Fatal(err)
+  }
+  ```
+
+**Cleanup Pattern:**
+- Cleanup via `t.Cleanup()` callback (Go 1.14+)
+- Example from `pkg/dgraph/dgraph_writepath_test.go` (lines 86-93):
+  ```go
+  t.Cleanup(func() {
+      uid := resolveUID(t, c, signer)
+      if uid != "" {
+          if err := c.DeleteNodes(ctx, []string{uid}); err != nil {
+              t.Logf("cleanup: delete signer %s (uid %s) failed: %v", signer, uid, err)
+          }
+      }
+  })
+  ```
+
+**Viper State Reset:**
+- Viper (config parser) holds global state across tests
+- Tests reset it: `viper.Reset()` at start (see `pkg/config/config_test.go` lines 15, 55, 109)
+- Per-test HOME environment: `t.Setenv("HOME", tmpHome)` to avoid collision with real config
+
+## Test Structure Examples
+
+### Unit Test Example: Table-Driven
+
+```go
+// pkg/dgraph/backoff_test.go, lines 13-44
+func TestBackoffInterval(t *testing.T) {
+    const (
+        base  = 2 * time.Hour
+        cap_  = 168 * time.Hour
+        ratio = 2
+    )
+
+    cases := []struct {
+        missCount int
+        want      time.Duration
+    }{
+        {0, 2 * time.Hour},
+        {1, 4 * time.Hour},
+        {7, 168 * time.Hour},   // capped at 7d
+        {100, 168 * time.Hour}, // overflow guard
+    }
+
+    for _, tc := range cases {
+        got := BackoffInterval(tc.missCount, base, ratio, cap_)
+        if got != tc.want {
+            t.Errorf("BackoffInterval(missCount=%d) = %v; want %v", tc.missCount, got, tc.want)
+        }
+    }
+}
+```
+
+### Unit Test Example: Mocking/Injection
+
+```go
+// cmd/crawler/main_test.go, lines 36-72
+func TestRetryDgraph_BackoffSequence(t *testing.T) {
+    var slept []time.Duration
+    calls := 0
+    fn := func() (int, error) {
+        calls++
+        if calls <= 5 {
+            return 0, status.Error(codes.Unavailable, "transient")
+        }
+        return 42, nil
+    }
+
+    got, err := retryDgraph(context.Background(), "BackoffTest", fn, newCallMetrics(), fakeSleep(&slept))
+    if err != nil {
+        t.Fatalf("expected nil error after transient retries, got: %v", err)
+    }
+    if got != 42 {
+        t.Fatalf("expected value 42, got %d", got)
+    }
+
+    want := []time.Duration{
+        1 * time.Minute,
+        2 * time.Minute,
+        4 * time.Minute,
+        5 * time.Minute,
+        5 * time.Minute,
+    }
+    if len(slept) != len(want) {
+        t.Fatalf("expected %d recorded delays, got %d: %v", len(want), len(slept), slept)
+    }
+    for i, w := range want {
+        if slept[i] != w {
+            t.Errorf("delay[%d] = %v; want %v", i, slept[i], w)
+        }
+    }
+}
+```
+
+### Integration Test Example
+
+```go
+// pkg/dgraph/dgraph_writepath_test.go, lines 30-100 (partial)
+//go:build integration
+
+func TestAddFollowersLargeKind3(t *testing.T) {
+    fixture := selectLargestFixture(t)
+    if fixture == "" {
+        t.Skip("no large kind-3 fixture found...")
+    }
+
+    raw, err := os.ReadFile(fixture)
+    if err != nil {
+        t.Fatalf("read fixture %s failed: %v", fixture, err)
+    }
+
+    // Unmarshal and parse event...
+
+    ctx := context.Background()
+    c, err := NewClient("localhost:9080")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer c.Close()
+    if err := c.EnsureSchema(ctx); err != nil {
+        t.Fatal(err)
+    }
+
+    // Cleanup registered via t.Cleanup()
+    t.Cleanup(func() {
+        uid := resolveUID(t, c, signer)
+        if uid != "" {
+            if err := c.DeleteNodes(ctx, []string{uid}); err != nil {
+                t.Logf("cleanup: delete signer %s (uid %s) failed: %v", signer, uid, err)
+            }
+        }
+    })
+
+    if err := c.AddFollowers(ctx, signer, createdAt, follows, true); err != nil {
+        t.Fatalf("AddFollowers failed: %v", err)
+    }
+
+    // Assert the full follow set persisted...
+}
+```
+
+## Mocking
+
+**Framework:** 
+- No external mocking library (gomock, etc.)
+- Dependency injection via function parameters
+- Callback interfaces for pagination
+
+**Patterns:**
+
+### Injected Functions
+```go
+// cmd/crawler/main_test.go, lines 21-34
+// Fake sleeper returns buffered channel that fires immediately
+func fakeSleep(slept *[]time.Duration) func(time.Duration) <-chan time.Time {
+    return func(d time.Duration) <-chan time.Time {
+        *slept = append(*slept, d)
+        ch := make(chan time.Time, 1)
+        ch <- time.Now()
+        return ch
+    }
+}
+
+// Never-firing sleep for cancellation testing
+func neverSleep(time.Duration) <-chan time.Time {
+    return make(chan time.Time) // unbuffered, never written
+}
+```
+
+### Dependency Injection Usage
+```go
+// Inject fakeSleep into retryDgraph
+got, err := retryDgraph(context.Background(), "BackoffTest", fn, newCallMetrics(), fakeSleep(&slept))
+
+// Alternatively, inject neverSleep for cancellation paths
+_, err := retryDgraph(ctx, "CancelTest", fn, newCallMetrics(), neverSleep)
+```
+
+### Callback Interface Pattern
+```go
+// GetPubkeysWithMinFollowersPaginated uses a callback to process batches
+// Mocking done by passing different callbacks in tests
+dgraph.GetPubkeysWithMinFollowersPaginated(ctx, minFollowers, func(batch []string) error {
+    // Test callback behavior here
+    return nil
+})
+```
+
+**What to Mock:**
+- Time-dependent operations: inject `sleepFn` instead of real `time.Sleep()`
+- I/O with side effects: Dgraph calls use real gRPC (integration tests; mocking not done)
+- External services: relay connections tested via real WebSocket (to live relays)
+
+**What NOT to Mock:**
+- Pure functions: `chunkSlice()`, `BackoffInterval()` tested directly without mocking
+- Go standard library: context, error types, channels (used as-is)
+- Business logic: retry logic, backoff math tested with real invocations (not mocked)
+
+## Fixtures and Factories
+
+**Test Data Factories:**
+```go
+// pkg/dgraph/dgraph_chunks_test.go, lines 8-15
+func makeStrings(n int) []string {
+    out := make([]string, n)
+    for i := 0; i < n; i++ {
+        out[i] = fmt.Sprintf("%d", i)
+    }
+    return out
+}
+```
+
+**Fixture Files:**
+- Large kind-3 event fixtures stored under `testdata/largest-kind3-*.json`
+- Tests select largest fixture via helper: `selectLargestFixture(t)` (from `pkg/dgraph/dgraph_writepath_test.go`)
+- Fixtures harvested manually from live crawler runs (optional; test skips if none present)
+- JSON format: Nostr kind-3 event with pubkey, created_at, tags array
+
+**Location:**
+- Fixtures: `pkg/dgraph/testdata/` (implied by test code)
+- Factories: inline in test files (no separate factory packages)
+- Config test data: temporary files created with `t.TempDir()` and `os.WriteFile()`
+
+## Coverage
+
+**Requirements:** 
+- No explicit coverage target enforced
+- Coverage flag enabled in Makefile: `go test ./... -short -cover` (line 80)
+- Coverage reported to stdout but not gated on minimum percentage
+
+**View Coverage:**
+```bash
+make test                                    # Shows coverage summary
+go test ./... -short -coverprofile=cov.txt  # Write profile to file
+go tool cover -html=cov.txt                 # View HTML report
+```
+
+**Observed Coverage:**
+- Unit test packages well-covered: `pkg/dgraph/backoff_test.go`, `pkg/crawler/crawler_quorum_test.go`, `pkg/config/config_test.go`
+- Integration tests gate on live Dgraph: `pkg/dgraph/dgraph_writepath_test.go`, `dgraph_stale_test.go`
+- Main logic (`cmd/crawler/main.go`) unit-tested for critical paths: `cmd/crawler/main_test.go` covers `retryDgraph()`, backoff, metrics
 
 ## Test Types
 
-### Go Unit Tests (default `make test`)
+**Unit Tests (make test -short):**
+- Scope: Single function or small component
+- No external dependencies: `chunkSlice()`, `BackoffInterval()`, `quorumReached()`, `LoadConfig()`
+- Fast execution (microseconds to milliseconds)
+- Location: `pkg/*/` (most files)
+- Examples: `pkg/dgraph/backoff_test.go` (pure math), `pkg/crawler/crawler_quorum_test.go` (formula), `pkg/config/config_test.go` (config loading)
+- Deterministic: injected dependencies (`fakeSleep`), temp filesystem (`t.TempDir()`), known inputs
 
-The majority of tests. Run with `-short` flag; any test requiring external services must check `testing.Short()` and skip, or use the `integration` build tag.
+**Integration Tests (make test-integration, tagged //go:build integration):**
+- Scope: Multiple components interacting with live Dgraph
+- External dependency: Dgraph gRPC on `localhost:9080`
+- Slow execution (seconds to minutes)
+- Location: `pkg/dgraph/dgraph_*_test.go` (3 files with integration tag)
+- Examples: `dgraph_writepath_test.go` (large kind-3 event persistence), `dgraph_stale_test.go` (staleness detection), `dgraph_validation_test.go` (pubkey validation)
+- Conditionally skipped: `t.Skip()` if Dgraph unavailable or fixture missing
+- Cleanup via `t.Cleanup()`: deletes test data after test runs
 
-Located co-located with source: `pkg/<concern>/<file>_test.go` or `internal/<concern>/<file>_test.go`.
+**E2E Tests:**
+- Not automated (manual verification required per `CLAUDE.md` §6)
+- Manual step: run crawler against live StrFry + relays on strfry host
+- Verifies: crawling throughput, relay subscriptions, Dgraph writes, graceful shutdown
 
-### Go Integration Tests (`//go:build integration`)
+## Common Patterns
 
-Require live external services (real relay WebSocket, live Dgraph). Gated by build tag so they never run in `make test`.
-
-Files:
-- `event-forwarder/pkg/forwarder/forwarder_integration_test.go`
-- `event-forwarder/pkg/nsync/nsync_integration_test.go`
-- `web-of-trust/pkg/dgraph/dgraph_stale_test.go` (see line 1: `//go:build integration`)
-- `web-of-trust/pkg/dgraph/dgraph_writepath_test.go` (see line 1: `//go:build integration`)
-
-Some integration tests also double-check with `testing.Short()` for extra safety.
-
-### Rust Unit Tests
-
-Colocated in the same module file within `#[cfg(test)]` blocks (see `spam/src/config.rs:89-100`).
-
-Tests verify:
-- Default values: `test_map_size_default()`, `test_bind_address_default()`
-- Config loading: `test_load_from_tempdir()` (uses `tempfile::tempdir()`)
-- Type deserialization: `test_nostr_event_ignores_unknown_fields()`
-- Error cases: `test_nostr_event_missing_required_field_errors()`
-
-Run via `cargo test --lib` (library code only).
-
-### Rust Integration Tests
-
-Separate `tests/` directory with full integration tests (see `spam/tests/`):
-
-- `tests/scan_test.rs` — LMDB index scanning, resume-cursor validation, DUPSORT coverage
-- `tests/body_limit_test.rs` — HTTP request body size limiting (WR-02-LAYER)
-- `tests/payload_test.rs` — Payload decompression and chunking
-- `tests/ready_window_test.rs` — Server readiness gate sequencing
-- `tests/health_ready_test.rs` — Health and readiness endpoint states
-- `tests/comparator_hook_smoke.rs` — Comparator hook integration (LMDB-06)
-- `tests/self_check_test.rs` — Self-check gate (LMDB version, endianness)
-- `tests/dupsort_resume_test.rs` — DUPSORT duplicate key handling
-- `tests/fixture/` — Committed test fixture (`data.mdb`, `lock.mdb`)
-
-Run via `cargo test --test '*'` or individual test via `cargo test --test scan_test`.
-
-### Benchmarks
-
-**Go:**
-- `whitelist-plugin/pkg/whitelist/whitelist_bench_test.go` — `BenchmarkNewWhiteList` and `BenchmarkIsWhitelisted` at sizes 1k, 10k, 100k, 500k. Uses `b.ReportAllocs()`.
-- `whitelist-plugin/pkg/repository/dgraph_repository_bench_test.go` — `BenchmarkGetAll`, `BenchmarkFetchPubkeysPage`, `BenchmarkMergePubkeys` using `httptest.NewServer` for realistic pagination.
-
-**Rust:**
-- None observed in current codebase (no `#[bench]` or similar marked in the spam module).
-
-## Test Patterns
-
-### Go Subtests with `t.Run`
-
-The dominant pattern. Used in both flat and table-driven forms:
-
+**Async Testing (Context + Done Channel):**
 ```go
-// Flat subtests (config validation tests)
-func TestValidate(t *testing.T) {
-    t.Run("empty config", func(t *testing.T) { ... })
-    t.Run("missing source relay", func(t *testing.T) { ... })
-}
+// cmd/crawler/main_test.go, lines 96-131
+func TestRetryDgraph_TransientOnCancelledCtx(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    cancel() // pre-cancel: ctx.Err() is non-nil from the first iteration
 
-// Table-driven (whitelist handler, message deserialization)
-var validCases = []struct{ name, msg string }{ ... }
-func TestValidInputMessageDeserialization(t *testing.T) {
-    for _, test := range validCases {
-        t.Run(fmt.Sprintf("%s is serialised", test.name), func(t *testing.T) { ... })
+    var slept []time.Duration
+    calls := 0
+    fn := func() (int, error) {
+        calls++
+        return 0, status.Error(codes.Unavailable, "transient during shutdown")
+    }
+
+    done := make(chan error, 1)
+    go func() {
+        _, err := retryDgraph(ctx, "CancelDuringCall", fn, newCallMetrics(), fakeSleep(&slept))
+        done <- err
+    }()
+
+    select {
+    case err := <-done:
+        if err == nil {
+            t.Fatal("expected non-nil error when ctx cancelled, got nil")
+        }
+    case <-time.After(2 * time.Second):
+        t.Fatalf("retryDgraph did not return within bounded time; looped %d times", calls)
     }
 }
 ```
 
-### Go Mock/Stub Construction
-
-**`testutil.MockRelay`** (`event-forwarder/pkg/testutil/mock_relay.go`) — implements `relay.Relay`. Captures calls in `QuerySyncCalls`, `PublishCalls`, etc. Errors injectable via `PublishError`, `SubscribeError`.
-
-**In-test stubs** — small structs defined at the bottom of `_test.go` files implement the interface under test. Pattern: `type stubWindowMgr struct { ... }` with function fields for overrideable behaviour:
-
+**Error Type Assertion Testing:**
 ```go
-type stubWindowMgr struct {
-    window   *nsync.Window
-    updateFn func(ctx context.Context, w nsync.Window) error
+// Implicit through error classification: isDgraphTransient() function tested
+// by passing gRPC status codes
+fn := func() (int, error) {
+    return 0, status.Error(codes.Unavailable, "transient")
 }
-func (s *stubWindowMgr) Update(ctx context.Context, w nsync.Window) error {
-    if s.updateFn != nil { return s.updateFn(ctx, w) }
-    return nil
-}
+got, err := retryDgraph(context.Background(), "Test", fn, ...)
+// retryDgraph internally calls isDgraphTransient(err) and retries
 ```
 
-**`httptest.NewServer`** — used in repository and benchmark tests to mock HTTP/GraphQL endpoints without a live Dgraph (`whitelist-plugin/pkg/repository/dgraph_repository_bench_test.go`).
-
-**`t.TempDir()`** — used in `quarantine-rescuer/internal/lmdbreader/reader_test.go` to create real LMDB environments for I/O tests. Cleans up automatically.
-
-### Go Logger in Tests
-
-Tests construct a real `*log.Logger` pointing to `os.Stdout` or `io.Discard`:
-
+**Boolean Success Conditions:**
 ```go
-func createTestLogger() *log.Logger { return log.New(os.Stdout, "[TEST] ", 0) }
-func newSilentLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-```
-
-`io.Discard` loggers are used wherever log output is not under assertion.
-
-### Go Error Path Testing
-
-Tests explicitly inject errors via mock fields and assert the returned error is non-nil:
-
-```go
-dst.PublishError = errors.New("boom")
-if err := f.processRealtimeEvent(ctx, evt); err == nil {
-    t.Fatalf("expected error when publish fails")
-}
-```
-
-### Go Immutability and Edge Case Tests
-
-Whitelist tests verify input-slice mutation does not affect the constructed whitelist (`TestNewWhiteList_immutability_of_input_slice`). LMDB tests cover bad-entry skip paths, context cancellation mid-iteration, and empty DBs.
-
-### Rust Test Organization
-
-Tests are named with `test_` prefix and grouped by concern:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_map_size_default() {
-        assert_eq!(
-            default_map_size(),
-            10_995_116_277_760,
-            "default map_size must match strfry.conf mapsize (10 TiB)"
-        );
+// pkg/dgraph/dgraph_chunks_test.go, lines 20-61
+func TestChunkSlice(t *testing.T) {
+    cases := []struct {
+        name       string
+        input      int
+        wantChunks int
+    }{
+        {"empty", 0, 0},
+        {"exactly one chunk", 200, 1},
+        {"one over boundary", 201, 2},
     }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            in := makeStrings(tc.input)
+            chunks := chunkSlice(in, size)
 
-    #[test]
-    fn test_load_from_tempdir() {
-        let tmp = tempfile::tempdir().expect("create tempdir");
-        // ... test code
+            if len(chunks) != tc.wantChunks {
+                t.Fatalf("want %d chunks, got %d", tc.wantChunks, len(chunks))
+            }
+
+            // Verify membership union equals input length
+            total := 0
+            for i, ch := range chunks {
+                if len(ch) == 0 {
+                    t.Fatalf("chunk %d is empty", i)
+                }
+                if len(ch) > size {
+                    t.Fatalf("chunk %d exceeds size", i)
+                }
+                total += len(ch)
+            }
+            if total != tc.input {
+                t.Fatalf("union mismatch: want %d items, got %d", tc.input, total)
+            }
+        })
     }
 }
 ```
 
-**Pattern:** Tests use `expect()` for setup failures (panic is acceptable for test harness) and `assert_eq!` for behavioral assertions.
-
-### Rust Fixture Pattern
-
-Integration tests use a committed fixture in `tests/fixture/` with real LMDB files (`data.mdb`, `lock.mdb`):
-
-```rust
-fn open_temp_fixture_env() -> (heed::Env, tempfile::TempDir) {
-    let src = std::path::Path::new("tests/fixture");
-    let tmp = tempfile::tempdir().expect("create tempdir");
-    std::fs::copy(src.join("data.mdb"), tmp.path().join("data.mdb")).expect("copy data.mdb");
-    std::fs::copy(src.join("lock.mdb"), tmp.path().join("lock.mdb")).expect("copy lock.mdb");
-    let env = open_fixture_env(tmp.path()).expect("open fixture env copy");
-    (env, tmp)
+**Timing Invariant Testing:**
+```go
+// cmd/crawler/main_test.go, lines 162-187
+// Test that success-only timing is recorded (no timing on failures)
+func TestRetryDgraph_TransientThenSuccess(t *testing.T) {
+    m := newCallMetrics()
+    got, err := retryDgraph(context.Background(), "X", fn, m, fakeSleep(&slept))
+    // ...
+    if m.count["X"] != 1 {
+        t.Errorf("expected exactly 1 recorded success for \"X\", got %d", m.count["X"])
+    }
 }
 ```
 
-This pattern (seen in `tests/scan_test.rs:23-30` and `tests/self_check_test.rs`) avoids I/O to `~/deepfry/` and keeps tests hermetic.
+## Test Organization by Module
 
-### Rust Assert Patterns
-
-**Structural assertions:**
-```rust
-assert_eq!(batch1_lev_ids, vec![4u64, 5, 6], "First batch must be [4,5,6], got {:?}", batch1_lev_ids);
-```
-
-**Helper functions in tests:**
-```rust
-fn kind_forward_low_key() -> Vec<u8> {
-    let mut k = Vec::with_capacity(16);
-    k.extend_from_slice(&0u64.to_le_bytes());
-    k.extend_from_slice(&0u64.to_le_bytes());
-    k
-}
-```
-
-### Rust Context and Cleanup
-
-Integration tests use `t.Cleanup` pattern in Go; Rust uses `defer!` or explicit cleanup:
-
-```rust
-#[test]
-fn test_add_followers_large() {
-    // ... setup and test
-    
-    // Cleanup on test exit (implicit drop of temp dir)
-    let (env, _tmp) = open_temp_fixture_env();
-    // _tmp is dropped at end of scope
-}
-```
-
-LMDB tests ensure `env.close()` is called (if applicable) before assertion to flush writes.
-
-## Testing Infrastructure
-
-**Go:**
-- No test containers / Docker in unit tests
-- Integration tests connect to real services expected to be running locally (Dgraph on `localhost:9080`, relay on `localhost:7777`)
-- No CI pipeline detected (no `.github/workflows/`, no `Jenkinsfile`, no `.circleci/`)
-- Tests are run manually via `make test`
-
-**Rust:**
-- Fixtures are committed in `tests/fixture/`
-- No external service dependencies for tests (fixtures are standalone LMDB files)
-- Real LMDB environments created in-process via `heed::Env` with `tempfile::TempDir`
-- No Docker or CI pipeline integration observed
-
-## Shared Test Utilities
-
-### Go
-
-`event-forwarder/pkg/testutil/testutil.go` — fixed Nostr key constants (`TestSKHex`, `TestPKHex`, `TestSK`, `TestPK`) used across packages to avoid generating new keys per test.
-
-`event-forwarder/pkg/testutil/telemetry_capture.go` — `CapturingPublisher` that records emitted telemetry events for assertion.
-
-### Rust
-
-`tests/` directory contains helper modules used by integration tests:
-- `open_fixture_env()` — shared fixture loader (defined in multiple test files as a reusable pattern)
-- Golden vectors (e.g., `tests/fixture/golden_vectors/Event__kind.json`) for index ordering validation
-
-## Test Execution
-
-### Go
-
-From within a Go subsystem directory (e.g., `web-of-trust/`, `event-forwarder/`):
-
-```bash
-make test                    # -short + coverage
-make test-integration        # run only //go:build integration tests
-make clean                   # remove bin/
-make lint                    # run golangci-lint (advisory)
-```
-
-### Rust
-
-From the `spam/` directory:
-
-```bash
-cargo test                   # unit + integration tests (debug build)
-cargo test --release         # optimized build
-cargo test --lib             # unit tests only
-cargo test --test 'scan_test'  # single integration test
-cargo fmt                    # auto-format (runs before compilation)
-```
-
-## Coverage Gaps
-
-### Go
-
-- **`web-of-trust/pkg/crawler/`** — `crawler.go` has no `_test.go`. The crawler's subscription and write logic is untested at unit level.
-- **`web-of-trust/pkg/config/`** — `config.go` (Viper YAML loading) has no test.
-- **`web-of-trust` cmd packages** — `cmd/crawler/`, `cmd/pubkeys/`, `cmd/discover-relays/`, `cmd/clusterscan/`, `cmd/healthcheck/` have no tests.
-- **`whitelist-plugin` cmd packages** — `cmd/whitelist/main.go`, `cmd/server/main.go`, `cmd/router/main.go` have no tests; only their subordinate `pkg/` code is tested.
-- **`quarantine-rescuer/internal/runner/`** — `runner.go` has no `_test.go`.
-- **`quarantine-rescuer/internal/event/`** — `event.go` has no `_test.go`.
-- **No E2E tests** — the full pipeline (upstream relay → event-forwarder → StrFry → whitelist-plugin → Dgraph) is not tested end-to-end.
-- **No CI enforcement** — coverage is not tracked or gated automatically.
-
-### Rust
-
-- **`spam/src/server.rs`** — HTTP server routing logic has no test coverage.
-- **`spam/src/graphql/`** — GraphQL resolvers untested directly (covered by integration tests).
-- **`spam/src/lmdb/scan.rs`** — Full scan logic tested via integration; unit tests exist for key builders but not all edge cases.
-- **No E2E tests** — the full GraphQL query execution against a live populated LMDB is not formally tested.
-- **No CI enforcement** — coverage is not tracked or gated automatically.
+| Package | Files | Count | Type | Dep |
+|---------|-------|-------|------|-----|
+| `pkg/config` | `config_test.go` | 7 | Unit | Viper, YAML |
+| `pkg/crawler` | `crawler_quorum_test.go`, `crawler_filter_test.go`, `crawler_hang_test.go` | 20+ | Unit | None |
+| `pkg/dgraph` | `backoff_test.go`, `validate_test.go`, `dgraph_chunks_test.go`, `dgraph_writepath_test.go`, `dgraph_stale_test.go`, `dgraph_validation_test.go` | 30+ | Unit + Integration | Dgraph (integration only) |
+| `cmd/crawler` | `main_test.go` | 7 | Unit | gRPC status codes |
 
 ---
 
-*Testing analysis: 2026-06-15*
+*Testing analysis: 2026-06-16*

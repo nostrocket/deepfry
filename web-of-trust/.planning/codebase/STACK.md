@@ -1,157 +1,96 @@
 # Technology Stack
 
-**Analysis Date:** 2026-06-15
+**Analysis Date:** 2026-06-16
 
-## Languages & Runtimes
+## Languages
 
 **Primary:**
-- Go 1.24.1+ — all production subsystems (`event-forwarder`, `whitelist-plugin`, `web-of-trust`, `quarantine-rescuer`)
-  - `event-forwarder/go.mod`: `go 1.24.1`, toolchain `go1.24.2`
-  - `whitelist-plugin/go.mod`: `go 1.24.2`
-  - `web-of-trust/go.mod`: `go 1.24.1`
-  - `quarantine-rescuer/go.mod`: `go 1.24.2`
-- Rust 2021 edition — lmdb2graphql subsystem (`spam/`)
+- Go 1.24.1 - Core implementation language for all subsystems (crawler, clusterscan, pubkeys exporter, relay discovery, healthcheck)
 
-**Build target:**
-- Static Linux/amd64 binaries (`CGO_ENABLED=0`, `-tags netgo`, `-extldflags '-static'`)
-- Built for Alpine containers via multi-stage Docker builds
-- Rust: `--target x86_64-unknown-linux-musl` with `+crt-static` for static libc
+## Runtime
 
-## Frameworks & Libraries
+**Environment:**
+- Go 1.24.1+ (required per CLAUDE.md)
 
-**Nostr Protocol:**
-- `github.com/nbd-wtf/go-nostr v0.52.x` — NIP-01 WebSocket relay client, event signing, filter subscriptions; used in all four Go modules
-- `github.com/nbd-wtf/go-nostr/nip11` — NIP-11 relay discovery (discover-relays tool)
+**Package Manager:**
+- Go Modules (go.mod)
+- Lockfile: `go.sum` (present)
 
-**Graph Database Client:**
-- `github.com/dgraph-io/dgo/v210 v210.0.0-20230328113526-b66f8ae53a2d` — Dgraph gRPC client; `web-of-trust` only
-- `google.golang.org/grpc v1.75.1` — gRPC transport for Dgraph
-- `google.golang.org/protobuf v1.36.9` — Protocol Buffers serialization
+## Frameworks
+
+**Core:**
+- `github.com/nbd-wtf/go-nostr` v0.52.0 - Nostr protocol client library; WebSocket relay communication (NIP-01)
+- `github.com/dgraph-io/dgo/v210` v210.0.0-20230328113526-b66f8ae53a2d - Dgraph gRPC client for graph database access
+- `github.com/spf13/viper` v1.18.2 - YAML configuration loader (reads `~/deepfry/web-of-trust.yaml`)
+- `google.golang.org/grpc` v1.75.1 - gRPC transport for Dgraph communication (native gRPC client)
 
 **Configuration:**
-- `github.com/spf13/viper v1.21.0` — YAML config loading; `whitelist-plugin`, `quarantine-rescuer`
-- `github.com/spf13/viper v1.18.2` — same library, older pin; `web-of-trust`
-- `gopkg.in/yaml.v3 v3.0.1+` — YAML parsing
+- `gopkg.in/yaml.v3` v3.0.1 - YAML parsing for config files and discovery relay list updates
 
-**GraphQL & Web Framework (Rust):**
-- `async-graphql 7.2.1` — GraphQL query execution engine (lmdb2graphql)
-- `async-graphql-axum 7.2.1` — axum integration (must stay same minor version as async-graphql)
-- `axum 0.8.9` — async HTTP framework (lmdb2graphql)
-- `tokio 1.52.3` (full features) — async runtime (lmdb2graphql)
-- `tower-http 0.6` with limit feature — request body limit enforcement
+## Key Dependencies
 
-**Database (Rust):**
-- `heed 0.22.1` — LMDB typed wrapper with Comparator trait, read-only env open
-- `lmdb-sys` — Low-level LMDB bindings (vendored, statically linked)
+**Critical:**
+- `github.com/nbd-wtf/go-nostr` v0.52.0 - Why it matters: only dependency for relay communication; must stay compatible with NIP-01 WebSocket protocol; used in crawler subscription, event parsing, and NIP-65 relay discovery
+- `github.com/dgraph-io/dgo/v210` v210.0.0-20230328113526-b66f8ae53a2d - Why it matters: exclusive gRPC client for Dgraph backend; all pubkey graph mutations/queries flow through this in `pkg/dgraph/`; max recv message size tuned to 256MB for large follow-list payloads
 
-**JSON / Serialization:**
-- `github.com/tidwall/gjson v1.18.0` — fast JSON path reads; transitive via go-nostr
-- `github.com/json-iterator/go v1.1.12` — faster `encoding/json` drop-in; transitive
-- `github.com/mailru/easyjson v0.9.0` — code-gen JSON; transitive
-- `serde v1` — Rust serialization framework
-- `serde_json v1` — Rust JSON support
-- `serde_yaml_ng v0.10` — YAML parsing for lmdb2graphql (maintained fork of dtolnay)
+**Protocol & Cryptography:**
+- `github.com/nbd-wtf/go-nostr/nip19` - Nostr public key format support (npub/hex conversion in `pkg/config/config.go`)
+- `github.com/nbd-wtf/go-nostr/nip11` - NIP-11 relay info document fetching for relay discovery (`cmd/discover-relays/main.go`)
+- `github.com/btcsuite/btcd/btcec/v2` v2.3.5 - Nostr key handling (secp256k1 signatures, via go-nostr transitive)
+- `github.com/decred/dcrd/dcrec/secp256k1/v4` v4.4.0 - Alternative secp256k1 implementation (via go-nostr transitive)
 
-**WebSocket:**
-- `github.com/coder/websocket v1.8.x` — WebSocket transport; transitive via go-nostr
+**Infrastructure:**
+- `google.golang.org/protobuf` v1.36.9 - Protocol Buffers support for Dgraph gRPC API serialization
+- `google.golang.org/grpc/codes` and `google.golang.org/grpc/status` - gRPC error handling in `cmd/crawler/main.go` for transient error classification
 
-**Cryptography:**
-- `github.com/btcsuite/btcd/btcec/v2` — secp256k1 elliptic curve; transitive (Nostr key signing)
-- `github.com/decred/dcrd/dcrec/secp256k1/v4` — secp256k1 primitives; transitive
+**JSON & Serialization:**
+- `github.com/bytedance/sonic` v1.14.1 - High-performance JSON codec (via go-nostr transitive)
+- `gopkg.in/yaml.v3` v3.0.1 - YAML unmarshalling/marshalling for config and relay discovery
 
-**TUI (event-forwarder only):**
-- `github.com/rivo/tview v0.42.0` — terminal UI
-- `github.com/gdamore/tcell/v2 v2.8.1` — terminal cell library
+**Concurrency & Utilities:**
+- `go.uber.org/atomic` v1.9.0 - Atomic operations for relay failure counters in `pkg/crawler/crawler.go` (per-class counters: transport, filter_rejection, subscription_flap)
+- `sourcegraph/conc` v0.3.0 - Structured concurrency utilities
+- `github.com/coder/websocket` v1.8.14 - Low-level WebSocket transport for relay connections
 
-**Concurrency:**
-- `github.com/puzpuzpuz/xsync/v3` — sharded concurrent maps; transitive via go-nostr
-- `github.com/sourcegraph/conc` — structured concurrency helpers; transitive via viper
-- `go.uber.org/atomic v1.9.0` — atomic counters; web-of-trust
-- `tokio::sync::OnceCell` — Rust async-safe one-time initialization
+**Configuration & Helpers:**
+- `github.com/spf13/cast` v1.6.0 - Type casting for config values
+- `github.com/spf13/pflag` v1.0.5 - Command-line flag parsing (used in discover-relays, clusterscan CLIs)
+- `github.com/spf13/afero` v1.11.0 - Abstract filesystem interface (via viper transitive)
+- `github.com/gogo/protobuf` v1.3.2 - Protobuf support (Dgraph API serialization)
 
-**Tracing & Logging (Rust):**
-- `tracing v0.1.44+` — structured tracing (pinned per plan 01-01)
-- `tracing-subscriber v0.3.23+` — JSON/pretty output formatting
+## Configuration
 
-**Compression & Encoding:**
-- `base64 v0.22` — cursor pagination encoding (Rust)
-- `zstd v0.13.3` — Zstandard compression (Rust)
+**Environment:**
+- Config files: `~/deepfry/web-of-trust.yaml` (YAML format, auto-created if missing via `pkg/config/config.go`)
+- Relay URLs: Default Nostr relays (damus.io, nos.lol, relay.nostr.band, nostr-pub.wellorder.net, relay.primal.net) if not overridden
+- Dgraph address: `localhost:9080` (gRPC default, configurable via `web-of-trust.yaml`)
+- Default timeout: 15s (TIMEOUT-01 phase parameter, configurable)
+- Relay filter batch size: 100 (configurable)
+- Default stale pubkey threshold: 24 hours (86400 seconds, configurable)
+- Relay ejection thresholds (Phase 7): transport=10, filter_rejection=3, subscription_flap=5 (configurable, safety-guarded against DoS)
+- EOSE quorum (Phase 8): 70% of relays must reach EOSE or error before batch cancels (configurable, TIMEOUT-02)
+- Miss-backoff parameters (Phase 8): base=2h, ratio=2, cap=168h (7 days), hit_refresh_cadence=24h (configurable, safety-guarded against starvation)
 
-**Error Handling (Rust):**
-- `thiserror v2` — error types
-- `anyhow v1` — error context propagation
+**Build:**
+- Makefile targets: `make build`, `make build-crawler`, `make build-pubkeys`, `make build-discover-relays`, `make build-healthcheck`, `make build-clusterscan`
+- Version injection: Git commit hash + build timestamp via ldflags (`-X 'web-of-trust/pkg/version.Version=$(VERSION)'`, `-X 'web-of-trust/pkg/version.Commit=$(GIT_COMMIT)'`, `-X 'web-of-trust/pkg/version.Built=$(BUILD_TIME)'`)
+- Cross-platform support: Windows (.exe) and Unix binaries built via conditional logic in Makefile
+- Output directory: `bin/` (per subsystem)
 
-**Utilities:**
-- `dirs v5.0.1` — home directory resolution (~/deepfry/)
+## Platform Requirements
 
-## Build & Tooling
+**Development:**
+- Go 1.24.1+
+- POSIX shell (for Makefile)
+- Access to `~/deepfry/` config directory (auto-created on first load)
+- golangci-lint (optional, for linting; tool gracefully handles absence)
 
-**Build system:**
-- `make` — each subsystem has its own `Makefile` with targets: `build`, `test`, `lint`, `lint-fix`, `fmt`, `vet`, `tidy`, `clean`
-- `event-forwarder` adds: `build-alpine`, `docker-build`, `test-integration`
-- `whitelist-plugin` adds: `bench`, `build-alpine`
-- `web-of-trust` adds: `build-crawler`, `build-pubkeys`, `build-discover-relays`, `build-healthcheck`, `build-clusterscan`
-- `spam/`: `cargo build --release --target x86_64-unknown-linux-musl`
-
-**Version injection:**
-- Go ldflags: `Version`, `Commit`, `Built` injected into `pkg/version` package
-- Whitelist server: `-buildvcs=true` stamps git metadata via `runtime/debug.ReadBuildInfo`
-
-**Linting:**
-- `golangci-lint` — optional, warns but does not fail
-
-**Testing:**
-- Go: `go test` with `-short` flag for unit tests; `-tags=integration` for integration tests
-- Rust: `cargo test` for unit tests; integration tests in `spam/tests/`
-
-## Infrastructure
-
-**Containerization:**
-- Docker with multi-stage builds
-  - Go binaries: builder `golang:1.24-alpine`, runtime `alpine:latest` or `dockurr/strfry:latest`
-  - Rust binaries: builder `rust:alpine`, runtime `alpine:3.21`
-- `Dockerfile.strfry` — builds whitelist and router plugins, copies into `dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5` (pinned)
-- `Dockerfile.whitelist-server` — standalone HTTP server binary on `alpine:latest`
-- `event-forwarder/Dockerfile` — standalone forwarder binary on `scratch`
-- `spam/Dockerfile` — lmdb2graphql binary on `alpine:3.21`
-
-**Orchestration:**
-- Docker Compose (three compose files, split by concern):
-  - `docker-compose.dgraph.yml` — Dgraph standalone v25.3.0 + Ratel UI + whitelist-server
-  - `docker-compose.strfry.yml` — mainline StrFry relay + quarantine StrFry relay
-  - `docker-compose.evtfwd.yml` — event-forwarder instances
-  - `docker-compose.lmdb2graphql.yml` — lmdb2graphql service (reads strfry LMDB read-only)
-- Shared bridge network: `deepfry-net`
-
-**Resource limits (per forwarder container):**
-- CPU: 0.5 cores max, 0.1 reserved
-- Memory: 128 MB max, 32 MB reserved
-
-**Logging:**
-- Docker `json-file` driver, 10 MB max per file, 3 files retained
-- Rust: JSON structured logging via `tracing-subscriber`, filter via `RUST_LOG` env var
-
-**Secrets:**
-- Environment variables via `.env` file (`.env.example` at repo root)
-- Key env vars: `STRFRY_PRIVATE_KEY`, `NOSTR_SYNC_SECKEY_LIVE`, `NOSTR_SYNC_SECKEY_HISTORY`
-- Env vars for event-forwarder: `SOURCE_RELAY_URL`, `DEEPFRY_RELAY_URL`, `NOSTR_SYNC_SECKEY`
-- Rust env: `RUST_LOG` for tracing filter
-
-## Configuration Files
-
-**Subsystem configs (in ~/deepfry/):**
-- `web-of-trust.yaml` — relay URLs, cluster scan settings
-- `whitelist.yaml` — whitelist server config
-- `router.yaml` — router plugin config (quarantine forwarding rules)
-- `lmdb2graphql.yaml` — strfry DB path, HTTP bind address, map size, pinned StrFry version
-
-**Repo-level configs:**
-- `config/strfry/strfry.conf` — StrFry relay settings (plugins, logging, thread counts)
-- `config/strfry/strfry-quarantine.conf` — Quarantine relay settings
-- `config/dgraph/schema.graphql` — Dgraph Profile schema
-- `config/dgraph/seed_data.graphql` — Initial data
-- `config/whitelist/whitelist-server.yaml` — Whitelist server mounted config
+**Production:**
+- Go 1.24.1+ runtime or static binary (Alpine-compatible via `CGO_ENABLED=0` if needed)
+- Connectivity to Dgraph gRPC endpoint (default: `localhost:9080`, configurable)
+- Connectivity to Nostr relays (WebSocket, wss://)
+- Read/write access to `~/deepfry/web-of-trust.yaml`
 
 ---
 
-*Stack analysis: 2026-06-15*
+*Stack analysis: 2026-06-16*
