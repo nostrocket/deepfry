@@ -74,6 +74,43 @@
 
 ---
 
+## Milestone: v1.4 — Crawler Hang Fix (Relay-Query Liveness)
+
+**Shipped:** 2026-06-16
+**Phases:** 1 (11) | **Plans:** 1 | **Requirements:** 4/4
+
+### What Was Built
+- `FetchAndUpdateFollows` dispatcher now exits independently on its relay-query timeout — non-blocking drain of buffered events, no `wg.Wait()`/`eventsChan`-close gating (HANG-01). `queryRelay` bounds `relay.Subscribe` in a child goroutine + ctx-select so it returns on timeout even though go-nostr v0.52's `Fire()` ignores the per-call context (HANG-02). Outstanding relays are closed + marked-dead on the timeout path and closed-without-penalty on the quorum-cancel path, reaping the leaked Subscribe child + cleanup goroutine (HANG-03).
+- A per-batch generation token (`batchSeq`/`completedGen`) replaced a reset-to-false marker boolean, removing a cross-batch race.
+- Four `-race` unit tests via the `queryRelayFn` seam: regression (returns under a stuck relay), partial-progress, close-on-timeout, and quorum-exit close.
+
+### What Worked
+- Writing the RED regression test *first* (during the diagnosis session, before the milestone) gave the whole milestone an unambiguous acceptance gate — the fix was "make this test green" and verification was mechanical.
+- The SIGQUIT goroutine dump turned a vague "process stalls" into an exact root cause (go-nostr `Fire()` parked on a context-less channel receive; dispatcher gated on `wg.Wait()`), which made the fix scope tight and the plan single-phase.
+- The adversarial code-review loop paid for itself heavily: the first implementation passed verification AND `-race`, yet review found **two critical concurrency defects invisible to the test suite** — a slice-mutation-during-range that re-skipped relays (partially reintroducing the very leak), and a quorum-path subscription leak. Both fixed before close.
+
+### What Was Inefficient
+- The first cut fixed the timeout path but missed that the EOSE-quorum exit path also needed to close stuck relays — found in review iteration 3, not at plan time. The plan's HANG-03 framing said "on timeout" and the quorum path was an unconsidered second exit.
+- The original `completedThisBatch` boolean shipped with a latent cross-batch race that only surfaced in the third review pass; a generation token would have been the right primitive from the start for a per-batch marker.
+
+### Patterns Established
+- A regression test that reproduces a concurrency hang via an injected, context-ignoring work function (the `queryRelayFn` seam) is far more reliable than trying to reproduce the real network condition (half-open TCP). Inject the *behavior* (blocks, ignores ctx), not the environment.
+- When a fix has two exit paths (timeout vs early-cancel), audit cleanup/teardown on BOTH — a leak plugged on one path leaks on the other.
+- Per-batch state that a late goroutine might stamp: use a monotonic generation token, never a reset-to-false boolean (the reset is the race).
+- `go test -race` confirms the goal but does not exercise timing-dependent cleanup branches whose triggers the test never reaches — adversarial review is the catch for those.
+
+### Key Lessons
+1. A passing race-tested suite is necessary, not sufficient, for concurrency correctness: the defects that survive tests are exactly the ones whose triggering interleaving the tests don't reach. Budget an adversarial review pass for any concurrency fix.
+2. Diagnose-then-fix across two sessions worked well: the goroutine-dump diagnosis + RED regression test produced a crisp, single-phase milestone with a built-in acceptance gate.
+3. When the upstream library is the root cause (go-nostr ignoring ctx) but forking is out of scope, satisfy the requirement's intent ("or equivalent") at your own layer — here, connection-close to cancel the library's own context.
+
+### Cost Observations
+- Model mix: orchestration on Opus; executor / reviewer / fixer / verifier subagents on Sonnet; planner on Opus.
+- Sessions: 1 diagnosis session (goroutine dump + RED test + findings doc) + 1 autonomous run (discuss → plan → execute → review → fix×2 → re-review×2 → audit → debt-closure → complete).
+- Notable: the review→fix loop ran its full 3 iterations here (vs 2 in v1.3) because each fix surfaced a deeper latent issue; the user elected to close the 2 residual tech-debt items before completing rather than defer.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -83,6 +120,7 @@
 | v1.1 | 1–4 | Write-path correctness + regression coverage established |
 | v1.2 | 5–9 | Operational reliability; first use of live-host human-verify checkpoints and a milestone-close follow-up phase |
 | v1.3 | 10 | Single coarse phase; auto code-review→fix loop caught a refactor regression + flaky test the verifier missed |
+| v1.4 | 11 | Diagnose-then-fix across two sessions; RED regression test written before the milestone as the acceptance gate; review→fix loop ran full 3 iterations, each surfacing a deeper concurrency defect |
 
 ### Cumulative Quality
 
@@ -91,8 +129,10 @@
 | v1.1 | unit + integration (chunk/version-guard) | write-path covered |
 | v1.2 | unit + `//go:build integration` (validator, filter-cap, frontier order, recover/purge) | runtime behavior live-verified; broad non-write-path coverage (TEST-05) still open |
 | v1.3 | unit (`package main`, injected-clock retry/backoff/cancel) | retry helper deterministically covered without a live Dgraph; first `cmd/crawler` unit-test file |
+| v1.4 | unit `-race` (4 dispatcher-liveness tests via `queryRelayFn` seam) | concurrency hang reproduced by injecting context-ignoring behavior, not the network condition; `pkg/crawler` coverage 25→27% |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. Live Dgraph + relay behavior is only provable on the strfry host — bake the manual verification step into every phase that touches the event loop.
 2. Coarse phase granularity tied to real coupling clusters keeps plan counts minimal without losing dependency correctness.
+3. The auto code-review→fix loop repeatedly catches defects (regressions, flaky tests, concurrency hazards) that pass both the executor and the goal-backward verifier — it is the highest-leverage gate for refactors and concurrency work.
