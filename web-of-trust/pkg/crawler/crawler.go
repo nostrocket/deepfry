@@ -615,7 +615,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 						}
 						processedEventIDs[ev.ID] = struct{}{}
 					} else {
-						c.dgClient.TouchLastDBUpdate(relayContext, ev.PubKey)
+						// WR-02: a failed TouchLastDBUpdate leaves last_db_update unadvanced,
+						// keeping the pubkey in the stale frontier to be re-queried forever.
+						// Surface it (debug) instead of silently discarding the error.
+						if _, err2 := c.dgClient.TouchLastDBUpdate(relayContext, ev.PubKey); err2 != nil && c.debug {
+							log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", ev.PubKey, err2)
+						}
 					}
 				default:
 					break drainLoop
@@ -714,7 +719,11 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				if c.debug {
 					fmt.Println("already have newer event for " + event.PubKey)
 				}
-				c.dgClient.TouchLastDBUpdate(relayContext, event.PubKey)
+				// WR-02: surface a failed TouchLastDBUpdate (debug) rather than dropping
+				// it — a discarded error keeps the pubkey stale and re-queried forever.
+				if _, err2 := c.dgClient.TouchLastDBUpdate(relayContext, event.PubKey); err2 != nil && c.debug {
+					log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", event.PubKey, err2)
+				}
 				c.dbUpdateMutex.Unlock()
 				continue
 			}
