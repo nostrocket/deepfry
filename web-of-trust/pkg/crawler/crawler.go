@@ -683,7 +683,8 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			// them dead (classTransport) so the existing threshold ejection (RELAY-01/02)
 			// governs repeat offenders. This runs in the single-threaded dispatcher
 			// (CR-02) — never from per-relay goroutines. The EOSE-quorum-cancel path is a
-			// normal early exit; those relays are NOT marked dead.
+			// normal early exit; those relays are NOT marked dead (but see WR-01 below —
+			// their connections are still closed to reap leaked goroutines).
 			//
 			// WR-01: do NOT discriminate on relayQueryContext.Err() alone. When the
 			// c.timeout deadline and a quorum-triggered cancel() fire near-simultaneously,
@@ -716,6 +717,51 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				}
 				for _, url := range stuck {
 					c.markRelayDead(url, classTransport)
+				}
+			} else if relayQueryContext.Err() != nil {
+				// WR-01 (iteration 3): EOSE-quorum early-exit path (context cancelled but
+				// the wall-clock budget was NOT exhausted). This completes the CR-02 fix.
+				//
+				// A relay still outstanding at quorum-exit may be wedged on a half-open TCP
+				// write inside go-nostr's Subscription.Fire(): relay.Write only unblocks on
+				// the *connection* context (relay.go:319-327), never on the per-query
+				// relayQueryContext we just cancelled. The keepalive ping that would detect
+				// the dead peer and Close() shares one select with the wedged WriteMessage
+				// (relay.go:168-211), so it can't fire either. Nothing reliably closes the
+				// connection — so the abandoned Subscribe child AND the CR-02 cleanup
+				// goroutine (which blocks until that child delivers) both park indefinitely,
+				// and the relay stays alive=true and is re-queried next batch, parking ~2
+				// more goroutines each time. That per-batch accumulation is the WR-01 leak.
+				//
+				// Fix: close the connection of any genuinely-outstanding relay here too, so
+				// the parked relay.Write returns "connection closed", the Subscribe child
+				// delivers, and both goroutines reap. We do NOT markRelayDead / increment a
+				// failure counter on this path: a quorum-cancelled relay is slow this batch,
+				// not transport-failed, and over-penalising it (WR-02 concern) would push
+				// healthy slow relays toward ejection.
+				//
+				// Tradeoff (documented per the task): closing the connection of a relay that
+				// merely lost the quorum race (would have completed microseconds later) is a
+				// minor cost — ReconnectRelays brings it back next loop with no failure
+				// penalty, and the only loss is the in-flight query for THIS batch, whose
+				// events were already going to be discarded by the lossy quorum drain
+				// (WR-06). We deliberately prefer unblocking the goroutine over preserving a
+				// racing relay's connection, because the alternative (leaving it open) is the
+				// goroutine leak this phase exists to contain. We close but do NOT penalise.
+				//
+				// !completedThisBatch is the same outstanding test the timeout path uses; a
+				// relay that set it is done and excluded. The snapshot-then-act split is not
+				// needed here because we never call markRelayDead (no c.relays compaction) —
+				// we mutate per-relay fields in place while ranging, which is safe.
+				for _, rs := range c.relays {
+					if rs.alive && !rs.completedThisBatch.Load() && rs.conn != nil {
+						if c.debug {
+							log.Printf("Relay %s outstanding at quorum exit, closing connection to reap stuck goroutines (no penalty)", rs.url)
+						}
+						rs.conn.Close()
+						rs.conn = nil
+						rs.alive = false // ReconnectRelays will bring it back with no failure penalty
+					}
 				}
 			}
 
