@@ -589,6 +589,15 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 
 			// Non-blocking drain of events already buffered in eventsChan.
 			// Process each through the same signature-check / forward / update path.
+			//
+			// WR-03: derive ONE shared deadline for the entire drain phase rather than
+			// letting forwardEvent spend a fresh full c.timeout per event. The drain is
+			// entered because the relay-query budget already elapsed; with a full buffer,
+			// a per-event c.timeout would multiply the worst-case return time well beyond
+			// the bounded-return guarantee. drainCtx caps the total time the drain (and
+			// the bounded forwardEvent publishes nested under it) can spend at one
+			// c.timeout across all buffered events.
+			drainCtx, drainCancel := context.WithTimeout(relayContext, c.timeout)
 			c.dbUpdateMutex.Lock()
 		drainLoop:
 			for {
@@ -606,11 +615,12 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 						continue
 					}
 					c.logSignatureValidationMetrics(ev.PubKey, true)
-					c.forwardEvent(relayContext, ev)
+					c.forwardEvent(drainCtx, ev)
 					pubkeysWithEvents[ev.PubKey] = struct{}{}
 					if ev.CreatedAt > nostr.Timestamp(pubkeys[ev.PubKey]) {
-						if err2 := c.updateFollowsFromEvent(relayContext, ev); err2 != nil {
+						if err2 := c.updateFollowsFromEvent(drainCtx, ev); err2 != nil {
 							c.dbUpdateMutex.Unlock()
+							drainCancel()
 							return pubkeysWithEvents, fmt.Errorf("failed to update follows for pubkey %s: %w", ev.PubKey, err2)
 						}
 						processedEventIDs[ev.ID] = struct{}{}
@@ -618,7 +628,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 						// WR-02: a failed TouchLastDBUpdate leaves last_db_update unadvanced,
 						// keeping the pubkey in the stale frontier to be re-queried forever.
 						// Surface it (debug) instead of silently discarding the error.
-						if _, err2 := c.dgClient.TouchLastDBUpdate(relayContext, ev.PubKey); err2 != nil && c.debug {
+						if _, err2 := c.dgClient.TouchLastDBUpdate(drainCtx, ev.PubKey); err2 != nil && c.debug {
 							log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", ev.PubKey, err2)
 						}
 					}
@@ -627,6 +637,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				}
 			}
 			c.dbUpdateMutex.Unlock()
+			drainCancel()
 
 			// HANG-03: on the timeout path, close outstanding relay connections and mark
 			// them dead (classTransport) so the existing threshold ejection (RELAY-01/02)
