@@ -184,14 +184,16 @@ func New(cfg Config) (*Crawler, error) {
 		rs := &relayState{url: url, backoff: initialBackoff}
 		rs.filterCap.Store(int32(cfg.FilterBatchSize))
 		noticeHandler := nostr.WithNoticeHandler(func(notice string) {
-			handleFilterNotice(rs, notice, 10)
+			handleFilterNotice(rs, notice, 10, cfg.Debug)
 		})
 		relay, err := nostr.RelayConnect(context.Background(), url, noticeHandler)
 		if err != nil {
 			// CR-03: keep the relay in the pool with alive=false so ReconnectRelays
 			// can retry under threshold governance. Do NOT call cfg.OnConnectFail here —
 			// a transient boot/DNS outage must not permanently eject all relays (T-07-DOS).
-			log.Printf("WARN: Failed to connect to relay %s at startup, will retry: %v", url, err)
+			if cfg.Debug {
+				log.Printf("WARN: Failed to connect to relay %s at startup, will retry: %v", url, err)
+			}
 			rs.alive = false
 			rs.conn = nil
 			rs.failTransport.Add(1)
@@ -217,7 +219,9 @@ func New(cfg Config) (*Crawler, error) {
 		return nil, fmt.Errorf("failed to connect to any relays")
 	}
 
-	log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
+	if cfg.Debug {
+		log.Printf("Connected to %d/%d relays", connected, len(cfg.RelayURLs))
+	}
 
 	c := &Crawler{
 		relays:          relays,
@@ -239,11 +243,15 @@ func New(cfg Config) (*Crawler, error) {
 		rs := &relayState{url: cfg.ForwardRelayURL, backoff: initialBackoff}
 		relay, err := nostr.RelayConnect(context.Background(), cfg.ForwardRelayURL)
 		if err != nil {
-			log.Printf("WARN: Failed to connect to forward relay %s: %v (will retry later)", cfg.ForwardRelayURL, err)
+			if cfg.Debug {
+				log.Printf("WARN: Failed to connect to forward relay %s: %v (will retry later)", cfg.ForwardRelayURL, err)
+			}
 		} else {
 			rs.conn = relay
 			rs.alive = true
-			log.Printf("Connected to forward relay: %s", cfg.ForwardRelayURL)
+			if cfg.Debug {
+				log.Printf("Connected to forward relay: %s", cfg.ForwardRelayURL)
+			}
 		}
 		c.forwardRelay = rs
 	}
@@ -275,7 +283,9 @@ func (c *Crawler) forwardEvent(ctx context.Context, event *nostr.Event) {
 	defer cancel()
 	err := c.forwardRelay.conn.Publish(pubCtx, *event)
 	if err != nil {
-		log.Printf("WARN: Failed to forward event %s to %s: %v", event.ID, c.forwardRelay.url, err)
+		if c.debug {
+			log.Printf("WARN: Failed to forward event %s to %s: %v", event.ID, c.forwardRelay.url, err)
+		}
 		if c.forwardRelay.conn != nil {
 			c.forwardRelay.conn.Close()
 		}
@@ -332,7 +342,9 @@ func (c *Crawler) markRelayDead(url string, class failureClass) {
 		}
 
 		rs.retryAt = time.Now().Add(rs.backoff)
-		log.Printf("Relay %s dead (%s %d/%d), retry in %v", url, class, count, threshold, rs.backoff)
+		if c.debug {
+			log.Printf("Relay %s dead (%s %d/%d), retry in %v", url, class, count, threshold, rs.backoff)
+		}
 		rs.backoff *= 2
 		if rs.backoff > maxBackoff {
 			rs.backoff = maxBackoff
@@ -358,7 +370,7 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 			continue
 		}
 		noticeHandler := nostr.WithNoticeHandler(func(notice string) {
-			handleFilterNotice(rs, notice, 10)
+			handleFilterNotice(rs, notice, 10, c.debug)
 		})
 		relay, err := nostr.RelayConnect(ctx, rs.url, noticeHandler)
 		if err != nil {
@@ -406,7 +418,7 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 	c.relays = kept
 
 	// D-13/LOG-01: emit one sweep-summary line only when something changed.
-	if reconnected > 0 || removed > 0 || stillDead > 0 {
+	if c.debug && (reconnected > 0 || removed > 0 || stillDead > 0) {
 		total := len(c.relays) + removed
 		log.Printf("Reconnected %d/%d relays, %d removed, %d still dead",
 			reconnected, total, removed, stillDead)
@@ -424,7 +436,9 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 		relay, err := nostr.RelayConnect(ctx, rs.url)
 		if err != nil {
 			rs.retryAt = time.Now().Add(rs.backoff)
-			log.Printf("WARN: Reconnect to forward relay %s failed, next retry in %v: %v", rs.url, rs.backoff, err)
+			if c.debug {
+				log.Printf("WARN: Reconnect to forward relay %s failed, next retry in %v: %v", rs.url, rs.backoff, err)
+			}
 			rs.backoff *= 2
 			if rs.backoff > maxBackoff {
 				rs.backoff = maxBackoff
@@ -434,7 +448,9 @@ func (c *Crawler) ReconnectRelays(ctx context.Context) {
 		rs.conn = relay
 		rs.alive = true
 		rs.backoff = initialBackoff
-		log.Printf("Reconnected to forward relay: %s", rs.url)
+		if c.debug {
+			log.Printf("Reconnected to forward relay: %s", rs.url)
+		}
 	}
 }
 
@@ -1058,7 +1074,9 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 		if isProbing && batchCap > int(rs.filterCap.Load()) {
 			rs.filterCap.Store(int32(batchCap))
 			rs.successStreak.Store(0)
-			log.Printf("Relay %s: probe-up to %d succeeded, new cap", relayURL, batchCap)
+			if c.debug {
+				log.Printf("Relay %s: probe-up to %d succeeded, new cap", relayURL, batchCap)
+			}
 			isProbing = false
 		}
 	}
@@ -1194,7 +1212,9 @@ func (c *Crawler) handleCapRejection(rs *relayState, relayURL string, batchCap i
 		rs.successStreak.Store(0)
 		rs.probing.Store(false)
 		if isProbing {
-			log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
+			if c.debug {
+				log.Printf("Relay %s: probe-up to %d rejected, reverting to %d", relayURL, batchCap, newVal)
+			}
 			return nil
 		}
 		if c.debug {
@@ -1242,13 +1262,15 @@ func isUnclassified(err error) bool {
 // never reduced below minCap (per D-05: floor = 10).
 // D-14: per-step halving is debug-only; the caller (queryRelay) decides whether
 // to call markRelayDead(classFilterRej) based on rs.probing (D-11 exemption).
-func handleFilterNotice(rs *relayState, notice string, minCap int) {
+func handleFilterNotice(rs *relayState, notice string, minCap int, debug bool) {
 	lower := strings.ToLower(notice)
 	if strings.Contains(lower, "filter") && strings.Contains(lower, "too large") {
 		for {
 			old := rs.filterCap.Load()
 			if old <= int32(minCap) {
-				log.Printf("Relay %s NOTICE filter-too-large: cap already at floor %d", rs.url, minCap)
+				if debug {
+					log.Printf("Relay %s NOTICE filter-too-large: cap already at floor %d", rs.url, minCap)
+				}
 				return
 			}
 			newVal := old / 2
@@ -1259,7 +1281,9 @@ func handleFilterNotice(rs *relayState, notice string, minCap int) {
 				rs.successStreak.Store(0)
 				rs.probing.Store(false)
 				// D-14: one human-readable line; the CAS succeeded so the cap changed.
-				log.Printf("Relay %s: cap learned at %d (NOTICE)", rs.url, newVal)
+				if debug {
+					log.Printf("Relay %s: cap learned at %d (NOTICE)", rs.url, newVal)
+				}
 				// D-11: probing flag cleared here; ejection decision made at queryRelay call site.
 				return
 			}
