@@ -237,3 +237,73 @@ func TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks(t *testing.T) {
 			"See HANG-FINDINGS.md.", returnBudget, relayQueryTimeout)
 	}
 }
+
+// TestFetchAndUpdateFollows_ClosesStuckRelayOnQuorumExit covers the WR-01 quorum-cancel
+// branch (closes IN-02 coverage gap). When EOSE-quorum is reached and a relay's query is
+// still outstanding, the dispatcher must close that relay's connection — to reap the
+// abandoned go-nostr Subscribe child + CR-02 cleanup goroutine — but must NOT mark it dead
+// or increment a failure counter (a quorum-cancelled relay is slow this batch, not failed).
+//
+// Setup: 4 alive relays, quorum 0.70 → ceil(0.70*4)=3 EOSEs reach quorum. Three relays
+// return immediately (fast EOSE) so quorum fires (cancel) well before the 5s relay-query
+// timeout; the fourth blocks ignoring its context. The stuck relay is given a real (never
+// connected) *nostr.Relay as its conn so the close branch (which requires conn != nil) is
+// exercised; nostr.Relay.Close() is safe on an unconnected relay (it cancels the connection
+// context and returns a benign "not connected" error the dispatcher ignores).
+func TestFetchAndUpdateFollows_ClosesStuckRelayOnQuorumExit(t *testing.T) {
+	const relayQueryTimeout = 5 * time.Second // high on purpose: quorum must fire first, not the timeout
+	const returnBudget = 2 * time.Second
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	queryFn := func(ctx context.Context, rs *relayState, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
+		if rs.url == "wss://stuck.example" {
+			<-release // block, ignoring ctx — reproduces go-nostr Subscription.Fire()
+			return nil
+		}
+		return nil // fast EOSE (no events) — drives the quorum counter
+	}
+
+	relays := make([]*relayState, 0, 4)
+	for _, u := range []string{"wss://g1.example", "wss://g2.example", "wss://g3.example"} {
+		rs := &relayState{url: u, alive: true}
+		rs.filterCap.Store(10)
+		relays = append(relays, rs)
+	}
+	stuck := &relayState{
+		url:   "wss://stuck.example",
+		alive: true,
+		conn:  nostr.NewRelay(context.Background(), "wss://stuck.example"),
+	}
+	stuck.filterCap.Store(10)
+	relays = append(relays, stuck)
+
+	c := newTestCrawler(relays, relayQueryTimeout, 0.70, queryFn)
+
+	pubkeys := map[string]int64{strings.Repeat("d", 64): 0}
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = c.FetchAndUpdateFollows(context.Background(), pubkeys)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// WR-01 quorum-cancel close path: stuck relay's connection closed and marked
+		// not-alive so ReconnectRelays brings it back — but NOT penalized.
+		if stuck.conn != nil {
+			t.Error("stuck relay conn not closed on quorum exit (WR-01) — expected nil")
+		}
+		if stuck.alive {
+			t.Error("stuck relay still alive after quorum-exit close (WR-01)")
+		}
+		if got := stuck.failTransport.Load(); got != 0 {
+			t.Errorf("stuck relay failTransport=%d on quorum-exit path, want 0 — "+
+				"quorum-cancel must close without penalizing (WR-01)", got)
+		}
+	case <-time.After(returnBudget):
+		t.Fatalf("FetchAndUpdateFollows did not return within %v on the quorum-exit path", returnBudget)
+	}
+}
