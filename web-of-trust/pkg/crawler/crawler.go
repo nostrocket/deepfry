@@ -489,6 +489,15 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 	}
 
 	// Count alive relays being launched for the quorum denominator (D-14).
+	//
+	// WR-04 invariant: queriedRelays and the set of launched goroutines are FIXED for
+	// the duration of this batch. markRelayDead (the only thing that flips rs.alive to
+	// false) runs exclusively in the single-threaded dispatcher below — never from a
+	// per-relay goroutine (CR-02) — and only AFTER the quorum loop has finished
+	// dispatching, so the live set cannot shrink mid-batch. If that invariant is ever
+	// broken (e.g. a relay flipped dead while goroutines are in flight), queriedRelays
+	// would no longer match the goroutine set and quorumReached could fire early or
+	// never. Keep relay-set mutation out of the batch window.
 	var queriedRelays int32
 	for _, rs := range c.relays {
 		if rs.alive {
@@ -505,7 +514,14 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		queryRelay = c.queryRelay
 	}
 
-	// Launch goroutines for each alive relay
+	// Launch goroutines for each alive relay.
+	//
+	// WR-05: rs is passed explicitly as a goroutine argument (safe under any Go
+	// version). The reset loop (above) and the timeout-exit loop (below) instead rely
+	// on Go 1.22+ per-iteration loop-variable semantics; this module targets Go 1.24.1
+	// so that is correct today. Do not downgrade the toolchain `go` directive below
+	// 1.22 without revisiting those loops, and prefer passing rs as an explicit arg
+	// wherever a goroutine captures it.
 	for _, rs := range c.relays {
 		if !rs.alive {
 			continue
