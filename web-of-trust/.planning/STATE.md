@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Crawler Hang Fix
-status: verifying
-last_updated: "2026-06-16T06:48:42.560Z"
-last_activity: 2026-06-16
+status: Awaiting next milestone
+last_updated: "2026-06-16T07:29:22.412Z"
+last_activity: 2026-06-16 — Milestone v1.4 completed and archived
 progress:
   total_phases: 1
   completed_phases: 1
@@ -25,10 +25,10 @@ progress:
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-06-16
+Phase: Milestone v1.4 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-16 — Milestone v1.4 completed and archived
 
 ## Performance Metrics
 
@@ -107,4 +107,4 @@ None.
 
 ## Operator Next Steps
 
-- Run `/gsd-plan-phase 11` to produce the Phase 11 execution plan
+- Start the next milestone with /gsd-new-milestone
