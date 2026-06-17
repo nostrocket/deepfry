@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Crawler Hang Fix
 status: Awaiting next milestone
-last_updated: "2026-06-16T07:29:22.412Z"
-last_activity: 2026-06-16 — Milestone v1.4 completed and archived
+last_updated: "2026-06-17T10:10:00.000Z"
+last_activity: 2026-06-17 — Spike 001 added crawler speed instrumentation; crawl-speed optimization effort underway
 progress:
   total_phases: 1
   completed_phases: 1
@@ -27,8 +27,8 @@ progress:
 
 Phase: Milestone v1.4 complete
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-16 — Milestone v1.4 completed and archived
+Status: Awaiting next milestone (crawl-speed optimization underway via spikes)
+Last activity: 2026-06-17 — Spike 001 added crawler speed instrumentation (production metrics + round comparison)
 
 ## Performance Metrics
 
@@ -107,4 +107,11 @@ None.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- **Active effort — crawl-speed optimization** (spike-driven, not yet a formal milestone):
+  - Spike 001 (`.planning/spikes/001-crawl-speed-instrumentation/`) added production
+    metrics: per-batch `BATCH_METRICS:` lines + per-run records in `~/deepfry/crawler-metrics.jsonl`.
+  - Next concrete step: capture a **baseline round** on the strfry host
+    (`make build-crawler && WOT_ROUND=baseline ./bin/crawler`), then work the
+    optimization backlog in `.planning/spikes/MANIFEST.md` one variable at a time.
+  - See README "Next Tasks & Future Improvements" for the full backlog and resume map.
+- When ready to formalize, open a milestone with `/gsd-new-milestone` (e.g. "v1.5 — Crawl Throughput").
