@@ -221,9 +221,19 @@ func main() {
 	// Created once here and threaded into every retryDgraph call.
 	metrics := newCallMetrics()
 
+	// Speed instrumentation (always-on): round identity for cross-run comparison,
+	// cumulative run totals, and per-batch growth tracking. The git commit (or
+	// WOT_ROUND label) tags every batch and the final per-run record so successive
+	// optimization rounds can be diffed via ~/deepfry/crawler-metrics.jsonl.
+	roundID := resolveRoundID()
+	stats := &runStats{}
+	batchNum := 0
+	prevTotal := startingPubkeys
+
 	// Main processing loop
 mainLoop:
 	for {
+		batchStart := time.Now()
 		// Check if shutdown was requested
 		select {
 		case <-ctx.Done():
@@ -298,7 +308,11 @@ mainLoop:
 		crawler.ReconnectRelays(ctx)
 
 		// Process the batch; hitSet contains pubkeys that returned a kind-3 event.
+		// Time the relay fetch in isolation — it is the long pole, and the
+		// fetch-vs-overhead split is the primary signal for where to optimize.
+		fetchStart := time.Now()
 		hitSet, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
+		fetchDur := time.Since(fetchStart)
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("Interrupted while fetching follows: %v", err)
@@ -341,11 +355,34 @@ mainLoop:
 		// OBS-01 (D-05/D-06): cumulative avg per call type, success-only, since process start.
 		log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
 			metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
+
+		// Speed instrumentation: fold this batch into the run totals and emit a
+		// structured per-batch metrics line. fetch_ms is the relay fetch;
+		// overhead_ms is everything else (Dgraph reads/writes + bookkeeping).
+		batchDur := time.Since(batchStart)
+		overheadDur := batchDur - fetchDur
+		if overheadDur < 0 {
+			overheadDur = 0
+		}
+		metrics.record("FetchAndUpdateFollows", fetchDur)
+		metrics.record("Batch", batchDur)
+		newPubkeys := totalPubkeys - prevTotal
+		prevTotal = totalPubkeys
+		batchNum++
+		stats.recordBatch(len(pubkeys), len(hitSet))
+		logBatchMetrics(roundID, batchNum, len(pubkeys), len(hitSet), newPubkeys, batchDur, fetchDur, overheadDur)
 	}
 
-	// Generate final report
-	endingPubkeys, _ := dgraphClient.CountPubkeys(ctx)
+	// Generate final report. The main ctx is cancelled at shutdown, so use a
+	// fresh bounded context for the ending count — otherwise CountPubkeys returns
+	// 0 and the net-new metric is wrong.
+	countCtx, countCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	endingPubkeys, _ := dgraphClient.CountPubkeys(countCtx)
+	countCancel()
 	generateFinalReport(startingPubkeys, endingPubkeys, startTime, cfg.SeedPubkey)
+
+	// Append the comparable per-run speed record to ~/deepfry/crawler-metrics.jsonl.
+	writeRunRecord(buildRunRecord(roundID, startTime, time.Now(), startingPubkeys, endingPubkeys, stats, metrics, cfg))
 
 	// Wait for any background tasks to complete
 	log.Println("Waiting for background tasks to complete...")
