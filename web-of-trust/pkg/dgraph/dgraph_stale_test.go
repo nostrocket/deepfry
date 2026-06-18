@@ -564,7 +564,7 @@ _:f <dgraph.type> "Profile" .
 	}()
 
 	// Run backfill — should update exactly needsPk.
-	updated, err := c.BackfillNextAttempt(ctx)
+	updated, err := c.BackfillNextAttempt(ctx, 86400)
 	if err != nil {
 		t.Fatalf("BackfillNextAttempt failed: %v", err)
 	}
@@ -605,7 +605,7 @@ _:f <dgraph.type> "Profile" .
 	// Idempotency: a second run should find 0 candidates for needsPk (it now has next_attempt).
 	// We can't easily assert "exactly 0" on a live DB, but we CAN assert needsPk
 	// is not touched again (its next_attempt stays the same).
-	_, err = c.BackfillNextAttempt(ctx)
+	_, err = c.BackfillNextAttempt(ctx, 86400)
 	if err != nil {
 		t.Fatalf("BackfillNextAttempt (2nd run) failed: %v", err)
 	}
