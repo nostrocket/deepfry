@@ -87,6 +87,93 @@ func TestLoadConfig_EjectedRelaysAbsent(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ThroughputControlDefaults(t *testing.T) {
+	viper.Reset()
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.RelayFilterBatchSize != 100 {
+		t.Fatalf("relay_filter_batch_size default: want 100, got %d", cfg.RelayFilterBatchSize)
+	}
+	if cfg.FrontierBatchSize != 100 {
+		t.Fatalf("frontier_batch_size default: want 100, got %d", cfg.FrontierBatchSize)
+	}
+	if cfg.CountSampleInterval != 1 {
+		t.Fatalf("count_sample_interval default: want 1, got %d", cfg.CountSampleInterval)
+	}
+}
+
+func TestLoadConfig_ThroughputControlExplicitValues(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := tmpHome + "/deepfry"
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configContent := `relay_urls:
+  - wss://relay.damus.io
+relay_filter_batch_size: 100
+frontier_batch_size: 500
+count_sample_interval: 5
+`
+	if err := os.WriteFile(configDir+"/web-of-trust.yaml", []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	viper.Reset()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.RelayFilterBatchSize != 100 {
+		t.Fatalf("relay_filter_batch_size: want 100, got %d", cfg.RelayFilterBatchSize)
+	}
+	if cfg.FrontierBatchSize != 500 {
+		t.Fatalf("frontier_batch_size: want 500, got %d", cfg.FrontierBatchSize)
+	}
+	if cfg.CountSampleInterval != 5 {
+		t.Fatalf("count_sample_interval: want 5, got %d", cfg.CountSampleInterval)
+	}
+}
+
+func TestLoadConfig_ThroughputControlGuard(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := tmpHome + "/deepfry"
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configContent := `relay_urls:
+  - wss://relay.damus.io
+relay_filter_batch_size: 250
+frontier_batch_size: 0
+count_sample_interval: -2
+`
+	if err := os.WriteFile(configDir+"/web-of-trust.yaml", []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	viper.Reset()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.FrontierBatchSize != 250 {
+		t.Fatalf("frontier_batch_size guard: want relay filter fallback 250, got %d", cfg.FrontierBatchSize)
+	}
+	if cfg.CountSampleInterval != 1 {
+		t.Fatalf("count_sample_interval guard: want 1, got %d", cfg.CountSampleInterval)
+	}
+}
+
 // TestEjectRelayURL_MovesToEjected verifies that EjectRelayURL removes the URL
 // from relay_urls and appends it to ejected_relays, persisting to the YAML file.
 func TestEjectRelayURL_MovesToEjected(t *testing.T) {

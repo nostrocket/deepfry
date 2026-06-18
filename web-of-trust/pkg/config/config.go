@@ -46,6 +46,8 @@ type Config struct {
 	Debug                bool          `mapstructure:"debug"`
 	StalePubkeyThreshold int64         `mapstructure:"stale_pubkey_threshold"`
 	RelayFilterBatchSize int           `mapstructure:"relay_filter_batch_size"`
+	FrontierBatchSize    int           `mapstructure:"frontier_batch_size"`
+	CountSampleInterval  int           `mapstructure:"count_sample_interval"`
 	ForwardRelayURL      string        `mapstructure:"forward_relay_url"`
 
 	// Spam-cluster scan (clusterscan CLI) settings.
@@ -99,6 +101,8 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("pubkey", "npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p")
 	viper.SetDefault("stale_pubkey_threshold", 24*60*60) // 24 hours in seconds
 	viper.SetDefault("relay_filter_batch_size", 100)
+	viper.SetDefault("frontier_batch_size", 100)
+	viper.SetDefault("count_sample_interval", 1)
 
 	// clusterscan defaults: the admin/forwarder keys used by the whitelist
 	// plugin (whitelist-plugin/pkg/repository getHardcodedPubkeys) form the
@@ -159,6 +163,19 @@ func LoadConfig() (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unable to decode config: %w", err)
+	}
+
+	// Guard: non-positive throughput controls can stall useful work or hide
+	// progress metrics. Preserve existing behavior by falling back safely.
+	if cfg.FrontierBatchSize <= 0 {
+		if cfg.RelayFilterBatchSize > 0 {
+			cfg.FrontierBatchSize = cfg.RelayFilterBatchSize
+		} else {
+			cfg.FrontierBatchSize = 100
+		}
+	}
+	if cfg.CountSampleInterval <= 0 {
+		cfg.CountSampleInterval = 1
 	}
 
 	// Guard: zero or negative thresholds would eject relays on the first failure
