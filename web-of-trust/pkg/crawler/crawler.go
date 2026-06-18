@@ -115,6 +115,7 @@ type followStore interface {
 type FetchResult struct {
 	Hits        map[string]struct{}
 	SkipAttempt map[string]struct{}
+	Queried     int
 }
 
 type Crawler struct {
@@ -506,12 +507,13 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 		}
 		authors = append(authors, pubkey)
 	}
+	result.Queried = len(authors)
 
 	// Create filter for kind 3 events from all specified pubkeys
 	filter := nostr.Filter{
 		Authors: authors,
 		Kinds:   []int{3},
-		Limit:   len(pubkeys), // Allow one event per pubkey
+		Limit:   len(authors), // Allow one event per valid pubkey
 	}
 
 	type relayError struct {

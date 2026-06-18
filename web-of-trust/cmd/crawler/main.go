@@ -120,6 +120,61 @@ func retryDgraph[T any](
 	}
 }
 
+type countSampleSnapshot struct {
+	totalPubkeys          int
+	totalStale            int
+	countsSampled         bool
+	countsCached          bool
+	countSampleAgeBatches int
+}
+
+type countSampleState struct {
+	interval        int
+	lastSampleBatch int
+	totalPubkeys    int
+	totalStale      int
+	hasSample       bool
+}
+
+func newCountSampleState(interval int) *countSampleState {
+	if interval <= 0 {
+		interval = 1
+	}
+	return &countSampleState{interval: interval}
+}
+
+func (s *countSampleState) due(batchNum int) bool {
+	return !s.hasSample || batchNum-s.lastSampleBatch >= s.interval
+}
+
+func (s *countSampleState) recordSample(batchNum, totalPubkeys, totalStale int) countSampleSnapshot {
+	s.lastSampleBatch = batchNum
+	s.totalPubkeys = totalPubkeys
+	s.totalStale = totalStale
+	s.hasSample = true
+	return countSampleSnapshot{
+		totalPubkeys:          totalPubkeys,
+		totalStale:            totalStale,
+		countsSampled:         true,
+		countsCached:          false,
+		countSampleAgeBatches: 0,
+	}
+}
+
+func (s *countSampleState) cached(batchNum int) countSampleSnapshot {
+	age := batchNum - s.lastSampleBatch
+	if age < 0 {
+		age = 0
+	}
+	return countSampleSnapshot{
+		totalPubkeys:          s.totalPubkeys,
+		totalStale:            s.totalStale,
+		countsSampled:         false,
+		countsCached:          true,
+		countSampleAgeBatches: age,
+	}
+}
+
 func main() {
 	// Create a context that can be cancelled for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -214,11 +269,13 @@ func main() {
 	stats := &runStats{}
 	batchNum := 0
 	prevTotal := startingPubkeys
+	countSamples := newCountSampleState(cfg.CountSampleInterval)
 
 	// Main processing loop
 mainLoop:
 	for {
 		batchStart := time.Now()
+		nextBatchNum := batchNum + 1
 		// Check if shutdown was requested
 		select {
 		case <-ctx.Done():
@@ -231,7 +288,7 @@ mainLoop:
 		// Get stale pubkeys to process (RETRY-01: indefinite transient retry).
 		pubkeys, err := retryDgraph(ctx, "GetStalePubkeys",
 			func() (map[string]int64, error) {
-				return dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.RelayFilterBatchSize)
+				return dgraphClient.GetStalePubkeys(ctx, time.Now().Unix()-cfg.StalePubkeyThreshold, cfg.FrontierBatchSize)
 			}, metrics, time.After)
 		if err != nil {
 			// WR-02: distinguish clean shutdown (ctx cancelled) from a real Dgraph
@@ -244,23 +301,45 @@ mainLoop:
 			break mainLoop
 		}
 
-		// Count total pubkeys (RETRY-01: indefinite transient retry).
-		totalPubkeys, err := retryDgraph(ctx, "CountPubkeys",
-			func() (int, error) {
-				return dgraphClient.CountPubkeys(ctx)
-			}, metrics, time.After)
-		if err != nil {
-			// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
-			if ctx.Err() != nil {
-				log.Println("Shutdown requested during CountPubkeys, breaking main loop")
-			} else {
-				log.Printf("Dgraph counting pubkeys failed: %v", err)
+		var countSnapshot countSampleSnapshot
+		if countSamples.due(nextBatchNum) {
+			// Count total pubkeys (RETRY-01: indefinite transient retry).
+			totalPubkeys, err := retryDgraph(ctx, "CountPubkeys",
+				func() (int, error) {
+					return dgraphClient.CountPubkeys(ctx)
+				}, metrics, time.After)
+			if err != nil {
+				// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
+				if ctx.Err() != nil {
+					log.Println("Shutdown requested during CountPubkeys, breaking main loop")
+				} else {
+					log.Printf("Dgraph counting pubkeys failed: %v", err)
+				}
+				break mainLoop
 			}
-			break mainLoop
+
+			// METRIC-01 (D-15/D-16/D-17): sampled stale count. CountStalePubkeys
+			// counts frontier + aged-eligible, matching GetStalePubkeys selection semantics.
+			totalStale, err := retryDgraph(ctx, "CountStalePubkeys",
+				func() (int, error) {
+					return dgraphClient.CountStalePubkeys(ctx)
+				}, metrics, time.After)
+			if err != nil {
+				// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
+				if ctx.Err() != nil {
+					log.Println("Shutdown requested during CountStalePubkeys, breaking main loop")
+				} else {
+					log.Printf("Dgraph counting stale pubkeys failed: %v", err)
+				}
+				break mainLoop
+			}
+			countSnapshot = countSamples.recordSample(nextBatchNum, totalPubkeys, totalStale)
+		} else {
+			countSnapshot = countSamples.cached(nextBatchNum)
 		}
 
 		// Initialize with seed if database is empty
-		if totalPubkeys == 0 {
+		if countSnapshot.totalPubkeys == 0 {
 			pubkeys[cfg.SeedPubkey] = 0
 			log.Printf("Database is empty, starting with seed pubkey: %s", cfg.SeedPubkey)
 		}
@@ -269,24 +348,6 @@ mainLoop:
 		if len(pubkeys) == 0 {
 			log.Println("No stale pubkeys found, work complete")
 			break
-		}
-
-		// METRIC-01 (D-15/D-16/D-17): query the honest stale count every batch.
-		// CountStalePubkeys counts frontier + aged-eligible, matching GetStalePubkeys
-		// selection semantics, so staleRemaining is never the always-zero (totalStale - batch).
-		// (RETRY-01: indefinite transient retry.)
-		totalStale, err := retryDgraph(ctx, "CountStalePubkeys",
-			func() (int, error) {
-				return dgraphClient.CountStalePubkeys(ctx)
-			}, metrics, time.After)
-		if err != nil {
-			// WR-02: clean shutdown vs real failure (SHUTDOWN-01).
-			if ctx.Err() != nil {
-				log.Println("Shutdown requested during CountStalePubkeys, breaking main loop")
-			} else {
-				log.Printf("Dgraph counting stale pubkeys failed: %v", err)
-			}
-			break mainLoop
 		}
 
 		// Reconnect any dead relays before processing
@@ -334,11 +395,20 @@ mainLoop:
 			log.Printf("Warning: failed to mark batch attempted (best-effort): %v", err)
 		}
 
-		// Clamp at 0 (WR-01): totalStale is recounted before this batch is stamped,
-		// so on a shrinking frontier totalStale-len(pubkeys) can go negative.
-		staleRemaining := max(0, totalStale-len(pubkeys))
-		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
-			len(pubkeys), len(result.Hits), staleRemaining, totalPubkeys)
+		selectedCount := len(pubkeys)
+		queriedCount := result.Queried
+		hitCount := len(result.Hits)
+		skippedAttempts := len(result.SkipAttempt)
+		markedAttempted := len(batchKeys)
+		// Clamp at 0 (WR-01): totalStale is counted before this batch is stamped,
+		// so on a shrinking frontier totalStale-markedAttempted can go negative.
+		staleRemaining := max(0, countSnapshot.totalStale-markedAttempted)
+		countSource := "sampled"
+		if !countSnapshot.countsSampled {
+			countSource = "cached"
+		}
+		log.Printf("Batch complete: selected %d pubkeys, queried %d valid pubkeys (%d had events), skipped_attempts=%d, marked_attempted=%d | %d stale remaining (%s, age_batches=%d) | %d total in DB (%s)",
+			selectedCount, queriedCount, hitCount, skippedAttempts, markedAttempted, staleRemaining, countSource, countSnapshot.countSampleAgeBatches, countSnapshot.totalPubkeys, countSource)
 		// OBS-01 (D-05/D-06): cumulative avg per call type, success-only, since process start.
 		log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
 			metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
@@ -353,11 +423,35 @@ mainLoop:
 		}
 		metrics.record("FetchAndUpdateFollows", fetchDur)
 		metrics.record("Batch", batchDur)
-		newPubkeys := totalPubkeys - prevTotal
-		prevTotal = totalPubkeys
+		var newPubkeys *int
+		if countSnapshot.countsSampled {
+			freshNew := countSnapshot.totalPubkeys - prevTotal
+			prevTotal = countSnapshot.totalPubkeys
+			newPubkeys = &freshNew
+		}
 		batchNum++
-		stats.recordBatch(len(pubkeys), len(result.Hits))
-		logBatchMetrics(roundID, batchNum, len(pubkeys), len(result.Hits), newPubkeys, batchDur, fetchDur, overheadDur)
+		stats.recordBatch(selectedCount, queriedCount, hitCount, skippedAttempts, markedAttempted, countSnapshot.countsSampled, countSnapshot.countsCached)
+		logBatchMetrics(batchMetrics{
+			roundID:               roundID,
+			batchNum:              batchNum,
+			frontierBatchSize:     cfg.FrontierBatchSize,
+			relayFilterBatchSize:  cfg.RelayFilterBatchSize,
+			countSampleInterval:   cfg.CountSampleInterval,
+			countsSampled:         countSnapshot.countsSampled,
+			countsCached:          countSnapshot.countsCached,
+			countSampleAgeBatches: countSnapshot.countSampleAgeBatches,
+			selected:              selectedCount,
+			queried:               queriedCount,
+			hits:                  hitCount,
+			skippedAttempts:       skippedAttempts,
+			markedAttempted:       markedAttempted,
+			staleRemaining:        staleRemaining,
+			totalPubkeys:          countSnapshot.totalPubkeys,
+			newPubkeys:            newPubkeys,
+			batchDur:              batchDur,
+			fetchDur:              fetchDur,
+			overheadDur:           overheadDur,
+		})
 	}
 
 	// Generate final report. The main ctx is cancelled at shutdown, so use a

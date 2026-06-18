@@ -1,9 +1,15 @@
 package crawler
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/nbd-wtf/go-nostr"
 )
 
 // TestHandleFilterNotice_Halves verifies that a "filter item too large" NOTICE
@@ -60,9 +66,10 @@ func TestHandleFilterNotice_UnrelatedNotice(t *testing.T) {
 	}
 }
 
-// TestSplitAuthorsChunks verifies the chunk-splitting logic used in queryRelay:
-// 250 authors with filterCap=100 produces chunks of 100, 100, 50.
-func TestSplitAuthorsChunks(t *testing.T) {
+// TestFrontierBatchLargerThanRelayCapSplitsRelayChunks verifies the relay-boundary
+// safety rule: a 250-author selected frontier with a 100-author relay cap produces
+// safe relay request chunks of 100, 100, 50.
+func TestFrontierBatchLargerThanRelayCapSplitsRelayChunks(t *testing.T) {
 	const total = 250
 	authors := make([]string, total)
 	for i := range authors {
@@ -89,11 +96,56 @@ func TestSplitAuthorsChunks(t *testing.T) {
 
 	expected := []int{100, 100, 50}
 	if len(chunkSizes) != len(expected) {
-		t.Fatalf("expected %d chunks, got %d: %v", len(expected), len(chunkSizes), chunkSizes)
+		t.Fatalf("frontier-vs-relay cap separation: expected %d relay chunks, got %d: %v", len(expected), len(chunkSizes), chunkSizes)
 	}
 	for i, want := range expected {
 		if chunkSizes[i] != want {
-			t.Fatalf("chunk[%d]: expected size %d, got %d", i, want, chunkSizes[i])
+			t.Fatalf("frontier-vs-relay cap separation: chunk[%d] expected size %d, got %d", i, want, chunkSizes[i])
+		}
+	}
+}
+
+func TestFetchAndUpdateFollows_QueriedCountsOnlyValidatedAuthors(t *testing.T) {
+	validA := strings.Repeat("a", 64)
+	validB := strings.Repeat("b", 64)
+	invalid := "not-a-64-hex-pubkey"
+
+	var filterAuthors []string
+	c := &Crawler{
+		timeout: 100 * time.Millisecond,
+		relays:  []*relayState{{url: "wss://relay.test", alive: true}},
+		queryRelayFn: func(ctx context.Context, rs *relayState, filter nostr.Filter, eventsChan chan<- *nostr.Event) error {
+			filterAuthors = append([]string(nil), filter.Authors...)
+			if filter.Limit != len(filter.Authors) {
+				t.Errorf("filter limit should match validated authors: got %d want %d", filter.Limit, len(filter.Authors))
+			}
+			return nil
+		},
+	}
+
+	selected := map[string]int64{
+		validA:  1,
+		validB:  2,
+		invalid: 3,
+	}
+	result, err := c.FetchAndUpdateFollows(context.Background(), selected)
+	if err != nil {
+		t.Fatalf("FetchAndUpdateFollows returned error: %v", err)
+	}
+	if len(selected) <= result.Queried {
+		t.Fatalf("selected count should exceed queried when invalid pubkeys are selected: selected=%d queried=%d", len(selected), result.Queried)
+	}
+	if result.Queried != 2 {
+		t.Fatalf("queried should count only validated authors submitted to relay filters: got %d want 2", result.Queried)
+	}
+	sort.Strings(filterAuthors)
+	want := []string{validA, validB}
+	if len(filterAuthors) != len(want) {
+		t.Fatalf("relay filter authors = %v, want %v", filterAuthors, want)
+	}
+	for i := range want {
+		if filterAuthors[i] != want[i] {
+			t.Fatalf("relay filter authors = %v, want %v", filterAuthors, want)
 		}
 	}
 }

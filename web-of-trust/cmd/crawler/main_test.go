@@ -60,6 +60,46 @@ func TestAttemptableBatchKeys_SkipsTransientWriteFailures(t *testing.T) {
 	}
 }
 
+func TestCountSampleState_SamplesFirstBatchAndEveryInterval(t *testing.T) {
+	s := newCountSampleState(3)
+
+	if !s.due(1) {
+		t.Fatal("batch 1 must sample")
+	}
+	first := s.recordSample(1, 100, 25)
+	if !first.countsSampled || first.countsCached || first.countSampleAgeBatches != 0 {
+		t.Fatalf("first sample flags wrong: %+v", first)
+	}
+	if s.due(2) {
+		t.Fatal("batch 2 should reuse cached counts for interval=3")
+	}
+	second := s.cached(2)
+	if second.countsSampled || !second.countsCached || second.countSampleAgeBatches != 1 {
+		t.Fatalf("batch 2 cached flags wrong: %+v", second)
+	}
+	if s.due(3) {
+		t.Fatal("batch 3 should still reuse cached counts for interval=3")
+	}
+	third := s.cached(3)
+	if third.totalPubkeys != 100 || third.totalStale != 25 || third.countSampleAgeBatches != 2 {
+		t.Fatalf("batch 3 cached values wrong: %+v", third)
+	}
+	if !s.due(4) {
+		t.Fatal("batch 4 must sample again for interval=3")
+	}
+}
+
+func TestCountSampleState_DefaultIntervalSamplesEveryBatch(t *testing.T) {
+	s := newCountSampleState(0)
+	if !s.due(1) {
+		t.Fatal("batch 1 must sample")
+	}
+	s.recordSample(1, 10, 5)
+	if !s.due(2) {
+		t.Fatal("non-positive interval should be guarded to 1 and sample every batch")
+	}
+}
+
 // neverSleep returns a channel that is never closed/sent, so any select that
 // uses it blocks unless the other case (ctx.Done()) fires.
 func neverSleep(time.Duration) <-chan time.Time {

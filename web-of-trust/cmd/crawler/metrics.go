@@ -32,16 +32,52 @@ func resolveRoundID() string {
 // runStats accumulates cumulative counters across a single crawler run. The
 // main loop is single-threaded so no synchronization is needed.
 type runStats struct {
-	batches      int
-	totalQueried int
-	totalHits    int
+	batches              int
+	totalSelected        int
+	totalQueried         int
+	totalHits            int
+	totalSkippedAttempts int
+	totalMarkedAttempted int
+	countSamples         int
+	countCachedBatches   int
 }
 
 // recordBatch folds one completed batch into the cumulative run totals.
-func (s *runStats) recordBatch(queried, hits int) {
+func (s *runStats) recordBatch(selected, queried, hits, skippedAttempts, markedAttempted int, countsSampled, countsCached bool) {
 	s.batches++
+	s.totalSelected += selected
 	s.totalQueried += queried
 	s.totalHits += hits
+	s.totalSkippedAttempts += skippedAttempts
+	s.totalMarkedAttempted += markedAttempted
+	if countsSampled {
+		s.countSamples++
+	}
+	if countsCached {
+		s.countCachedBatches++
+	}
+}
+
+type batchMetrics struct {
+	roundID               string
+	batchNum              int
+	frontierBatchSize     int
+	relayFilterBatchSize  int
+	countSampleInterval   int
+	countsSampled         bool
+	countsCached          bool
+	countSampleAgeBatches int
+	selected              int
+	queried               int
+	hits                  int
+	skippedAttempts       int
+	markedAttempted       int
+	staleRemaining        int
+	totalPubkeys          int
+	newPubkeys            *int
+	batchDur              time.Duration
+	fetchDur              time.Duration
+	overheadDur           time.Duration
 }
 
 // logBatchMetrics emits one structured BATCH_METRICS JSON line per batch. This
@@ -50,28 +86,39 @@ func (s *runStats) recordBatch(queried, hits int) {
 // overheadDur is everything else in the iteration (Dgraph reads/writes +
 // bookkeeping) — together they give the relay-vs-overhead split that drives
 // optimization decisions.
-func logBatchMetrics(roundID string, batchNum, queried, hits, newPubkeys int, batchDur, fetchDur, overheadDur time.Duration) {
+func logBatchMetrics(m batchMetrics) {
 	hitRate := 0.0
-	if queried > 0 {
-		hitRate = float64(hits) / float64(queried)
+	if m.queried > 0 {
+		hitRate = float64(m.hits) / float64(m.queried)
 	}
 	pps := 0.0
-	if batchDur > 0 {
-		pps = float64(queried) / batchDur.Seconds()
+	if m.batchDur > 0 {
+		pps = float64(m.queried) / m.batchDur.Seconds()
 	}
 	rec := map[string]interface{}{
-		"round_id":        roundID,
-		"batch":           batchNum,
-		"queried":         queried,
-		"hits":            hits,
-		"hit_rate":        round3(hitRate),
-		"new_pubkeys":     newPubkeys,
-		"batch_ms":        batchDur.Milliseconds(),
-		"fetch_ms":        fetchDur.Milliseconds(),
-		"overhead_ms":     overheadDur.Milliseconds(),
-		"pubkeys_per_sec": round3(pps),
-		"component":       "web-of-trust-crawler",
-		"metric_type":     "batch_speed",
+		"round_id":                 m.roundID,
+		"batch":                    m.batchNum,
+		"frontier_batch_size":      m.frontierBatchSize,
+		"relay_filter_batch_size":  m.relayFilterBatchSize,
+		"count_sample_interval":    m.countSampleInterval,
+		"counts_sampled":           m.countsSampled,
+		"counts_cached":            m.countsCached,
+		"count_sample_age_batches": m.countSampleAgeBatches,
+		"selected":                 m.selected,
+		"queried":                  m.queried,
+		"hits":                     m.hits,
+		"skipped_attempts":         m.skippedAttempts,
+		"marked_attempted":         m.markedAttempted,
+		"stale_remaining":          m.staleRemaining,
+		"total_pubkeys":            m.totalPubkeys,
+		"hit_rate":                 round3(hitRate),
+		"new_pubkeys":              m.newPubkeys,
+		"batch_ms":                 m.batchDur.Milliseconds(),
+		"fetch_ms":                 m.fetchDur.Milliseconds(),
+		"overhead_ms":              m.overheadDur.Milliseconds(),
+		"pubkeys_per_sec":          round3(pps),
+		"component":                "web-of-trust-crawler",
+		"metric_type":              "batch_speed",
 	}
 	b, _ := json.Marshal(rec)
 	log.Printf("BATCH_METRICS: %s", b)
@@ -81,32 +128,40 @@ func logBatchMetrics(roundID string, batchNum, queried, hits, newPubkeys int, ba
 // end of a run. It carries enough config context (timeout, batch size, quorum,
 // relay count) that each round's numbers are self-describing when diffed.
 type runRecord struct {
-	RoundID          string  `json:"round_id"`
-	Commit           string  `json:"commit"`
-	Version          string  `json:"version"`
-	Label            string  `json:"label,omitempty"`
-	StartedAt        string  `json:"started_at"`
-	EndedAt          string  `json:"ended_at"`
-	RuntimeSec       float64 `json:"runtime_sec"`
-	Batches          int     `json:"batches"`
-	TotalQueried     int     `json:"total_queried"`
-	TotalHits        int     `json:"total_hits"`
-	HitRate          float64 `json:"hit_rate"`
-	PubkeysStart     int     `json:"pubkeys_start"`
-	PubkeysEnd       int     `json:"pubkeys_end"`
-	NetNewPubkeys    int     `json:"net_new_pubkeys"`
-	PubkeysPerSec    float64 `json:"pubkeys_per_sec"`
-	NewPubkeysPerSec float64 `json:"new_pubkeys_per_sec"`
-	AvgBatchMs       int64   `json:"avg_batch_ms"`
-	AvgFetchMs       int64   `json:"avg_fetch_ms"`
-	AvgGetStaleMs    int64   `json:"avg_getstale_ms"`
-	AvgCountPubMs    int64   `json:"avg_countpubkeys_ms"`
-	AvgCountStaleMs  int64   `json:"avg_countstale_ms"`
-	AvgMarkAttMs     int64   `json:"avg_markattempted_ms"`
-	TimeoutSec       float64 `json:"timeout_sec"`
-	BatchSize        int     `json:"batch_size"`
-	Quorum           float64 `json:"quorum"`
-	Relays           int     `json:"relays"`
+	RoundID              string  `json:"round_id"`
+	Commit               string  `json:"commit"`
+	Version              string  `json:"version"`
+	Label                string  `json:"label,omitempty"`
+	StartedAt            string  `json:"started_at"`
+	EndedAt              string  `json:"ended_at"`
+	RuntimeSec           float64 `json:"runtime_sec"`
+	Batches              int     `json:"batches"`
+	TotalSelected        int     `json:"total_selected"`
+	TotalQueried         int     `json:"total_queried"`
+	TotalHits            int     `json:"total_hits"`
+	TotalSkippedAttempts int     `json:"total_skipped_attempts"`
+	TotalMarkedAttempted int     `json:"total_marked_attempted"`
+	CountSamples         int     `json:"count_samples"`
+	CountCachedBatches   int     `json:"count_cached_batches"`
+	HitRate              float64 `json:"hit_rate"`
+	PubkeysStart         int     `json:"pubkeys_start"`
+	PubkeysEnd           int     `json:"pubkeys_end"`
+	NetNewPubkeys        int     `json:"net_new_pubkeys"`
+	PubkeysPerSec        float64 `json:"pubkeys_per_sec"`
+	NewPubkeysPerSec     float64 `json:"new_pubkeys_per_sec"`
+	AvgBatchMs           int64   `json:"avg_batch_ms"`
+	AvgFetchMs           int64   `json:"avg_fetch_ms"`
+	AvgGetStaleMs        int64   `json:"avg_getstale_ms"`
+	AvgCountPubMs        int64   `json:"avg_countpubkeys_ms"`
+	AvgCountStaleMs      int64   `json:"avg_countstale_ms"`
+	AvgMarkAttMs         int64   `json:"avg_markattempted_ms"`
+	TimeoutSec           float64 `json:"timeout_sec"`
+	BatchSize            int     `json:"batch_size"`
+	FrontierBatchSize    int     `json:"frontier_batch_size"`
+	RelayFilterBatchSize int     `json:"relay_filter_batch_size"`
+	CountSampleInterval  int     `json:"count_sample_interval"`
+	Quorum               float64 `json:"quorum"`
+	Relays               int     `json:"relays"`
 }
 
 // buildRunRecord assembles the comparable per-run record from the run's
@@ -125,32 +180,40 @@ func buildRunRecord(roundID string, start, end time.Time, pubkeysStart, pubkeysE
 		npps = float64(netNew) / runtimeSec
 	}
 	return runRecord{
-		RoundID:          roundID,
-		Commit:           version.Commit,
-		Version:          version.Version,
-		Label:            os.Getenv("WOT_ROUND"),
-		StartedAt:        start.UTC().Format(time.RFC3339),
-		EndedAt:          end.UTC().Format(time.RFC3339),
-		RuntimeSec:       round3(runtimeSec),
-		Batches:          stats.batches,
-		TotalQueried:     stats.totalQueried,
-		TotalHits:        stats.totalHits,
-		HitRate:          round3(hitRate),
-		PubkeysStart:     pubkeysStart,
-		PubkeysEnd:       pubkeysEnd,
-		NetNewPubkeys:    netNew,
-		PubkeysPerSec:    round3(pps),
-		NewPubkeysPerSec: round3(npps),
-		AvgBatchMs:       metrics.avg("Batch").Milliseconds(),
-		AvgFetchMs:       metrics.avg("FetchAndUpdateFollows").Milliseconds(),
-		AvgGetStaleMs:    metrics.avg("GetStalePubkeys").Milliseconds(),
-		AvgCountPubMs:    metrics.avg("CountPubkeys").Milliseconds(),
-		AvgCountStaleMs:  metrics.avg("CountStalePubkeys").Milliseconds(),
-		AvgMarkAttMs:     metrics.avg("MarkAttempted").Milliseconds(),
-		TimeoutSec:       round3(cfg.Timeout.Seconds()),
-		BatchSize:        cfg.RelayFilterBatchSize,
-		Quorum:           cfg.RelayEOSEQuorum,
-		Relays:           len(cfg.RelayURLs),
+		RoundID:              roundID,
+		Commit:               version.Commit,
+		Version:              version.Version,
+		Label:                os.Getenv("WOT_ROUND"),
+		StartedAt:            start.UTC().Format(time.RFC3339),
+		EndedAt:              end.UTC().Format(time.RFC3339),
+		RuntimeSec:           round3(runtimeSec),
+		Batches:              stats.batches,
+		TotalSelected:        stats.totalSelected,
+		TotalQueried:         stats.totalQueried,
+		TotalHits:            stats.totalHits,
+		TotalSkippedAttempts: stats.totalSkippedAttempts,
+		TotalMarkedAttempted: stats.totalMarkedAttempted,
+		CountSamples:         stats.countSamples,
+		CountCachedBatches:   stats.countCachedBatches,
+		HitRate:              round3(hitRate),
+		PubkeysStart:         pubkeysStart,
+		PubkeysEnd:           pubkeysEnd,
+		NetNewPubkeys:        netNew,
+		PubkeysPerSec:        round3(pps),
+		NewPubkeysPerSec:     round3(npps),
+		AvgBatchMs:           metrics.avg("Batch").Milliseconds(),
+		AvgFetchMs:           metrics.avg("FetchAndUpdateFollows").Milliseconds(),
+		AvgGetStaleMs:        metrics.avg("GetStalePubkeys").Milliseconds(),
+		AvgCountPubMs:        metrics.avg("CountPubkeys").Milliseconds(),
+		AvgCountStaleMs:      metrics.avg("CountStalePubkeys").Milliseconds(),
+		AvgMarkAttMs:         metrics.avg("MarkAttempted").Milliseconds(),
+		TimeoutSec:           round3(cfg.Timeout.Seconds()),
+		BatchSize:            cfg.RelayFilterBatchSize,
+		FrontierBatchSize:    cfg.FrontierBatchSize,
+		RelayFilterBatchSize: cfg.RelayFilterBatchSize,
+		CountSampleInterval:  cfg.CountSampleInterval,
+		Quorum:               cfg.RelayEOSEQuorum,
+		Relays:               len(cfg.RelayURLs),
 	}
 }
 
