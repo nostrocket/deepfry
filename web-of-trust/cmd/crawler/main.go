@@ -12,9 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"web-of-trust/pkg/config"
 	"web-of-trust/pkg/crawler"
 	"web-of-trust/pkg/dgraph"
@@ -41,19 +38,7 @@ const (
 // given payload — the same oversized request fails identically on every retry —
 // so under indefinite retry it would livelock instead of surfacing the error.
 func isDgraphTransient(err error) bool {
-	if err == nil {
-		return false
-	}
-	st, ok := status.FromError(err)
-	if !ok {
-		return false
-	}
-	switch st.Code() {
-	case codes.Unavailable, codes.DeadlineExceeded:
-		return true
-	default: // ResourceExhausted and all other codes fall through to fatal
-		return false
-	}
+	return dgraph.IsTransientError(err)
 }
 
 // callMetrics accumulates cumulative call duration per call type (D-06/D-07/D-08).
@@ -307,11 +292,13 @@ mainLoop:
 		// Reconnect any dead relays before processing
 		crawler.ReconnectRelays(ctx)
 
-		// Process the batch; hitSet contains pubkeys that returned a kind-3 event.
+		// Process the batch; result.Hits contains pubkeys whose kind-3 events were
+		// handled successfully. result.SkipAttempt contains transient follow-write
+		// failures that must remain retry-eligible.
 		// Time the relay fetch in isolation — it is the long pole, and the
 		// fetch-vs-overhead split is the primary signal for where to optimize.
 		fetchStart := time.Now()
-		hitSet, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
+		result, err := crawler.FetchAndUpdateFollows(ctx, pubkeys)
 		fetchDur := time.Since(fetchStart)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -325,9 +312,9 @@ mainLoop:
 		// Mark every queried pubkey as attempted so un-fetchable ones age out of the
 		// frontier instead of being re-selected every cycle.
 		// D-05: pass the real hit-set so MarkAttempted applies hit vs miss backoff stamping.
-		batchKeys := make([]string, 0, len(pubkeys))
-		for pk := range pubkeys {
-			batchKeys = append(batchKeys, pk)
+		batchKeys := attemptableBatchKeys(pubkeys, result.SkipAttempt)
+		if len(result.SkipAttempt) > 0 {
+			log.Printf("WARN: skipping MarkAttempted for %d transient follow-update failure(s)", len(result.SkipAttempt))
 		}
 		// Construct BackoffParams from config (cfg.MissBackoff) so PERF-02 intervals
 		// are runtime-tunable without rebuilding (D-07). pkg/dgraph never imports
@@ -342,7 +329,7 @@ mainLoop:
 		// or ctx-cancel, log WARN and continue (best-effort write — do NOT break mainLoop).
 		if _, err := retryDgraph(ctx, "MarkAttempted",
 			func() (struct{}, error) {
-				return struct{}{}, dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), hitSet, backoffParams)
+				return struct{}{}, dgraphClient.MarkAttempted(ctx, batchKeys, time.Now().Unix(), result.Hits, backoffParams)
 			}, metrics, time.After); err != nil {
 			log.Printf("Warning: failed to mark batch attempted (best-effort): %v", err)
 		}
@@ -351,7 +338,7 @@ mainLoop:
 		// so on a shrinking frontier totalStale-len(pubkeys) can go negative.
 		staleRemaining := max(0, totalStale-len(pubkeys))
 		log.Printf("Batch complete: queried %d pubkeys (%d had events) | %d stale remaining | %d total in DB",
-			len(pubkeys), len(hitSet), staleRemaining, totalPubkeys)
+			len(pubkeys), len(result.Hits), staleRemaining, totalPubkeys)
 		// OBS-01 (D-05/D-06): cumulative avg per call type, success-only, since process start.
 		log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
 			metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
@@ -369,8 +356,8 @@ mainLoop:
 		newPubkeys := totalPubkeys - prevTotal
 		prevTotal = totalPubkeys
 		batchNum++
-		stats.recordBatch(len(pubkeys), len(hitSet))
-		logBatchMetrics(roundID, batchNum, len(pubkeys), len(hitSet), newPubkeys, batchDur, fetchDur, overheadDur)
+		stats.recordBatch(len(pubkeys), len(result.Hits))
+		logBatchMetrics(roundID, batchNum, len(pubkeys), len(result.Hits), newPubkeys, batchDur, fetchDur, overheadDur)
 	}
 
 	// Generate final report. The main ctx is cancelled at shutdown, so use a
@@ -389,6 +376,17 @@ mainLoop:
 	wg.Wait()
 
 	log.Println("Shutdown complete")
+}
+
+func attemptableBatchKeys(pubkeys map[string]int64, skip map[string]struct{}) []string {
+	out := make([]string, 0, len(pubkeys))
+	for pk := range pubkeys {
+		if _, skipped := skip[pk]; skipped {
+			continue
+		}
+		out = append(out, pk)
+	}
+	return out
 }
 
 // generateFinalReport outputs statistics about the crawler run

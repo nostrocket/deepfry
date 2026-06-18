@@ -106,10 +106,21 @@ type relayState struct {
 	completedGen atomic.Int64
 }
 
+type followStore interface {
+	AddFollowers(ctx context.Context, signerPubkey string, kind3createdAt int64, follows map[string]struct{}, debug bool) error
+	TouchLastDBUpdate(ctx context.Context, pubkey string) (bool, error)
+	Close() error
+}
+
+type FetchResult struct {
+	Hits        map[string]struct{}
+	SkipAttempt map[string]struct{}
+}
+
 type Crawler struct {
 	relays          []*relayState
 	forwardRelay    *relayState
-	dgClient        *dgraph.Client
+	dgClient        followStore
 	timeout         time.Duration
 	debug           bool
 	dbUpdateMutex   sync.Mutex
@@ -474,8 +485,14 @@ func quorumReached(done, queried int32, q float64) bool {
 }
 
 // FetchAndUpdateFollows queries relays for kind 3 events for the given pubkeys
-// and updates the database. Returns the set of pubkeys that had events (hits).
-func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) (map[string]struct{}, error) {
+// and updates the database. Hits contains successfully handled kind-3 pubkeys;
+// SkipAttempt contains pubkeys whose follow update failed transiently and must
+// not be stamped as attempted this batch.
+func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys map[string]int64) (FetchResult, error) {
+	result := FetchResult{
+		Hits:        make(map[string]struct{}),
+		SkipAttempt: make(map[string]struct{}),
+	}
 
 	// Extract pubkey strings from the map
 	authors := make([]string, 0, len(pubkeys))
@@ -614,8 +631,6 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 
 	// Map to keep track of processed event IDs
 	processedEventIDs := make(map[string]struct{})
-	// Track unique pubkeys that had events returned
-	pubkeysWithEvents := make(map[string]struct{})
 	// relayQueryDoneCh is the relay-query context's Done channel. When it fires,
 	// the dispatcher takes the independent timeout/quorum-exit path (HANG-01).
 	relayQueryDoneCh := relayQueryContext.Done()
@@ -686,22 +701,10 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 						continue
 					}
 					c.logSignatureValidationMetrics(ev.PubKey, true)
-					c.forwardEvent(drainCtx, ev)
-					pubkeysWithEvents[ev.PubKey] = struct{}{}
-					if ev.CreatedAt > nostr.Timestamp(pubkeys[ev.PubKey]) {
-						if err2 := c.updateFollowsFromEvent(drainCtx, ev); err2 != nil {
-							c.dbUpdateMutex.Unlock()
-							drainCancel()
-							return pubkeysWithEvents, fmt.Errorf("failed to update follows for pubkey %s: %w", ev.PubKey, err2)
-						}
-						processedEventIDs[ev.ID] = struct{}{}
-					} else {
-						// WR-02: a failed TouchLastDBUpdate leaves last_db_update unadvanced,
-						// keeping the pubkey in the stale frontier to be re-queried forever.
-						// Surface it (debug) instead of silently discarding the error.
-						if _, err2 := c.dgClient.TouchLastDBUpdate(drainCtx, ev.PubKey); err2 != nil && c.debug {
-							log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", ev.PubKey, err2)
-						}
+					if err2 := c.processFetchedEvent(drainCtx, ev, pubkeys, processedEventIDs, &result); err2 != nil {
+						c.dbUpdateMutex.Unlock()
+						drainCancel()
+						return result, err2
 					}
 				default:
 					break drainLoop
@@ -797,14 +800,14 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 				}
 			}
 
-			return pubkeysWithEvents, nil
+			return result, nil
 
 		case <-relayContext.Done():
 			// The main context was cancelled (external cancellation — e.g. SIGINT).
 			if c.debug {
 				log.Printf("Main context cancelled while processing events: %v", relayContext.Err())
 			}
-			return pubkeysWithEvents, relayContext.Err()
+			return result, relayContext.Err()
 
 		case event, ok := <-eventsChan:
 			c.dbUpdateMutex.Lock()
@@ -814,7 +817,7 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 					log.Printf("Processed follows for %d pubkeys across %d relays", len(processedEventIDs), len(c.relays))
 				}
 				c.dbUpdateMutex.Unlock()
-				return pubkeysWithEvents, nil
+				return result, nil
 			}
 
 			if event == nil {
@@ -840,29 +843,10 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			}
 			c.logSignatureValidationMetrics(event.PubKey, true)
 
-			c.forwardEvent(relayContext, event)
-
-			pubkeysWithEvents[event.PubKey] = struct{}{}
-
-			if event.CreatedAt <= nostr.Timestamp(pubkeys[event.PubKey]) {
-				if c.debug {
-					fmt.Println("already have newer event for " + event.PubKey)
-				}
-				// WR-02: surface a failed TouchLastDBUpdate (debug) rather than dropping
-				// it — a discarded error keeps the pubkey stale and re-queried forever.
-				if _, err2 := c.dgClient.TouchLastDBUpdate(relayContext, event.PubKey); err2 != nil && c.debug {
-					log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", event.PubKey, err2)
-				}
+			if err := c.processFetchedEvent(relayContext, event, pubkeys, processedEventIDs, &result); err != nil {
 				c.dbUpdateMutex.Unlock()
-				continue
+				return result, err
 			}
-
-			// Process the event using original context (no relay timeout)
-			if err := c.updateFollowsFromEvent(relayContext, event); err != nil {
-				c.dbUpdateMutex.Unlock()
-				return pubkeysWithEvents, fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
-			}
-			processedEventIDs[event.ID] = struct{}{}
 			c.dbUpdateMutex.Unlock()
 
 		case re, ok := <-errorsChan:
@@ -892,6 +876,49 @@ func (c *Crawler) FetchAndUpdateFollows(relayContext context.Context, pubkeys ma
 			c.markRelayDead(re.url, class)
 		}
 	}
+}
+
+func (c *Crawler) processFetchedEvent(
+	ctx context.Context,
+	event *nostr.Event,
+	pubkeys map[string]int64,
+	processedEventIDs map[string]struct{},
+	result *FetchResult,
+) error {
+	c.forwardEvent(ctx, event)
+
+	if event.CreatedAt <= nostr.Timestamp(pubkeys[event.PubKey]) {
+		if c.debug {
+			fmt.Println("already have newer event for " + event.PubKey)
+		}
+		// WR-02: surface a failed TouchLastDBUpdate (debug) rather than dropping
+		// it — a discarded error keeps the pubkey stale and re-queried forever.
+		if _, err := c.dgClient.TouchLastDBUpdate(ctx, event.PubKey); err != nil && c.debug {
+			log.Printf("WARN: TouchLastDBUpdate failed for %s: %v", event.PubKey, err)
+		}
+		result.Hits[event.PubKey] = struct{}{}
+		return nil
+	}
+
+	if err := c.updateFollowsFromEvent(ctx, event); err != nil {
+		if dgraph.IsTransientError(err) {
+			log.Printf(
+				"WARN: transient follow update failed pubkey=%s created_at=%d retry_scheduled=true: %v",
+				event.PubKey,
+				event.CreatedAt,
+				err,
+			)
+			result.SkipAttempt[event.PubKey] = struct{}{}
+			processedEventIDs[event.ID] = struct{}{}
+			return nil
+		}
+		return fmt.Errorf("failed to update follows for pubkey %s: %w", event.PubKey, err)
+	}
+
+	result.Hits[event.PubKey] = struct{}{}
+	delete(result.SkipAttempt, event.PubKey)
+	processedEventIDs[event.ID] = struct{}{}
+	return nil
 }
 
 // drainSubscription reads events from sub until EOSE, context cancellation, or
