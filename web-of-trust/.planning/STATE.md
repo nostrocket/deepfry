@@ -1,40 +1,44 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Crawler Hang Fix
-status: Awaiting next milestone
-last_updated: "2026-06-17T10:10:00.000Z"
-last_activity: 2026-06-17 — Spike 001 added crawler speed instrumentation; crawl-speed optimization effort underway
+milestone: v1.5
+milestone_name: Dgraph Follow-Update Timeout Resilience
+status: planning
+last_updated: "2026-06-18T07:36:52.684Z"
+last_activity: 2026-06-18 — Milestone v1.5 roadmap created
 progress:
   total_phases: 1
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 100
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
-# Project State: Web-of-Trust Crawler — v1.4 Crawler Hang Fix (Relay-Query Liveness)
+# Project State: Web-of-Trust Crawler — v1.5 Dgraph Follow-Update Timeout Resilience
 
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-18
 
 ## Project Reference
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 11 — relay-query-liveness
+**Current focus:** Phase 12 — Dgraph Follow-Update Resilience
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
+Phase: 12 — Dgraph Follow-Update Resilience
 Plan: —
-Status: Awaiting next milestone (crawl-speed optimization underway via spikes)
-Last activity: 2026-06-17 — Spike 001 added crawler speed instrumentation (production metrics + round comparison)
+Status: Ready to plan
+Last activity: 2026-06-18 — Milestone v1.5 requirements and roadmap created
 
 ## Performance Metrics
 
-- Phases complete (v1.4): 0 / 1
-- Requirements delivered (v1.4): 0 / 4
-- Plans complete (v1.4): 0 / TBD
+- Phases complete (v1.5): 0 / 1
+- Requirements delivered (v1.5): 0 / 6 (DWRITE-01/02/03/04, OBS-02, TEST-06)
+- Plans complete (v1.5): 0 / TBD
+
+- Phases complete (v1.4): 1 / 1
+- Requirements delivered (v1.4): 4 / 4 (HANG-01/02/03, TEST-02)
+- Plans complete (v1.4): 1 / 1
 
 - Phases complete (v1.3): 1 / 1
 - Requirements delivered (v1.3): 8 / 8 (RETRY-01/02/03, BACKOFF-01/02, SHUTDOWN-01, OBS-01, TEST-01)
@@ -57,24 +61,26 @@ Last activity: 2026-06-17 — Spike 001 added crawler speed instrumentation (pro
 | queryRelay wraps relay.Subscribe in child goroutine with ctx-select (HANG-02) | Fix #2: reduces goroutine leak frequency; goroutine still leaks but no longer blocks the batch. Combined with #1 so leaks are bounded. |
 | Websocket write deadline / keepalive hardening (HANG-03) | Fix #3: makes half-open connections die, cancelling connectionContext, unblocking Fire() — reduces leak frequency. Does not replace #1+#2 but shortens the window. |
 | Phase 11-relay-query-liveness P01 | 25 | 3 tasks | 2 files |
+| v1.5 scoped to Dgraph follow-update timeout resilience | The 2026-06-18 production failure is a write-path `DeadlineExceeded` after relay fetch succeeded; fix the abort condition before broader throughput tuning. |
+| Phase 12 = single Dgraph write-path resilience phase | Requirements all touch `AddFollowers` / Dgraph write classification / observability / tests, with no useful intermediate user-visible slice. |
 
 ### Important Facts
 
-- Root cause confirmed via SIGQUIT goroutine dump: two query goroutines wedged 48 minutes in go-nostr `subscription.go:187` (bare channel receive on write queue, no ctx select).
-- Affected files: `pkg/crawler/crawler.go` (FetchAndUpdateFollows dispatcher ~lines 432–642, queryRelay ~line 686+).
-- The `queryRelayFn` seam already exists on `Crawler` (WR-05 precedent from Phase 7); the regression test uses it to inject a blocking stub.
-- `make test` runs with `-short` flag; no live Dgraph required for these unit tests — pure `pkg/crawler` logic.
-- go-nostr v0.52.0's `Subscription.Fire()` (subscription.go:187) ignores caller ctx; only `r.connectionContext` (relay's own lifetime ctx) can unblock it.
-- EOSE-quorum early-exit (TIMEOUT-02) is orthogonal; do not modify quorum logic unless the liveness fix requires it.
-- Relay health / auto-ejection thresholds (RELAY-01/02/03) are out of scope; ejection already works.
+- Production failure that opened v1.5: `failed to add follows: query follower failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded` for pubkey `314072c16fa9433e1374f62e5b02c8163946ed298a9cde3b1541513c29d19fff`.
+- Batch context: queried 1000 pubkeys, 567 had events, `batch_ms=61166`, `fetch_ms=13773`, `overhead_ms=47393`; Dgraph/bookkeeping dominated the batch after relay fetch returned.
+- Likely affected code: Dgraph follow update path (`pkg/dgraph` `AddFollowers` and caller path from `pkg/crawler` / `cmd/crawler`), especially follower lookup and edge mutation behavior for large contact lists.
+- The fix must preserve Dgraph as an ID-only graph store; no event payloads outside StrFry.
+- Live config remains `~/deepfry/web-of-trust.yaml`; never edit it in tests.
+- `make test` runs short tests without live Dgraph. Add live-Dgraph integration coverage only behind the existing integration-test pattern.
 
 ### Todos
 
-- [ ] Plan Phase 11 (`/gsd-plan-phase 11`)
+- [ ] Plan Phase 12 (`/gsd-plan-phase 12`)
 
 ### Roadmap Evolution
 
 - Phase 11 added 2026-06-16: "Relay-Query Liveness" — v1.4 opens a single phase fixing the 48-minute hang: dispatcher returns on relay-query timeout (HANG-01), queryRelay bounded against context-ignoring Fire() (HANG-02), websocket write deadline / keepalive hardening (HANG-03), regression test gate (TEST-02).
+- Phase 12 added 2026-06-18: "Dgraph Follow-Update Resilience" — v1.5 opens a single phase for the production Dgraph `DeadlineExceeded` in follow updates: transient timeout handling, bounded large-list writes, partial-progress safety, observability, and regression coverage.
 
 ### Blockers
 
@@ -90,7 +96,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md`. v1.4 has one phase (Phase 11) covering all 4 requirements (HANG-01, HANG-02, HANG-03, TEST-02). All work targets `pkg/crawler/crawler.go`. The acceptance gate is `TestFetchAndUpdateFollows_ReturnsWhenRelayQueryBlocks` passing GREEN under `make test`. Run `/gsd-plan-phase 11` to produce the execution plan.
+**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md`. v1.5 has one phase (Phase 12) covering all 6 requirements (DWRITE-01/02/03/04, OBS-02, TEST-06). Start by planning Phase 12 against the Dgraph follow-update path and the 2026-06-18 production `DeadlineExceeded` log. Run `/gsd-plan-phase 12` to produce the execution plan.
 
 ## Decisions
 
@@ -108,11 +114,7 @@ None.
 
 ## Operator Next Steps
 
-- **Active effort — crawl-speed optimization** (spike-driven, not yet a formal milestone):
-  - Spike 001 (`.planning/spikes/001-crawl-speed-instrumentation/`) added production
-    metrics: per-batch `BATCH_METRICS:` lines + per-run records in `~/deepfry/crawler-metrics.jsonl`.
-  - Next concrete step: capture a **baseline round** on the strfry host
-    (`make build-crawler && WOT_ROUND=baseline ./bin/crawler`), then work the
-    optimization backlog in `.planning/spikes/MANIFEST.md` one variable at a time.
-  - See README "Next Tasks & Future Improvements" for the full backlog and resume map.
-- When ready to formalize, open a milestone with `/gsd-new-milestone` (e.g. "v1.5 — Crawl Throughput").
+- **Active milestone — v1.5 Dgraph Follow-Update Timeout Resilience**
+  - Next command: `/gsd-plan-phase 12`
+  - Use the production log from 2026-06-18 as the acceptance scenario: a Dgraph `DeadlineExceeded` in the follow-update path must not abort the crawler run.
+  - Keep the broader crawl-speed optimization backlog in `.planning/spikes/MANIFEST.md` deferred until the write-path abort is fixed.

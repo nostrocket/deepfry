@@ -8,13 +8,26 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.4 Crawler Hang Fix (Relay-Query Liveness) — SHIPPED (2026-06-16)
+## Current State: v1.5 Dgraph Follow-Update Timeout Resilience — PLANNED (2026-06-18)
+
+**Goal:** A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
+
+**Status:** New milestone opened from the 2026-06-18 production failure where batch 1 queried 1000 pubkeys, found 567 events, spent ~47s outside relay fetch, then aborted while updating follows for pubkey `314072c16fa9433e1374f62e5b02c8163946ed298a9cde3b1541513c29d19fff`: `failed to add follows: query follower failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded`. The failure points at the follow-write path (`AddFollowers` / follower lookup / mutation), not relay-query liveness. Phase 12 will make Dgraph follow updates bounded, retryable where safe, observable, and non-fatal to the overall crawl loop.
+
+**Target fixes:**
+- **DWRITE**: Bound and harden `AddFollowers` / follow-edge update paths so one large pubkey or slow follower lookup cannot abort the run.
+- **RETRY**: Treat transient Dgraph write-path `DeadlineExceeded` as recoverable at the pubkey/update level while preserving fatal handling for non-transient errors.
+- **CORRECTNESS**: Preserve graph correctness under partial progress; no duplicate edge corruption, no event payload storage, no StrFry changes.
+- **OBSERVABILITY**: Log enough operation/pubkey/follow-count/timing context to diagnose slow follow updates in production without raw secrets or event payloads.
+- **TESTING**: Add deterministic regression coverage for timeout/retry/partial-progress behavior without requiring live Dgraph for unit tests.
+
+## Previous State: v1.4 Crawler Hang Fix (Relay-Query Liveness) — SHIPPED (2026-06-16)
 
 **Goal:** A single stuck or half-open relay must never wedge the crawler — `FetchAndUpdateFollows` must always return on its own relay-query timeout, without leaking goroutines unboundedly.
 
 **Status:** All 4 requirements delivered in a single phase (Phase 11), closing the ~48-minute production hang diagnosed via SIGQUIT goroutine dump (root cause in `web-of-trust/HANG-FINDINGS.md`). The dispatcher now exits independently of `wg.Wait()` / `eventsChan` close (HANG-01); `relay.Subscribe` runs in a child goroutine with a ctx-select so `queryRelay` returns on timeout even when go-nostr's `Fire()` ignores the context (HANG-02); and outstanding relays are closed + marked-dead on the timeout path / closed without penalty on the quorum-cancel path, reaping leaked goroutines (HANG-03). go-nostr exposes no write-deadline API, so the "or equivalent keepalive" clause was satisfied by connection-close rather than a literal write deadline. An adversarial code-review loop caught and fixed 2 critical concurrency defects (range-during-compaction; quorum-path subscription leak) before the milestone closed; the `completedThisBatch` boolean was hardened to a per-batch generation token. Verified: `make test` green, three liveness tests pass under `-race`. Full archive: `milestones/v1.4-ROADMAP.md`, `milestones/v1.4-REQUIREMENTS.md`, `milestones/v1.4-MILESTONE-AUDIT.md`.
 
-**Next milestone:** Not yet defined. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
+**Next milestone:** v1.5 Dgraph Follow-Update Timeout Resilience — see Current State above. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
 
 ## Previous State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 
@@ -71,7 +84,16 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **HANG-03** — outstanding relays closed + marked-dead on timeout (closed without penalty on quorum-cancel), reaping leaked goroutines; per-batch generation token replaces the marker boolean — shipped v1.4 (Phase 11)
 - ✓ **TEST-02** — regression + partial-progress + close-on-timeout + quorum-close tests; `make test` green, all pass under `-race` — shipped v1.4 (Phase 11)
 
-_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Phase 11) all delivered. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05) remain deferred to a later milestone._
+_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Phase 11) all delivered. v1.5 is active for Dgraph follow-update timeout resilience. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05) remain deferred to a later milestone._
+
+### Active
+
+- [ ] **DWRITE-01**: A transient Dgraph `DeadlineExceeded` during follow updates does not abort the crawler process or discard the rest of the batch.
+- [ ] **DWRITE-02**: Follow-edge writes for large contact lists are bounded into safe units with per-unit context deadlines and partial-progress accounting.
+- [ ] **DWRITE-03**: Failed follow updates leave the pubkey eligible for a later retry without corrupting existing follow edges or permanently aging it out as a clean miss.
+- [ ] **DWRITE-04**: Fatal Dgraph write errors still fail loudly rather than being hidden by the transient-retry path.
+- [ ] **OBS-02**: Production logs identify slow follow-update operations by pubkey, follow-count/chunk, elapsed time, retry count, and final outcome.
+- [ ] **TEST-06**: Unit or integration-style tests cover timeout classification, chunk/partial-progress behavior, retry scheduling, and fatal-error passthrough.
 
 ### Out of Scope
 
@@ -86,6 +108,7 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Pha
 - v1.1 shipped Phase 3 (write-path correctness + regression coverage). Phase 4 (RemoveFollower injection hardening, SEC-01/02) was deferred — documented as a future idea, not part of any active milestone.
 - v1.2 is motivated by a 40-batch production run (20,000 pubkeys queried): 172 relays, 38s avg batch time, 789 pubkeys/min, 0.76% event hit rate, 43 new nodes added. Full analysis in `.planning/research/` or conversation history.
 - Key root causes: `nostr.GetPublicKey` misused as pubkey validator; 500-author filter exceeds most relay limits; stale frontier ordered by age not by graph significance (follower count).
+- v1.5 production signal: with `RelayFilterBatchSize` effectively at 1000 for the measured run, relay fetch was ~13.8s but total batch time was ~61.2s; Dgraph overhead dominated before the follow-update path hit `DeadlineExceeded`.
 - Tech: Go 1.24.1+, `go-nostr`, `dgo/v210` Dgraph gRPC client, `viper` for YAML config.
 
 ## Constraints
@@ -114,6 +137,8 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Pha
 | v1.3 single generic `retryDgraph[T]` helper over four near-identical blocks | Collapses four bounded retry blocks into one indefinite-retry helper; injected sleep fn enables deterministic unit tests without a live Dgraph | ✓ Shipped v1.3 (Phase 10) |
 | v1.4 bound the hang at the crawler (dispatcher exit + conn-close) rather than fork go-nostr | go-nostr v0.52's `Fire()` ignores the per-call ctx and exposes no write-deadline API; closing the connection cancels the relay's connectionContext to reap the parked write loop + leaked goroutine — satisfies HANG-03's "or equivalent keepalive" without forking | ✓ Shipped v1.4 (Phase 11) |
 | v1.4 per-batch generation token instead of a reset-to-false marker boolean | A monotonic generation has no reset to race, eliminating the cross-batch marker race a leftover goroutine could otherwise cause | ✓ Shipped v1.4 (Phase 11) |
+| v1.5 scoped to Dgraph follow-update timeout resilience before broader throughput tuning | The latest production failure is a correctness/liveness break in the write path; the broader crawl-speed backlog remains useful but should not hide the immediate abort condition | — Pending |
+| v1.5 continues phase numbering with Phase 12 | v1.4 shipped Phase 11 and config uses sequential phase naming | — Pending |
 
 ## Evolution
 
@@ -133,4 +158,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-16 after v1.4 milestone — Crawler Hang Fix (Relay-Query Liveness) shipped (4/4 requirements, Phase 11); tagged v1.4.*
+*Last updated: 2026-06-18 after v1.5 milestone start — Dgraph Follow-Update Timeout Resilience planned from production `DeadlineExceeded` failure.*

@@ -6,8 +6,29 @@
 - ✅ **v1.2 Crawler Reliability & Efficiency** — Phases 5–9 (shipped 2026-06-15)
 - ✅ **v1.3 Unbounded Dgraph Retry Resilience** — Phase 10 (shipped 2026-06-15)
 - ✅ **v1.4 Crawler Hang Fix (Relay-Query Liveness)** — Phase 11 (shipped 2026-06-16)
+- ◆ **v1.5 Dgraph Follow-Update Timeout Resilience** — Phase 12 (planned 2026-06-18)
 
 ## Phases
+
+<details open>
+<summary>◆ v1.5 Dgraph Follow-Update Timeout Resilience (Phase 12) — PLANNED</summary>
+
+Requirements in [`REQUIREMENTS.md`](./REQUIREMENTS.md).
+
+- [ ] Phase 12: Dgraph Follow-Update Resilience (0/TBD plans)
+
+Goal: A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
+
+Requirements covered: DWRITE-01, DWRITE-02, DWRITE-03, DWRITE-04, OBS-02, TEST-06.
+
+Success criteria:
+1. A simulated or real Dgraph `DeadlineExceeded` from the follow-update path is handled as a transient pubkey/update failure, not a crawler-process abort.
+2. Large follow lists are written in bounded units with clear partial-progress behavior and no duplicate/corrupt follow-edge state.
+3. Fatal Dgraph write errors still surface loudly and are not retried indefinitely under the transient path.
+4. Production logs show enough timing and chunk/pubkey context to diagnose slow `AddFollowers` operations.
+5. `make test` passes with regression coverage for timeout classification, partial progress, retry scheduling, and fatal passthrough.
+
+</details>
 
 <details>
 <summary>✅ v1.3 Unbounded Dgraph Retry Resilience (Phase 10) — SHIPPED 2026-06-15</summary>
@@ -64,3 +85,4 @@ Full detail archived in [`milestones/v1.4-ROADMAP.md`](./milestones/v1.4-ROADMAP
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
 | 11. Relay-Query Liveness | v1.4 | 1/1 | Complete    | 2026-06-16 |
+| 12. Dgraph Follow-Update Resilience | v1.5 | 0/TBD | Planned | — |
