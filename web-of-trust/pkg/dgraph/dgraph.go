@@ -11,7 +11,9 @@ import (
 	"github.com/dgraph-io/dgo/v210"
 	"github.com/dgraph-io/dgo/v210/protos/api"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // Abstraction layer over Dgraph to store a Nostr Web-of-Trust (kind 3) graph.
@@ -92,6 +94,132 @@ const (
 	batchSize       = 200
 )
 
+// IsTransientError classifies Dgraph/gRPC failures that are worth scheduling
+// for a later attempt. ResourceExhausted remains fatal: oversized gRPC messages
+// are structural for the payload and indefinite retry would livelock.
+func IsTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// FollowUpdateError adds AddFollowers progress context while preserving the
+// underlying Dgraph/gRPC error for errors.As/errors.Is/status.FromError callers.
+type FollowUpdateError struct {
+	Pubkey      string
+	FollowCount int
+	Phase       string
+	ChunkIndex  int
+	ChunkTotal  int
+	Elapsed     time.Duration
+	RetryCount  int
+	Outcome     string
+	Underlying  error
+}
+
+func (e *FollowUpdateError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf(
+		"follow update pubkey=%s follows=%d phase=%s chunk=%d/%d elapsed=%s retry_count=%d outcome=%s: %v",
+		e.Pubkey,
+		e.FollowCount,
+		e.Phase,
+		e.ChunkIndex,
+		e.ChunkTotal,
+		e.Elapsed,
+		e.RetryCount,
+		e.Outcome,
+		e.Underlying,
+	)
+}
+
+func (e *FollowUpdateError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Underlying
+}
+
+type followUpdateProgress struct {
+	pubkey          string
+	followCount     int
+	totalChunks     int
+	completedChunks int
+	currentPhase    string
+	currentChunk    int
+	started         time.Time
+	retryCount      int
+}
+
+func newFollowUpdateProgress(pubkey string, followCount int, totalChunks int) *followUpdateProgress {
+	if totalChunks < 1 {
+		totalChunks = 1
+	}
+	return &followUpdateProgress{
+		pubkey:      pubkey,
+		followCount: followCount,
+		totalChunks: totalChunks,
+		started:     time.Now(),
+	}
+}
+
+func (p *followUpdateProgress) beginChunk(phase string, chunkIndex int) {
+	p.currentPhase = phase
+	if chunkIndex <= 0 {
+		chunkIndex = p.completedChunks + 1
+	}
+	p.currentChunk = chunkIndex
+	if p.currentChunk > p.totalChunks {
+		p.totalChunks = p.currentChunk
+	}
+}
+
+func (p *followUpdateProgress) completeChunk() {
+	if p.currentChunk > p.completedChunks {
+		p.completedChunks = p.currentChunk
+	}
+}
+
+func (p *followUpdateProgress) finish(outcome string, err error) *FollowUpdateError {
+	if err == nil {
+		return nil
+	}
+	chunk := p.currentChunk
+	if chunk == 0 {
+		chunk = p.completedChunks
+	}
+	if chunk == 0 {
+		chunk = 1
+	}
+	return &FollowUpdateError{
+		Pubkey:      p.pubkey,
+		FollowCount: p.followCount,
+		Phase:       p.currentPhase,
+		ChunkIndex:  chunk,
+		ChunkTotal:  p.totalChunks,
+		Elapsed:     time.Since(p.started),
+		RetryCount:  p.retryCount,
+		Outcome:     outcome,
+		Underlying:  err,
+	}
+}
+
+func withWindowTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, perBatchTimeout)
+}
+
 // chunkSlice splits items into consecutive windows of at most size elements.
 // It is a pure helper (no Dgraph dependency) so it can be unit-tested as the
 // seam for the internal batching in AddFollowers. It never returns a nil or
@@ -128,10 +256,34 @@ func (c *Client) AddFollowers(
 	follows map[string]struct{},
 	debug bool,
 ) error {
+	progress := newFollowUpdateProgress(signerPubkey, len(follows), 1)
+	logFinish := func(outcome string, elapsed time.Duration) {
+		log.Printf(
+			"follow_update pubkey=%s follows=%d chunk=%d/%d elapsed=%s retry_count=%d outcome=%s",
+			progress.pubkey,
+			progress.followCount,
+			progress.currentChunk,
+			progress.totalChunks,
+			elapsed,
+			progress.retryCount,
+			outcome,
+		)
+	}
+	fail := func(format string, args ...interface{}) error {
+		err := fmt.Errorf(format, args...)
+		outcome := "fatal_error"
+		if IsTransientError(err) {
+			outcome = "transient_error"
+		}
+		wrapped := progress.finish(outcome, err)
+		logFinish(outcome, wrapped.Elapsed)
+		return wrapped
+	}
+
 	// Validation gate (D-08/D-09): an invalid signer is rejected outright and
 	// nothing is written, so a malformed pubkey never reaches an nquad.
 	if !isValidHexPubkey(signerPubkey) {
-		return fmt.Errorf("invalid signer pubkey %q: must be 64 hex chars", signerPubkey)
+		return fail("invalid signer pubkey %q: must be 64 hex chars", signerPubkey)
 	}
 
 	// Size-scaled timeout (D-07): one live context for the whole operation, so
@@ -146,7 +298,6 @@ func (c *Client) AddFollowers(
 		log.Printf("DEBUG: Starting AddFollowers for pubkey %s with %d follows",
 			signerPubkey, len(follows))
 	}
-	start := time.Now()
 
 	lastUpdate := time.Now().Unix()
 
@@ -167,13 +318,17 @@ func (c *Client) AddFollowers(
 		}
 	}`, signerPubkey)
 
-	resp, err := txn.Query(queryCtx, followerQuery)
+	progress.beginChunk("query_follower", 1)
+	windowCtx, windowCancel := withWindowTimeout(queryCtx)
+	resp, err := txn.Query(windowCtx, followerQuery)
+	windowCancel()
 	if err != nil {
-		return fmt.Errorf("query follower failed: %w", err)
+		return fail("query follower failed: %w", err)
 	}
+	progress.completeChunk()
 	if debug {
 		log.Printf("DEBUG: Initial follower query completed in %v",
-			time.Since(start))
+			time.Since(progress.started))
 	}
 
 	var result struct {
@@ -187,12 +342,27 @@ func (c *Client) AddFollowers(
 		} `json:"follower"`
 	}
 	if err := json.Unmarshal(resp.Json, &result); err != nil {
-		return fmt.Errorf("unmarshal follower failed: %w", err)
+		return fail("unmarshal follower failed: %w", err)
 	}
 
 	// Create/update follower
 	var followerUID string
 	existingFollows := make(map[string]string) // pubkey -> uid
+
+	followeeList := make([]string, 0, len(follows))
+	for followee := range follows {
+		if !isValidHexPubkey(followee) {
+			log.Printf("WARN: skipping invalid followee pubkey %q for signer %s",
+				followee, signerPubkey)
+			continue
+		}
+		followeeList = append(followeeList, followee)
+	}
+	followeeChunks := chunkSlice(followeeList, batchSize)
+	// Upper-bound total before resolving missing followees. Missing-followee
+	// creation shares the same window count as followee resolution, and edge
+	// mutation windows are capped by the same valid followee count.
+	progress.totalChunks = 2 + len(followeeChunks)*3 + 1 // follower + timestamp + windows + commit
 
 	if len(result.Follower) == 0 {
 		// Create new follower
@@ -207,10 +377,14 @@ func (c *Client) AddFollowers(
 			SetNquads: []byte(followerNQuads),
 			CommitNow: false,
 		}
-		assigned, err := txn.Mutate(queryCtx, mu)
+		progress.beginChunk("create_follower", progress.completedChunks+1)
+		windowCtx, windowCancel := withWindowTimeout(queryCtx)
+		assigned, err := txn.Mutate(windowCtx, mu)
+		windowCancel()
 		if err != nil {
-			return fmt.Errorf("create follower failed: %w", err)
+			return fail("create follower failed: %w", err)
 		}
+		progress.completeChunk()
 		followerUID = assigned.Uids["follower"]
 		log.Printf("New pubkey added to graph (signer): %s", signerPubkey)
 	} else {
@@ -218,6 +392,11 @@ func (c *Client) AddFollowers(
 		existingKind3CreatedAt := result.Follower[0].Kind3CreatedAt
 		if kind3createdAt <= existingKind3CreatedAt {
 			// Skip update - existing event is newer or same age
+			if debug {
+				progress.beginChunk("skipped_old_event", progress.completedChunks+1)
+				progress.completeChunk()
+				logFinish("success", time.Since(progress.started))
+			}
 			return nil
 		}
 
@@ -239,12 +418,18 @@ func (c *Client) AddFollowers(
 		SetNquads: []byte(updateNQuads),
 		CommitNow: false,
 	}
-	if _, err := txn.Mutate(queryCtx, mu); err != nil {
-		return fmt.Errorf("update follower timestamps failed: %w", err)
+	progress.beginChunk("update_follower_timestamps", progress.completedChunks+1)
+	windowCtx, windowCancel = withWindowTimeout(queryCtx)
+	_, err = txn.Mutate(windowCtx, mu)
+	windowCancel()
+	if err != nil {
+		return fail("update follower timestamps failed: %w", err)
 	}
+	progress.completeChunk()
 
 	// Step 2: Remove all existing follows (kind 3 is replaceable)
 	if len(existingFollows) > 0 {
+		progress.totalChunks++
 		var delNQuads string
 		for _, uid := range existingFollows {
 			delNQuads += fmt.Sprintf("<%s> <follows> <%s> .\n",
@@ -254,9 +439,14 @@ func (c *Client) AddFollowers(
 			DelNquads: []byte(delNQuads),
 			CommitNow: false,
 		}
-		if _, err := txn.Mutate(queryCtx, mu); err != nil {
-			return fmt.Errorf("remove existing follows failed: %w", err)
+		progress.beginChunk("remove_existing_follows", progress.completedChunks+1)
+		windowCtx, windowCancel = withWindowTimeout(queryCtx)
+		_, err = txn.Mutate(windowCtx, mu)
+		windowCancel()
+		if err != nil {
+			return fail("remove existing follows failed: %w", err)
 		}
+		progress.completeChunk()
 	}
 
 	// Step 3: Resolve followees and create follow edges, batched in batchSize
@@ -264,19 +454,9 @@ func (c *Client) AddFollowers(
 	// at ~10k followees a single query string would itself blow past the ~4MB
 	// gRPC cap (D-06). Invalid followees are skipped and logged so one bad entry
 	// never aborts the rest of the list (D-09).
-	if len(follows) > 0 {
-		followeeList := make([]string, 0, len(follows))
-		for followee := range follows {
-			if !isValidHexPubkey(followee) {
-				log.Printf("WARN: skipping invalid followee pubkey %q for signer %s",
-					followee, signerPubkey)
-				continue
-			}
-			followeeList = append(followeeList, followee)
-		}
-
+	if len(followeeList) > 0 {
 		var allEdgeNQuads strings.Builder
-		for _, window := range chunkSlice(followeeList, batchSize) {
+		for _, window := range followeeChunks {
 			// Build the followee-resolution query for just this window.
 			queryParts := make([]string, 0, len(window))
 			for i, followee := range window {
@@ -288,16 +468,20 @@ func (c *Client) AddFollowers(
 			}
 			bulkQuery := fmt.Sprintf("{ %s }", strings.Join(queryParts, "\n"))
 
-			bulkResp, err := txn.Query(queryCtx, bulkQuery)
+			progress.beginChunk("resolve_followees", progress.completedChunks+1)
+			windowCtx, windowCancel = withWindowTimeout(queryCtx)
+			bulkResp, err := txn.Query(windowCtx, bulkQuery)
+			windowCancel()
 			if err != nil {
-				return fmt.Errorf("bulk query followees failed: %w", err)
+				return fail("bulk query followees failed: %w", err)
 			}
+			progress.completeChunk()
 
 			var bulkResult map[string][]struct {
 				UID string `json:"uid"`
 			}
 			if err := json.Unmarshal(bulkResp.Json, &bulkResult); err != nil {
-				return fmt.Errorf("unmarshal bulk followees failed: %w", err)
+				return fail("unmarshal bulk followees failed: %w", err)
 			}
 
 			// Stage stub creation for missing followees in this window.
@@ -326,10 +510,14 @@ func (c *Client) AddFollowers(
 					SetNquads: []byte(createNQuads),
 					CommitNow: false,
 				}
-				assigned, err := txn.Mutate(queryCtx, mu)
+				progress.beginChunk("create_missing_followees", progress.completedChunks+1)
+				windowCtx, windowCancel = withWindowTimeout(queryCtx)
+				assigned, err := txn.Mutate(windowCtx, mu)
+				windowCancel()
 				if err != nil {
-					return fmt.Errorf("create missing followees failed: %w", err)
+					return fail("create missing followees failed: %w", err)
 				}
+				progress.completeChunk()
 				for i, uid := range followeeUIDs {
 					if strings.HasPrefix(uid, "_:") {
 						blankNodeID := uid[2:]
@@ -338,6 +526,9 @@ func (c *Client) AddFollowers(
 						}
 					}
 				}
+			} else {
+				progress.beginChunk("create_missing_followees", progress.completedChunks+1)
+				progress.completeChunk()
 			}
 
 			// Accumulate follow edges for this window.
@@ -361,23 +552,30 @@ func (c *Client) AddFollowers(
 				SetNquads: []byte(edgeNQuads),
 				CommitNow: false,
 			}
-			if _, err := txn.Mutate(queryCtx, mu); err != nil {
-				return fmt.Errorf("create follow edges failed: %w", err)
+			progress.beginChunk("create_follow_edges", progress.completedChunks+1)
+			windowCtx, windowCancel = withWindowTimeout(queryCtx)
+			_, err = txn.Mutate(windowCtx, mu)
+			windowCancel()
+			if err != nil {
+				return fail("create follow edges failed: %w", err)
 			}
+			progress.completeChunk()
 		}
 	}
 
 	// Commit all changes
-	if err := txn.Commit(queryCtx); err != nil {
-		return fmt.Errorf("commit transaction failed: %w", err)
+	progress.beginChunk("commit_transaction", progress.completedChunks+1)
+	windowCtx, windowCancel = withWindowTimeout(queryCtx)
+	err = txn.Commit(windowCtx)
+	windowCancel()
+	if err != nil {
+		return fail("commit transaction failed: %w", err)
 	}
+	progress.completeChunk()
 
-	if debug {
-		log.Printf(
-			"DEBUG: AddFollowers completed successfully in %v for pubkey %s",
-			time.Since(start),
-			signerPubkey,
-		)
+	elapsed := time.Since(progress.started)
+	if debug || elapsed > baseTimeout || len(followeeList) > batchSize {
+		logFinish("success", elapsed)
 	}
 	return nil
 }
