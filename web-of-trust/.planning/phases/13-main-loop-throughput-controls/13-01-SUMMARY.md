@@ -35,6 +35,7 @@ key-files:
     - cmd/crawler/metrics.go
     - cmd/crawler/metrics_test.go
     - .planning/phases/13-main-loop-throughput-controls/13-01-PLAN.md
+    - .planning/phases/13-main-loop-throughput-controls/13-REVIEW.md
 
 key-decisions:
   - "Count sampling uses batch 1, then every N completed batches; interval 1 preserves previous every-batch behavior."
@@ -75,7 +76,7 @@ status: complete
 - **Started:** 2026-06-18T13:28:00Z
 - **Completed:** 2026-06-18T14:02:41Z
 - **Tasks:** 3
-- **Files modified:** 9
+- **Files modified:** 10
 
 ## Accomplishments
 
@@ -91,6 +92,7 @@ status: complete
 1. **Task 1: Add independent frontier and count-sampling config** - `3950904` (`feat(13-01)`)
 2. **Task 2: Refactor main-loop accounting, count sampling, and metrics** - `3cc997e` (`feat(13-01)`)
 3. **Task 3: Prove relay chunk safety and document operator measurement procedure** - `87bbb73` (`docs(13-01)`)
+4. **Code review fixes: Resolve throughput review findings** - `708232f` (`fix(13-01)`)
 
 ## Files Created/Modified
 
@@ -103,6 +105,7 @@ status: complete
 - `cmd/crawler/metrics.go` - Expanded batch metrics and run records with throughput-control context.
 - `cmd/crawler/metrics_test.go` - Added run-record and BATCH_METRICS JSON coverage for sampled/cached batches.
 - `.planning/phases/13-main-loop-throughput-controls/13-01-PLAN.md` - Clarified operator measurement procedure.
+- `.planning/phases/13-main-loop-throughput-controls/13-REVIEW.md` - Captured code review findings and resolution state.
 
 ## Decisions Made
 
@@ -112,14 +115,18 @@ status: complete
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+Post-implementation code review found one blocker and two warnings. They were fixed in `708232f` without changing the phase scope:
 
-**Total deviations:** 0 auto-fixed.
-**Impact on plan:** No scope changes.
+- Normal crawler completion now cancels the signal context before `wg.Wait`, so the signal goroutine cannot hang shutdown.
+- Cached `stale_remaining` estimates are adjusted after each marked batch until the next sampled count.
+- Relay chunk safety coverage now tests the production chunk helper used by `queryRelay`.
+
+**Total deviations:** 3 auto-fixed after review.
+**Impact on plan:** Review fixes tightened the planned behavior and tests; no scope expansion.
 
 ## Issues Encountered
 
-None.
+Code review initially reported unresolved findings. All were fixed in `708232f`, and the full automated verification suite passed afterward.
 
 ## User Setup Required
 
@@ -131,6 +138,7 @@ None - no external service configuration required.
 - `go test ./cmd/crawler -count=1` - passed
 - `go test ./pkg/crawler -run 'Test.*(SplitAuthorsChunks|Frontier.*Relay|Relay.*Chunk)' -count=1` - passed
 - `go test ./... -short -cover` - passed
+- Post-review rerun of the same verification suite - passed
 
 ## Next Phase Readiness
 

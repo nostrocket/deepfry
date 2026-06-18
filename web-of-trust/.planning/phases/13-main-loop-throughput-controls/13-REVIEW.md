@@ -17,7 +17,8 @@ findings:
   warning: 2
   info: 0
   total: 3
-status: issues_found
+status: resolved
+resolved_by: 708232f
 ---
 
 # Phase 13: Code Review Report
@@ -25,11 +26,24 @@ status: issues_found
 **Reviewed:** 2026-06-18T14:05:54Z
 **Depth:** standard
 **Files Reviewed:** 8
-**Status:** issues_found
+**Status:** resolved by `708232f`
 
 ## Summary
 
-Reviewed the Phase 13 throughput-control changes in config loading, crawler main-loop accounting, relay query counting, and metrics serialization. The scoped tests pass, but the implementation still has one shutdown blocker and two metrics/test-quality warnings that should be fixed before treating this phase as complete.
+Reviewed the Phase 13 throughput-control changes in config loading, crawler main-loop accounting, relay query counting, and metrics serialization. The initial pass found one shutdown blocker and two warnings. All findings were fixed in `708232f`.
+
+## Resolution
+
+- `CR-01` fixed: normal shutdown now cancels the context and stops signal delivery before `wg.Wait`, allowing the signal goroutine to exit.
+- `WR-01` fixed: cached stale estimates are adjusted after marked attempts until the next sampled count.
+- `WR-02` fixed: relay chunk regression now exercises the production `nextAuthorChunk` helper used by `queryRelay`.
+
+Post-fix verification:
+
+- `go test ./pkg/config -count=1` - passed
+- `go test ./cmd/crawler -count=1` - passed
+- `go test ./pkg/crawler -count=1` - passed
+- `go test ./... -short -cover` - passed
 
 ## Narrative Findings (AI reviewer)
 
