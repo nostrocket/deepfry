@@ -1,21 +1,19 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: Dgraph Follow-Update Timeout Resilience
-current_phase: null
-status: Awaiting next milestone
-last_updated: "2026-06-18T12:24:57.844Z"
+milestone: v1.6
+milestone_name: Crawl Throughput Optimization
+status: planning
+last_updated: "2026-06-18T13:28:12.762Z"
 last_activity: 2026-06-18
-last_activity_desc: Milestone v1.5 completed and archived
 progress:
-  total_phases: 1
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 100
+  total_phases: 2
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 0
+  percent: 0
 ---
 
-# Project State: Web-of-Trust Crawler — v1.5 Dgraph Follow-Update Timeout Resilience
+# Project State: Web-of-Trust Crawler — v1.6 Crawl Throughput Optimization
 
 **Last updated:** 2026-06-18
 
@@ -23,14 +21,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Planning next milestone
+**Current focus:** Ready to plan Phase 13
 
 ## Current Position
 
-Phase: Milestone v1.5 complete
+Phase: 13 (Main-Loop Throughput Controls) ready to plan
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-18 — Milestone v1.5 completed and archived
+Status: Requirements and roadmap defined
+Last activity: 2026-06-18 — Milestone v1.6 requirements and roadmap created
 
 ## Performance Metrics
 
@@ -68,25 +66,29 @@ Last activity: 2026-06-18 — Milestone v1.5 completed and archived
 | Phase 12 AddFollowers keeps one transaction with bounded child contexts | Preserves kind-3 all-or-nothing replacement while bounding each Dgraph query/mutation/commit window for diagnostics and timeout behavior. |
 | Phase 12 transient AddFollowers failures use FetchResult.SkipAttempt | A transient per-pubkey write failure no longer aborts the batch and is omitted from MarkAttempted so it remains retry-eligible. |
 | Phase 12 ResourceExhausted remains fatal through dgraph.IsTransientError | Keeps the Phase 10 anti-livelock decision while sharing classifier logic between Dgraph follow writes and main-loop retry code. |
+| v1.6 starts with loop overhead before Dgraph write concurrency | Codebase-memory analysis and the speed spike show lower-risk wins in frontier-batch decoupling and count-query throttling before changing `AddFollowers` semantics. |
 
 ### Important Facts
 
 - Production failure that opened v1.5: `failed to add follows: query follower failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded` for pubkey `314072c16fa9433e1374f62e5b02c8163946ed298a9cde3b1541513c29d19fff`.
 - Batch context: queried 1000 pubkeys, 567 had events, `batch_ms=61166`, `fetch_ms=13773`, `overhead_ms=47393`; Dgraph/bookkeeping dominated the batch after relay fetch returned.
-- Likely affected code: Dgraph follow update path (`pkg/dgraph` `AddFollowers` and caller path from `pkg/crawler` / `cmd/crawler`), especially follower lookup and edge mutation behavior for large contact lists.
+- v1.6 likely affected code: `cmd/crawler.main` for frontier selection/count throttling/metrics, `pkg/config` for new runtime knobs, `pkg/crawler.queryRelay` only as a relay-filter-safety boundary, and `pkg/dgraph.AddFollowers` only if Phase 13 measurements still show write-path dominance.
 - The fix must preserve Dgraph as an ID-only graph store; no event payloads outside StrFry.
 - Live config remains `~/deepfry/web-of-trust.yaml`; never edit it in tests.
 - `make test` runs short tests without live Dgraph. Add live-Dgraph integration coverage only behind the existing integration-test pattern.
 
 ### Todos
 
-- [x] Plan Phase 12 (`/gsd-plan-phase 12`)
-- [x] Execute Phase 12 (`/gsd-execute-phase 12`)
+- [ ] Plan Phase 13 (`/gsd-plan-phase 13`)
+- [ ] Execute Phase 13 (`/gsd-execute-phase 13`)
+- [ ] Decide whether Phase 14 is still needed from Phase 13 metrics.
 
 ### Roadmap Evolution
 
 - Phase 11 added 2026-06-16: "Relay-Query Liveness" — v1.4 opens a single phase fixing the 48-minute hang: dispatcher returns on relay-query timeout (HANG-01), queryRelay bounded against context-ignoring Fire() (HANG-02), websocket write deadline / keepalive hardening (HANG-03), regression test gate (TEST-02).
 - Phase 12 completed 2026-06-18: "Dgraph Follow-Update Resilience" — v1.5 delivered transient timeout handling, bounded large-list writes, partial-progress safety, observability, and regression coverage.
+- Phase 13 planned 2026-06-18: "Main-Loop Throughput Controls" — v1.6 starts with frontier-batch decoupling, count-query throttling, metrics updates, and relay filter safety tests.
+- Phase 14 planned 2026-06-18: "Dgraph Write-Path Throughput Decision" — only optimize `AddFollowers` further if measured Phase 13 runs still show Dgraph write overhead dominating.
 
 ### Blockers
 
@@ -102,7 +104,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** v1.5 Phase 12 is complete and archived. Load `.planning/milestones/v1.5-phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation details, or run `$gsd-new-milestone` to start the next milestone.
+**To resume:** v1.6 is open and ready for Phase 13 planning. Start with `$gsd-plan-phase 13`; use codebase-memory-mcp context around `cmd/crawler.main`, `pkg/config.LoadConfig`, `pkg/crawler.queryRelay`, and `cmd/crawler/metrics.go`.
 
 ## Decisions
 
@@ -123,4 +125,4 @@ None.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 13 with `/gsd-plan-phase 13`

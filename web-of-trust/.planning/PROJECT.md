@@ -8,7 +8,20 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.5 Dgraph Follow-Update Timeout Resilience — SHIPPED (2026-06-18)
+## Current Milestone: v1.6 Crawl Throughput Optimization
+
+**Goal:** Make the crawler expand the web of trust faster by reducing avoidable per-batch Dgraph/bookkeeping overhead and safely increasing useful work per loop.
+
+**Target features:**
+- Decouple the Dgraph frontier-selection batch size from the per-relay filter cap so each main-loop iteration can process more pubkeys without sending oversized relay filters.
+- Throttle or async expensive per-batch count queries that currently exist mainly for log lines and summary metrics.
+- Preserve the Phase 6 relay filter safety model: relay requests must still be chunked by each relay's learned cap.
+- Use the existing `BATCH_METRICS` stream and `~/deepfry/crawler-metrics.jsonl` records to prove round-over-round throughput improvement.
+- Investigate Dgraph write-path throughput only after the lower-risk main-loop overhead fixes are measured.
+
+**Key context:** Codebase-memory graph analysis identified `cmd/crawler.main`, `pkg/crawler.FetchAndUpdateFollows`, and `pkg/dgraph.AddFollowers` as the important runtime path. The latest production signal queried 1000 pubkeys with 567 hits, spent about 13.8s in relay fetch, and about 47.4s in overhead after relay fetch. Existing spike `001-crawl-speed-instrumentation` already validates the measurement loop, so this milestone should optimize and measure rather than add another observability pass.
+
+## Previous State: v1.5 Dgraph Follow-Update Timeout Resilience — SHIPPED (2026-06-18)
 
 **Goal:** A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
 
@@ -27,7 +40,7 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 
 **Status:** All 4 requirements delivered in a single phase (Phase 11), closing the ~48-minute production hang diagnosed via SIGQUIT goroutine dump (root cause in `web-of-trust/HANG-FINDINGS.md`). The dispatcher now exits independently of `wg.Wait()` / `eventsChan` close (HANG-01); `relay.Subscribe` runs in a child goroutine with a ctx-select so `queryRelay` returns on timeout even when go-nostr's `Fire()` ignores the context (HANG-02); and outstanding relays are closed + marked-dead on the timeout path / closed without penalty on the quorum-cancel path, reaping leaked goroutines (HANG-03). go-nostr exposes no write-deadline API, so the "or equivalent keepalive" clause was satisfied by connection-close rather than a literal write deadline. An adversarial code-review loop caught and fixed 2 critical concurrency defects (range-during-compaction; quorum-path subscription leak) before the milestone closed; the `completedThisBatch` boolean was hardened to a per-batch generation token. Verified: `make test` green, three liveness tests pass under `-race`. Full archive: `milestones/v1.4-ROADMAP.md`, `milestones/v1.4-REQUIREMENTS.md`, `milestones/v1.4-MILESTONE-AUDIT.md`.
 
-**Next milestone:** Not opened yet. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), crawl-throughput tuning, and the Future Requirements backlog (DISC, SEC, TEST-05).
+**Next milestone:** v1.6 Crawl Throughput Optimization — reduce Dgraph/bookkeeping overhead per useful crawl result while preserving relay safety and Dgraph correctness.
 
 ## Previous State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 
@@ -91,7 +104,11 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 
 
 ### Active
 
-None.
+- [ ] **LOOP**: Decouple frontier selection size from relay filter cap so Dgraph work can be amortized across larger crawler batches.
+- [ ] **COUNT**: Reduce count-query overhead without losing useful progress metrics.
+- [ ] **MEASURE**: Compare every optimization round against baseline using `BATCH_METRICS` and `~/deepfry/crawler-metrics.jsonl`.
+- [ ] **DWRITE**: Investigate follow-update throughput after lower-risk loop fixes; preserve kind-3 replacement semantics and retry safety.
+- [ ] **TEST**: Cover config, loop-accounting, and any Dgraph batching changes with fast tests; keep live Dgraph checks behind integration tags or operator-run verification.
 
 ### Out of Scope
 
@@ -106,7 +123,8 @@ None.
 - v1.1 shipped Phase 3 (write-path correctness + regression coverage). Phase 4 (RemoveFollower injection hardening, SEC-01/02) was deferred — documented as a future idea, not part of any active milestone.
 - v1.2 is motivated by a 40-batch production run (20,000 pubkeys queried): 172 relays, 38s avg batch time, 789 pubkeys/min, 0.76% event hit rate, 43 new nodes added. Full analysis in `.planning/research/` or conversation history.
 - Key root causes: `nostr.GetPublicKey` misused as pubkey validator; 500-author filter exceeds most relay limits; stale frontier ordered by age not by graph significance (follower count).
-- v1.5 production signal: with `RelayFilterBatchSize` effectively at 1000 for the measured run, relay fetch was ~13.8s but total batch time was ~61.2s; Dgraph overhead dominated before the follow-update path hit `DeadlineExceeded`.
+- v1.5 production signal: with `RelayFilterBatchSize` effectively at 1000 for the measured run, relay fetch was ~13.8s but total batch time was ~61.2s; Dgraph/bookkeeping overhead dominated before the follow-update path hit `DeadlineExceeded`.
+- v1.6 starts from codebase-memory graph analysis plus spike `001-crawl-speed-instrumentation`: `GetStalePubkeys` selection is coupled to `RelayFilterBatchSize`; `queryRelay` already chunks authors per relay filter cap; `CountPubkeys` and `CountStalePubkeys` run every batch mainly for logs; `AddFollowers` is the largest Dgraph hot path and remains sequential.
 - Tech: Go 1.24.1+, `go-nostr`, `dgo/v210` Dgraph gRPC client, `viper` for YAML config.
 
 ## Constraints
@@ -139,6 +157,8 @@ None.
 | v1.5 continues phase numbering with Phase 12 | v1.4 shipped Phase 11 and config uses sequential phase naming | ✓ Shipped v1.5 (Phase 12) |
 | Transient follow-write failures use FetchResult.SkipAttempt | Leaving the pubkey unstamped by MarkAttempted preserves retry eligibility without retrying inside the current batch | ✓ Shipped v1.5 (Phase 12) |
 | AddFollowers keeps one transaction with bounded child contexts | Preserves replaceable kind-3 all-or-nothing graph semantics while bounding and instrumenting each Dgraph unit | ✓ Shipped v1.5 (Phase 12) |
+| v1.6 optimizes loop overhead before Dgraph write concurrency | Decoupling frontier selection and throttling count queries are lower-risk than changing `AddFollowers` transaction semantics; metrics already show overhead dominance and can validate the first round quickly | Planned v1.6 |
+| Keep relay filter caps independent from frontier batch size | Phase 6 fixed relay rejection by limiting per-relay filter chunks; `queryRelay` already chunks authors by learned cap, so larger DB-selected batches must not bypass that guard | Planned v1.6 |
 
 ## Evolution
 
@@ -158,4 +178,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-18 after v1.5 Phase 12 completion.*
+*Last updated: 2026-06-18 after opening v1.6 milestone.*
