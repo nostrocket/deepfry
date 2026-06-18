@@ -90,5 +90,5 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
 | 11. Relay-Query Liveness | v1.4 | 1/1 | Complete | 2026-06-16 |
 | 12. Dgraph Follow-Update Resilience | v1.5 | 1/1 | Complete | 2026-06-18 |
-| 13. Main-Loop Throughput Controls | v1.6 | 0/1 | Planned | — |
+| 13. Main-Loop Throughput Controls | v1.6 | 1/1 | Complete   | 2026-06-18 |
 | 14. Dgraph Write-Path Throughput Decision | v1.6 | 0/1 | Planned | — |

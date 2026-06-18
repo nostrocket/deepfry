@@ -7,22 +7,22 @@
 
 ### Loop Throughput
 
-- [ ] **LOOP-01**: Operator can configure a Dgraph frontier-selection batch size independently from the relay filter batch size.
-- [ ] **LOOP-02**: The crawler can query a larger frontier batch while each relay request remains chunked by the relay's learned filter cap.
-- [ ] **LOOP-03**: The main loop reports batch metrics using the actual number of pubkeys selected, queried, hit, skipped, and marked attempted after frontier decoupling.
-- [ ] **LOOP-04**: A larger frontier batch does not reintroduce the Phase 6 oversized-filter relay rejection failure mode.
+- [x] **LOOP-01**: Operator can configure a Dgraph frontier-selection batch size independently from the relay filter batch size.
+- [x] **LOOP-02**: The crawler can query a larger frontier batch while each relay request remains chunked by the relay's learned filter cap.
+- [x] **LOOP-03**: The main loop reports batch metrics using the actual number of pubkeys selected, queried, hit, skipped, and marked attempted after frontier decoupling.
+- [x] **LOOP-04**: A larger frontier batch does not reintroduce the Phase 6 oversized-filter relay rejection failure mode.
 
 ### Count Overhead
 
-- [ ] **COUNT-01**: Operator can throttle `CountPubkeys` and `CountStalePubkeys` frequency without disabling crawl progress.
-- [ ] **COUNT-02**: Batch logs and final run records remain accurate when count queries are skipped between sampling intervals.
-- [ ] **COUNT-03**: Count-query failures remain recoverable through the existing Dgraph retry path when a sampled count is due.
+- [x] **COUNT-01**: Operator can throttle `CountPubkeys` and `CountStalePubkeys` frequency without disabling crawl progress.
+- [x] **COUNT-02**: Batch logs and final run records remain accurate when count queries are skipped between sampling intervals.
+- [x] **COUNT-03**: Count-query failures remain recoverable through the existing Dgraph retry path when a sampled count is due.
 
 ### Measurement
 
-- [ ] **MEASURE-01**: Each optimization round can be compared against baseline using `BATCH_METRICS` and `~/deepfry/crawler-metrics.jsonl`.
-- [ ] **MEASURE-02**: Run records include the new frontier batch size and count-sampling settings so throughput results are self-describing.
-- [ ] **MEASURE-03**: The milestone defines an operator verification procedure for running baseline and optimized rounds on the strfry host.
+- [x] **MEASURE-01**: Each optimization round can be compared against baseline using `BATCH_METRICS` and `~/deepfry/crawler-metrics.jsonl`.
+- [x] **MEASURE-02**: Run records include the new frontier batch size and count-sampling settings so throughput results are self-describing.
+- [x] **MEASURE-03**: The milestone defines an operator verification procedure for running baseline and optimized rounds on the strfry host.
 
 ### Dgraph Write Path
 
@@ -32,8 +32,8 @@
 
 ### Testing
 
-- [ ] **TEST-01**: Unit tests cover config loading/defaults for frontier batch and count-sampling settings without touching `~/deepfry/`.
-- [ ] **TEST-02**: Unit tests cover loop accounting for larger selected batches, skipped attempts, and throttled count queries.
+- [x] **TEST-01**: Unit tests cover config loading/defaults for frontier batch and count-sampling settings without touching `~/deepfry/`.
+- [x] **TEST-02**: Unit tests cover loop accounting for larger selected batches, skipped attempts, and throttled count queries.
 - [ ] **TEST-03**: Integration or operator-run verification covers a live Dgraph/relay round and records before-vs-after throughput evidence.
 
 ## Future Requirements
@@ -61,24 +61,25 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LOOP-01 | Phase 13 | Pending |
-| LOOP-02 | Phase 13 | Pending |
-| LOOP-03 | Phase 13 | Pending |
-| LOOP-04 | Phase 13 | Pending |
-| COUNT-01 | Phase 13 | Pending |
-| COUNT-02 | Phase 13 | Pending |
-| COUNT-03 | Phase 13 | Pending |
-| MEASURE-01 | Phase 13 | Pending |
-| MEASURE-02 | Phase 13 | Pending |
-| MEASURE-03 | Phase 13 | Pending |
+| LOOP-01 | Phase 13 | Complete |
+| LOOP-02 | Phase 13 | Complete |
+| LOOP-03 | Phase 13 | Complete |
+| LOOP-04 | Phase 13 | Complete |
+| COUNT-01 | Phase 13 | Complete |
+| COUNT-02 | Phase 13 | Complete |
+| COUNT-03 | Phase 13 | Complete |
+| MEASURE-01 | Phase 13 | Complete |
+| MEASURE-02 | Phase 13 | Complete |
+| MEASURE-03 | Phase 13 | Complete |
 | DWRITE-01 | Phase 14 | Pending |
 | DWRITE-02 | Phase 14 | Pending |
 | DWRITE-03 | Phase 14 | Pending |
-| TEST-01 | Phase 13 | Pending |
-| TEST-02 | Phase 13 | Pending |
+| TEST-01 | Phase 13 | Complete |
+| TEST-02 | Phase 13 | Complete |
 | TEST-03 | Phase 14 | Pending |
 
 **Coverage:**
+
 - v1.6 requirements: 16 total
 - Mapped to phases: 16
 - Unmapped: 0

@@ -2,15 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Crawl Throughput Optimization
-status: planning
-last_updated: "2026-06-18T13:28:12.762Z"
+current_phase: 13
+current_phase_name: main-loop-throughput-controls
+status: verifying
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-06-18T14:03:12.306Z"
 last_activity: 2026-06-18
+last_activity_desc: Phase 13 execution started
 progress:
-  total_phases: 2
-  completed_phases: 0
-  total_plans: 2
-  completed_plans: 0
-  percent: 0
+  total_phases: 1
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 100
 ---
 
 # Project State: Web-of-Trust Crawler — v1.6 Crawl Throughput Optimization
@@ -21,14 +25,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Ready to plan Phase 13
+**Current focus:** Phase 13 — main-loop-throughput-controls
 
 ## Current Position
 
-Phase: 13 (Main-Loop Throughput Controls) ready to plan
-Plan: —
-Status: Requirements and roadmap defined
-Last activity: 2026-06-18 — Milestone v1.6 requirements and roadmap created
+Phase: 13 (main-loop-throughput-controls) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-06-18 — Phase 13 execution started
 
 ## Performance Metrics
 
@@ -67,6 +71,7 @@ Last activity: 2026-06-18 — Milestone v1.6 requirements and roadmap created
 | Phase 12 transient AddFollowers failures use FetchResult.SkipAttempt | A transient per-pubkey write failure no longer aborts the batch and is omitted from MarkAttempted so it remains retry-eligible. |
 | Phase 12 ResourceExhausted remains fatal through dgraph.IsTransientError | Keeps the Phase 10 anti-livelock decision while sharing classifier logic between Dgraph follow writes and main-loop retry code. |
 | v1.6 starts with loop overhead before Dgraph write concurrency | Codebase-memory analysis and the speed spike show lower-risk wins in frontier-batch decoupling and count-query throttling before changing `AddFollowers` semantics. |
+| Phase 13 P13-01 | 34 min | 3 tasks | 9 files |
 
 ### Important Facts
 
@@ -103,6 +108,10 @@ None.
 | 260617-doc | Refresh README + STATE for resumability (config, clusterscan, metrics, optimization backlog) | 2026-06-17 | 9084927 | — |
 
 ## Session Continuity
+
+**Last session:** 2026-06-18T14:03:12.302Z
+**Stopped at:** Completed 13-01-PLAN.md
+**Resume file:** None
 
 **To resume:** v1.6 is open and ready for Phase 13 planning. Start with `$gsd-plan-phase 13`; use codebase-memory-mcp context around `cmd/crawler.main`, `pkg/config.LoadConfig`, `pkg/crawler.queryRelay`, and `cmd/crawler/metrics.go`.
 
