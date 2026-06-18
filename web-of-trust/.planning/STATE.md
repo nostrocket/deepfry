@@ -2,9 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Dgraph Follow-Update Timeout Resilience
-status: complete
-last_updated: "2026-06-18T08:37:56Z"
-last_activity: 2026-06-18 — Phase 12 completed
+current_phase: null
+status: Awaiting next milestone
+last_updated: "2026-06-18T12:24:57.844Z"
+last_activity: 2026-06-18
+last_activity_desc: Milestone v1.5 completed and archived
 progress:
   total_phases: 1
   completed_phases: 1
@@ -21,14 +23,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** v1.5 complete — Dgraph Follow-Update Resilience delivered
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 12 — Dgraph Follow-Update Resilience
-Plan: 12-01
-Status: Complete
-Last activity: 2026-06-18 — Phase 12 executed and verified
+Phase: Milestone v1.5 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-18 — Milestone v1.5 completed and archived
 
 ## Performance Metrics
 
@@ -100,7 +102,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** v1.5 Phase 12 is complete and verified. Load `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation details, then run `$gsd-progress` or `$gsd-complete-milestone` for close-out.
+**To resume:** v1.5 Phase 12 is complete and archived. Load `.planning/milestones/v1.5-phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation details, or run `$gsd-new-milestone` to start the next milestone.
 
 ## Decisions
 
@@ -121,7 +123,4 @@ None.
 
 ## Operator Next Steps
 
-- **v1.5 Dgraph Follow-Update Timeout Resilience complete**
-  - Next command: `$gsd-complete-milestone`
-  - Use `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation evidence.
-  - Keep the broader crawl-speed optimization backlog in `.planning/spikes/MANIFEST.md` deferred unless opening the next milestone.
+- Start the next milestone with /gsd-new-milestone

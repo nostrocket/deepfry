@@ -1,5 +1,21 @@
 # Milestones
 
+## v1.5 Dgraph Follow-Update Timeout Resilience (Shipped: 2026-06-18)
+
+**Phases completed:** 1 phases, 1 plans, 3 tasks
+
+**Key accomplishments:**
+
+- Dgraph follow updates now fail transiently per pubkey, preserve atomic kind-3 graph writes, and leave skipped pubkeys retry-eligible.
+
+**Phase breakdown:** 12 (Dgraph Follow-Update Resilience)
+
+**Requirements:** 6/6 delivered (DWRITE-01/02/03/04, OBS-02, TEST-06)
+
+**Git range:** `0b646d5` (feat(12-01)) → `30bcb8e` (phase-12 close)
+
+---
+
 ## v1.4 Crawler Hang Fix (Relay-Query Liveness) (Shipped: 2026-06-16)
 
 **Phases completed:** 1 phases, 1 plans, 3 tasks

@@ -12,7 +12,7 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 
 **Goal:** A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
 
-**Status:** All 6 requirements delivered in Phase 12. The 2026-06-18 production failure where a Dgraph follow update hit `DeadlineExceeded` now maps to a per-pubkey transient failure: `FetchAndUpdateFollows` continues the batch, records `SkipAttempt`, and the main loop omits that pubkey from `MarkAttempted` so it remains retry-eligible. `AddFollowers` keeps one all-or-nothing Dgraph transaction for kind-3 replacement semantics while bounding each internal query/mutation/commit window and logging pubkey/follow-count/chunk/elapsed/retry_count/outcome diagnostics. Full evidence: `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md`.
+**Status:** All 6 requirements delivered in Phase 12. The 2026-06-18 production failure where a Dgraph follow update hit `DeadlineExceeded` now maps to a per-pubkey transient failure: `FetchAndUpdateFollows` continues the batch, records `SkipAttempt`, and the main loop omits that pubkey from `MarkAttempted` so it remains retry-eligible. `AddFollowers` keeps one all-or-nothing Dgraph transaction for kind-3 replacement semantics while bounding each internal query/mutation/commit window and logging pubkey/follow-count/chunk/elapsed/retry_count/outcome diagnostics. Full evidence: `.planning/milestones/v1.5-phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md`.
 
 **Delivered fixes:**
 - **DWRITE**: `AddFollowers` now uses bounded per-window contexts inside the existing full-set transaction.
@@ -27,7 +27,7 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 
 **Status:** All 4 requirements delivered in a single phase (Phase 11), closing the ~48-minute production hang diagnosed via SIGQUIT goroutine dump (root cause in `web-of-trust/HANG-FINDINGS.md`). The dispatcher now exits independently of `wg.Wait()` / `eventsChan` close (HANG-01); `relay.Subscribe` runs in a child goroutine with a ctx-select so `queryRelay` returns on timeout even when go-nostr's `Fire()` ignores the context (HANG-02); and outstanding relays are closed + marked-dead on the timeout path / closed without penalty on the quorum-cancel path, reaping leaked goroutines (HANG-03). go-nostr exposes no write-deadline API, so the "or equivalent keepalive" clause was satisfied by connection-close rather than a literal write deadline. An adversarial code-review loop caught and fixed 2 critical concurrency defects (range-during-compaction; quorum-path subscription leak) before the milestone closed; the `completedThisBatch` boolean was hardened to a per-batch generation token. Verified: `make test` green, three liveness tests pass under `-race`. Full archive: `milestones/v1.4-ROADMAP.md`, `milestones/v1.4-REQUIREMENTS.md`, `milestones/v1.4-MILESTONE-AUDIT.md`.
 
-**Next milestone:** v1.5 Dgraph Follow-Update Timeout Resilience — see Current State above. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), and the Future Requirements backlog (DISC, SEC, TEST-05).
+**Next milestone:** Not opened yet. Deferred candidates: TUNE-01 (config-driven retry/timeout backoff via `web-of-trust.yaml`), the v1.2 nice-to-haves (IN-01/02/04), crawl-throughput tuning, and the Future Requirements backlog (DISC, SEC, TEST-05).
 
 ## Previous State: v1.3 Unbounded Dgraph Retry Resilience — SHIPPED (2026-06-15)
 

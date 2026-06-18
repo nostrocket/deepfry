@@ -111,6 +111,44 @@
 
 ---
 
+## Milestone: v1.5 — Dgraph Follow-Update Timeout Resilience
+
+**Shipped:** 2026-06-18
+**Phases:** 1 (12) | **Plans:** 1 | **Requirements:** 6/6
+
+### What Was Built
+- Dgraph follow updates now fail transiently per pubkey instead of aborting the whole crawler batch. `FetchAndUpdateFollows` returns `FetchResult{Hits, SkipAttempt}`; main excludes `SkipAttempt` from `MarkAttempted`, preserving retry eligibility for transient write failures.
+- `AddFollowers` keeps one all-or-nothing transaction for kind-3 replacement semantics while bounding each internal Dgraph query/mutation/commit window and logging progress diagnostics.
+- `dgraph.IsTransientError` became the shared classifier for Dgraph/gRPC codes: `DeadlineExceeded` and `Unavailable` are transient, `ResourceExhausted` remains fatal.
+- Deterministic short tests cover timeout classification, progress accounting, transient skip-and-continue, fatal passthrough, and attempt filtering.
+
+### What Worked
+- The phase stayed tightly scoped to the production abort condition instead of expanding into broader crawl throughput tuning.
+- The existing v1.3/v1.4 decisions transferred cleanly: fatal `ResourceExhausted` classification from v1.3 and bounded dispatcher behavior from v1.4 framed the fix.
+- Fake Dgraph writer tests plus signed go-nostr kind-3 events proved the crawler behavior without requiring live relay or Dgraph dependencies.
+
+### What Was Inefficient
+- The local `~/.codex/gsd-core` CLI copy was missing package metadata; the cached npm package copy was needed for GSD helper queries.
+- The integration-tag package initially failed to build because older tests still used a stale `BackfillNextAttempt(ctx)` signature. Fixing that was a small but necessary close-out deviation.
+- A separate milestone audit artifact was not present for v1.5; the milestone close relied on the phase verification and clean review artifacts.
+
+### Patterns Established
+- For write-path failures that should retry later but not stall a batch, return a structured result with a skip set rather than retrying inline.
+- Keep replaceable-event writes atomic even when internal work is chunked or windowed; bounded child contexts are compatible with one final transaction.
+- Use signed event fixtures in crawler tests so signature validation remains part of the tested path.
+
+### Key Lessons
+1. A transient write failure is not the same operational class as a transient read/bookkeeping outage: the former should often be scheduled by omission from attempt stamping, not hidden behind more in-batch retry.
+2. If a plan requires an integration-tag verification command, keep unrelated integration tests compiling against current APIs; stale guarded tests can block targeted verification before the target test runs.
+3. Milestone close should archive phase directories promptly so the active `.planning/phases/` tree stays reserved for current work.
+
+### Cost Observations
+- Model mix: orchestration and inline execution in Codex; no parallel agents used because this runtime did not expose the Claude-style Agent API for execute-phase.
+- Sessions: 1 autonomous run for execute → review → verify → complete.
+- Notable: single-plan coarse milestone was enough; no closure phase was needed after verification.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -121,6 +159,7 @@
 | v1.2 | 5–9 | Operational reliability; first use of live-host human-verify checkpoints and a milestone-close follow-up phase |
 | v1.3 | 10 | Single coarse phase; auto code-review→fix loop caught a refactor regression + flaky test the verifier missed |
 | v1.4 | 11 | Diagnose-then-fix across two sessions; RED regression test written before the milestone as the acceptance gate; review→fix loop ran full 3 iterations, each surfacing a deeper concurrency defect |
+| v1.5 | 12 | Production write-path abort fixed as a per-pubkey retry scheduling problem; single coarse phase with no closure gaps |
 
 ### Cumulative Quality
 
@@ -130,9 +169,11 @@
 | v1.2 | unit + `//go:build integration` (validator, filter-cap, frontier order, recover/purge) | runtime behavior live-verified; broad non-write-path coverage (TEST-05) still open |
 | v1.3 | unit (`package main`, injected-clock retry/backoff/cancel) | retry helper deterministically covered without a live Dgraph; first `cmd/crawler` unit-test file |
 | v1.4 | unit `-race` (4 dispatcher-liveness tests via `queryRelayFn` seam) | concurrency hang reproduced by injecting context-ignoring behavior, not the network condition; `pkg/crawler` coverage 25→27% |
+| v1.5 | unit + guarded integration-tag command | Dgraph write classification/progress and crawler retry scheduling covered without live services; integration-tag package build kept current |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. Live Dgraph + relay behavior is only provable on the strfry host — bake the manual verification step into every phase that touches the event loop.
 2. Coarse phase granularity tied to real coupling clusters keeps plan counts minimal without losing dependency correctness.
 3. The auto code-review→fix loop repeatedly catches defects (regressions, flaky tests, concurrency hazards) that pass both the executor and the goal-backward verifier — it is the highest-leverage gate for refactors and concurrency work.
+4. For crawler batch liveness, preserving retry eligibility can be cleaner than retrying inline: omit transient-failed pubkeys from attempt stamping and let frontier selection retry later.
