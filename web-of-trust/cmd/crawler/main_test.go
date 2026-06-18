@@ -89,6 +89,23 @@ func TestCountSampleState_SamplesFirstBatchAndEveryInterval(t *testing.T) {
 	}
 }
 
+func TestCountSampleState_ApplyMarkedAdjustsCachedStaleEstimate(t *testing.T) {
+	s := newCountSampleState(3)
+	s.recordSample(1, 1000, 1000)
+
+	s.applyMarked(500)
+	second := s.cached(2)
+	if second.totalStale != 500 {
+		t.Fatalf("cached stale after first marked batch: got %d want 500", second.totalStale)
+	}
+
+	s.applyMarked(500)
+	third := s.cached(3)
+	if third.totalStale != 0 {
+		t.Fatalf("cached stale after second marked batch: got %d want 0", third.totalStale)
+	}
+}
+
 func TestCountSampleState_DefaultIntervalSamplesEveryBatch(t *testing.T) {
 	s := newCountSampleState(0)
 	if !s.due(1) {

@@ -1002,10 +1002,7 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 			}
 		}
 
-		chunk := authors
-		if len(authors) > batchCap {
-			chunk = authors[:batchCap]
-		}
+		chunk := nextAuthorChunk(authors, batchCap)
 		authors = authors[len(chunk):]
 
 		chunkFilter := filter
@@ -1110,6 +1107,16 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 		}
 	}
 	return nil
+}
+
+func nextAuthorChunk(authors []string, cap int) []string {
+	if cap <= 0 {
+		cap = 10
+	}
+	if len(authors) > cap {
+		return authors[:cap]
+	}
+	return authors
 }
 
 func (c *Crawler) updateFollowsFromEvent(ctx context.Context, event *nostr.Event) error {

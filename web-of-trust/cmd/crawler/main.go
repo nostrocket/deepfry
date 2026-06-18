@@ -175,6 +175,10 @@ func (s *countSampleState) cached(batchNum int) countSampleSnapshot {
 	}
 }
 
+func (s *countSampleState) applyMarked(marked int) {
+	s.totalStale = max(0, s.totalStale-marked)
+}
+
 func main() {
 	// Create a context that can be cancelled for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -191,9 +195,13 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		sig := <-sigChan
-		log.Printf("Received signal: %v, initiating graceful shutdown...", sig)
-		cancel() // Cancel the context to stop all operations
+		select {
+		case sig := <-sigChan:
+			log.Printf("Received signal: %v, initiating graceful shutdown...", sig)
+			cancel() // Cancel the context to stop all operations
+		case <-ctx.Done():
+			return
+		}
 	}()
 
 	// Load configuration
@@ -452,6 +460,7 @@ mainLoop:
 			fetchDur:              fetchDur,
 			overheadDur:           overheadDur,
 		})
+		countSamples.applyMarked(markedAttempted)
 	}
 
 	// Generate final report. The main ctx is cancelled at shutdown, so use a
@@ -467,6 +476,8 @@ mainLoop:
 
 	// Wait for any background tasks to complete
 	log.Println("Waiting for background tasks to complete...")
+	cancel()
+	signal.Stop(sigChan)
 	wg.Wait()
 
 	log.Println("Shutdown complete")

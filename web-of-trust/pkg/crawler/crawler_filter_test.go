@@ -82,14 +82,7 @@ func TestFrontierBatchLargerThanRelayCapSplitsRelayChunks(t *testing.T) {
 	var chunkSizes []int
 	remaining := authors
 	for len(remaining) > 0 {
-		batchCap := int(rs.filterCap.Load())
-		if batchCap <= 0 {
-			batchCap = 10
-		}
-		chunk := remaining
-		if len(remaining) > batchCap {
-			chunk = remaining[:batchCap]
-		}
+		chunk := nextAuthorChunk(remaining, int(rs.filterCap.Load()))
 		remaining = remaining[len(chunk):]
 		chunkSizes = append(chunkSizes, len(chunk))
 	}
