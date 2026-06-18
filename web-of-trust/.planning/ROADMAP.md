@@ -15,7 +15,7 @@
 
 Requirements in [`REQUIREMENTS.md`](./REQUIREMENTS.md).
 
-- [ ] Phase 12: Dgraph Follow-Update Resilience (0/TBD plans)
+- [ ] Phase 12: Dgraph Follow-Update Resilience (1/1 plan) — planned 2026-06-18
 
 Goal: A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
 
@@ -85,4 +85,4 @@ Full detail archived in [`milestones/v1.4-ROADMAP.md`](./milestones/v1.4-ROADMAP
 | 9. Phase 8 Hardening & Resilience Follow-ups | v1.2 | 2/2 | Complete | 2026-06-15 |
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
 | 11. Relay-Query Liveness | v1.4 | 1/1 | Complete    | 2026-06-16 |
-| 12. Dgraph Follow-Update Resilience | v1.5 | 0/TBD | Planned | — |
+| 12. Dgraph Follow-Update Resilience | v1.5 | 1/1 | Planned | — |

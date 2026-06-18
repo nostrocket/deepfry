@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Dgraph Follow-Update Timeout Resilience
-status: planning
-last_updated: "2026-06-18T07:36:52.684Z"
-last_activity: 2026-06-18 — Milestone v1.5 roadmap created
+status: ready_to_execute
+last_updated: "2026-06-18T07:58:30Z"
+last_activity: 2026-06-18 — Phase 12 planned
 progress:
   total_phases: 1
   completed_phases: 0
-  total_plans: 0
+  total_plans: 1
   completed_plans: 0
   percent: 0
 ---
@@ -26,15 +26,15 @@ progress:
 ## Current Position
 
 Phase: 12 — Dgraph Follow-Update Resilience
-Plan: —
-Status: Ready to plan
-Last activity: 2026-06-18 — Milestone v1.5 requirements and roadmap created
+Plan: 12-01
+Status: Ready to execute
+Last activity: 2026-06-18 — Phase 12 plan created and verified
 
 ## Performance Metrics
 
 - Phases complete (v1.5): 0 / 1
 - Requirements delivered (v1.5): 0 / 6 (DWRITE-01/02/03/04, OBS-02, TEST-06)
-- Plans complete (v1.5): 0 / TBD
+- Plans complete (v1.5): 0 / 1
 
 - Phases complete (v1.4): 1 / 1
 - Requirements delivered (v1.4): 4 / 4 (HANG-01/02/03, TEST-02)
@@ -75,7 +75,8 @@ Last activity: 2026-06-18 — Milestone v1.5 requirements and roadmap created
 
 ### Todos
 
-- [ ] Plan Phase 12 (`/gsd-plan-phase 12`)
+- [x] Plan Phase 12 (`/gsd-plan-phase 12`)
+- [ ] Execute Phase 12 (`/gsd-execute-phase 12`)
 
 ### Roadmap Evolution
 
@@ -96,7 +97,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md` and `REQUIREMENTS.md`. v1.5 has one phase (Phase 12) covering all 6 requirements (DWRITE-01/02/03/04, OBS-02, TEST-06). Start by planning Phase 12 against the Dgraph follow-update path and the 2026-06-18 production `DeadlineExceeded` log. Run `/gsd-plan-phase 12` to produce the execution plan.
+**To resume:** Load `ROADMAP.md`, `REQUIREMENTS.md`, and `.planning/phases/12-dgraph-follow-update-resilience/12-01-PLAN.md`. v1.5 has one phase (Phase 12) covering all 6 requirements (DWRITE-01/02/03/04, OBS-02, TEST-06). Phase 12 is planned and verified; run `/gsd-execute-phase 12` to implement the Dgraph follow-update resilience plan.
 
 ## Decisions
 
@@ -115,6 +116,7 @@ None.
 ## Operator Next Steps
 
 - **Active milestone — v1.5 Dgraph Follow-Update Timeout Resilience**
-  - Next command: `/gsd-plan-phase 12`
+  - Next command: `/gsd-execute-phase 12`
+  - Use `.planning/phases/12-dgraph-follow-update-resilience/12-01-PLAN.md` as the execution contract.
   - Use the production log from 2026-06-18 as the acceptance scenario: a Dgraph `DeadlineExceeded` in the follow-update path must not abort the crawler run.
   - Keep the broader crawl-speed optimization backlog in `.planning/spikes/MANIFEST.md` deferred until the write-path abort is fixed.
