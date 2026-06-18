@@ -16,7 +16,7 @@
 
 **Goal:** Make the crawler expand the web of trust faster by reducing avoidable per-batch Dgraph/bookkeeping overhead and safely increasing useful work per loop.
 
-- [ ] Phase 13: Main-Loop Throughput Controls (1 plan) — decouple frontier batch size from relay filter cap, throttle count queries, update metrics/run records, and prove relay filter safety remains intact.
+- [x] Phase 13: Main-Loop Throughput Controls (1 plan) — decouple frontier batch size from relay filter cap, throttle count queries, update metrics/run records, and prove relay filter safety remains intact. (completed 2026-06-18)
 - [ ] Phase 14: Dgraph Write-Path Throughput Decision (1 plan) — use Phase 13 measurements to decide whether `AddFollowers` still dominates overhead, then implement only correctness-preserving Dgraph write-path optimization if justified.
 
 16/16 requirements mapped (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DWRITE-01/02/03, TEST-01/02/03).
@@ -90,5 +90,5 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 10. Unbounded Retry & Backoff Hardening | v1.3 | 1/1 | Complete | 2026-06-15 |
 | 11. Relay-Query Liveness | v1.4 | 1/1 | Complete | 2026-06-16 |
 | 12. Dgraph Follow-Update Resilience | v1.5 | 1/1 | Complete | 2026-06-18 |
-| 13. Main-Loop Throughput Controls | v1.6 | 1/1 | Complete   | 2026-06-18 |
+| 13. Main-Loop Throughput Controls | v1.6 | 1/1 | Complete    | 2026-06-18 |
 | 14. Dgraph Write-Path Throughput Decision | v1.6 | 0/1 | Planned | — |
