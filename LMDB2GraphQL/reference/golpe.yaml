@@ -1,0 +1,28 @@
+# golpe.yaml — strfry's golpe schema declaration
+#
+# Vendored from hoytech/strfry golpe.yaml
+# Upstream: https://github.com/hoytech/strfry/blob/master/golpe.yaml
+# Upstream commit: f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135 (strfry 1.1.0, dockurr/strfry:1.1.0)
+# Resolved in plan 01-02 Task 3 via Docker digest: dockurr/strfry@sha256:545555da5dd2c2b502f2c0d159f4dc4996d0e488e3bf25905ce881722d63d2c5
+#
+# This file documents the index declarations and comparator assignments for strfry's
+# Event__* sub-DBs. The comparator names map to the C++ functions in golpe_comparators.cpp:
+#   StringUint64       → lmdb_comparator__StringUint64_safe
+#   Uint64Uint64       → lmdb_comparator__Uint64Uint64_safe
+#   StringUint64Uint64 → lmdb_comparator__StringUint64Uint64_safe
+#
+# The full golpe.yaml from the pinned strfry commit must be vendored here in plan 02.
+# The index and comparator declarations below are from the RESEARCH phase (CITED).
+#
+# Index → Comparator mapping (authoritative from golpe.yaml, per RESEARCH.md Pattern 4):
+#   Event__id          → StringUint64     (id:32 ‖ created_at:8)
+#   Event__pubkey      → StringUint64     (pubkey:32 ‖ created_at:8)
+#   Event__tag         → StringUint64     (tagName:1 ‖ tagValue:var ‖ created_at:8)
+#   Event__kind        → Uint64Uint64     (kind:8 ‖ created_at:8)
+#   Event__pubkeyKind  → StringUint64Uint64 (pubkey:32 ‖ kind:8 ‖ created_at:8)
+#   Event__created_at  → (MDB_INTEGERKEY, heed IntegerComparator — no golpe custom cmp)
+#
+# NOTE: This is a documentation placeholder. The actual golpe.yaml from the pinned
+# strfry commit will be vendored here in plan 02 Task 2 (strfry version pinning).
+---
+# placeholder: full golpe.yaml vendored in plan 02

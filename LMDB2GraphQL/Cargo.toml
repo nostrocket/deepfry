@@ -1,0 +1,57 @@
+[package]
+name = "lmdb2graphql"
+version = "0.1.0"
+edition = "2021"
+
+# NOTE: Core pinned versions per plan 01-01 spec:
+#   heed = "0.22.1", tracing = "0.1.44", tracing-subscriber = "0.3.23"
+# heed 0.22.1 is now pinned (upgraded from the 0.20.5 deviation of the prior executor run).
+# serde_yaml_ng = "0.10" remains deferred — see note below on serde_yaml deviation.
+# All required APIs (Comparator trait, key_comparator, open, EnvFlags::READ_ONLY)
+# verified working on heed 0.22.1.
+
+[dependencies]
+# heed: LMDB typed wrapper — comparator hook, read-only env open, named-DB open
+# Pinned to 0.22.1 per plan 01-01 spec and CLAUDE.md — upgraded from 0.20.5 deviation
+heed = "0.22.1"
+tracing = "0.1"
+# json feature restored — tracing-serde now fetchable (was DEVIATION in prior executor run)
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+# serde_yaml_ng: YAML config parsing (DeepFry ~/deepfry/ convention)
+# Maintained fork of dtolnay's deprecated serde_yaml — same API, actively maintained
+# [APPROVED] plan 02 Task 1 package legitimacy checkpoint — confirmed canonical crate
+serde_yaml_ng = "0.10"
+# dirs: resolves ~/deepfry/ home directory path
+# [APPROVED] plan 02 Task 1 package legitimacy checkpoint
+dirs = "5.0.1"
+# serde_json: JSON deserialization for golden vector files in self-check
+serde_json = "1"
+zstd = "0.13.3"
+# base64: cursor encode/decode for PageCursor (D-11 opaque pagination cursor)
+# base64 0.22 is the current stable major — long-established, widely-used crate
+base64 = "0.22"
+
+# Phase 4: GraphQL API layer crates (pre-audited OK/Approved, crates.io 2026-06-13)
+# async-graphql + async-graphql-axum MUST stay at the EXACT same minor version (Pitfall 3)
+async-graphql = { version = "7.2.1", features = ["tracing"] }
+async-graphql-axum = "7.2.1"
+axum = "0.8.9"
+tokio = { version = "1.52.3", features = ["full"] }
+# tower-http: WR-02-LAYER. axum's DefaultBodyLimit relies on the Bytes/String extractors
+# and does NOT bite on the async-graphql `.post_service(...)` Tower-service path (confirmed
+# by tests/body_limit_test.rs). RequestBodyLimitLayer enforces the cap at the body-stream /
+# Content-Length level regardless of extractor, returning 413 before the body is buffered.
+tower-http = { version = "0.6", features = ["limit"] }
+
+[dev-dependencies]
+tempfile = "3"
+# WR-02-LAYER: drive the axum Router as a tower Service in the body-limit integration test.
+# `tower::util::ServiceExt::oneshot` issues a single request; `http-body-util` builds the body.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[build-dependencies]
+cc = "1"

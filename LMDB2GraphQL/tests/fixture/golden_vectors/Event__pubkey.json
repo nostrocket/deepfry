@@ -1,0 +1,28 @@
+{
+  "comparator": "StringUint64",
+  "index": "Event__pubkey",
+  "seed_commit": "sha256:8b871be80f8acaa507741b8640a25a411ee7763b0c4e61bb9527314d1fcb3cd6",
+  "ordered_lev_ids": [1, 2, 3, 5, 6, 7, 8, 9, 11, 4, 10],
+  "derivation_notes": {
+    "key_format": "pubkey(32 bytes) || created_at(8 bytes LE)",
+    "levid_location": "VALUE field (8-byte LE uint64) of each index entry",
+    "sort_semantics": "pubkey bytes compared by memcmp (same for both golpe and memcmp); created_at compared NUMERICALLY (golpe LE uint64, not memcmp)",
+    "adversarial_demonstration": {
+      "pair": "levIds [5,6] at ts=1700000255 vs levIds [7,8] at ts=1700000256 (same pubkey=79be...)",
+      "ts_adv_low_le":  "fff1536500000000 (1700000255)",
+      "ts_adv_high_le": "00f2536500000000 (1700000256)",
+      "memcmp_wrong_order": "ts_adv_high (00f2...) < ts_adv_low (fff1...) under memcmp — INVERTED",
+      "golpe_correct_order": "ts_adv_low (1700000255) < ts_adv_high (1700000256) numerically — CORRECT"
+    },
+    "tie_resolution": "Events with same (pubkey, created_at) key are sorted by levId ascending (MDB_DUPSORT + MDB_INTEGERDUP value ordering)",
+    "ordering_groups": [
+      {"group": "pk=79be..., ts=1700000000", "lev_ids": [1, 2, 3], "note": "3 events; same pubkey+ts; ordered by levId"},
+      {"group": "pk=79be..., ts=1700000255 (adv_low)", "lev_ids": [5, 6]},
+      {"group": "pk=79be..., ts=1700000256 (adv_high)", "lev_ids": [7, 8]},
+      {"group": "pk=79be..., ts=1710000000", "lev_ids": [9]},
+      {"group": "pk=79be..., ts=1720000000", "lev_ids": [11]},
+      {"group": "pk=c604..., ts=1700000000", "lev_ids": [4]},
+      {"group": "pk=c604..., ts=1710000000", "lev_ids": [10]}
+    ]
+  }
+}
