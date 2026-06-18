@@ -8,18 +8,18 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current State: v1.5 Dgraph Follow-Update Timeout Resilience — PLANNED (2026-06-18)
+## Current State: v1.5 Dgraph Follow-Update Timeout Resilience — SHIPPED (2026-06-18)
 
 **Goal:** A slow or oversized Dgraph follow-update must not abort the crawler batch or stop crawl progress.
 
-**Status:** New milestone opened from the 2026-06-18 production failure where batch 1 queried 1000 pubkeys, found 567 events, spent ~47s outside relay fetch, then aborted while updating follows for pubkey `314072c16fa9433e1374f62e5b02c8163946ed298a9cde3b1541513c29d19fff`: `failed to add follows: query follower failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded`. The failure points at the follow-write path (`AddFollowers` / follower lookup / mutation), not relay-query liveness. Phase 12 will make Dgraph follow updates bounded, retryable where safe, observable, and non-fatal to the overall crawl loop.
+**Status:** All 6 requirements delivered in Phase 12. The 2026-06-18 production failure where a Dgraph follow update hit `DeadlineExceeded` now maps to a per-pubkey transient failure: `FetchAndUpdateFollows` continues the batch, records `SkipAttempt`, and the main loop omits that pubkey from `MarkAttempted` so it remains retry-eligible. `AddFollowers` keeps one all-or-nothing Dgraph transaction for kind-3 replacement semantics while bounding each internal query/mutation/commit window and logging pubkey/follow-count/chunk/elapsed/retry_count/outcome diagnostics. Full evidence: `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md`.
 
-**Target fixes:**
-- **DWRITE**: Bound and harden `AddFollowers` / follow-edge update paths so one large pubkey or slow follower lookup cannot abort the run.
-- **RETRY**: Treat transient Dgraph write-path `DeadlineExceeded` as recoverable at the pubkey/update level while preserving fatal handling for non-transient errors.
-- **CORRECTNESS**: Preserve graph correctness under partial progress; no duplicate edge corruption, no event payload storage, no StrFry changes.
-- **OBSERVABILITY**: Log enough operation/pubkey/follow-count/timing context to diagnose slow follow updates in production without raw secrets or event payloads.
-- **TESTING**: Add deterministic regression coverage for timeout/retry/partial-progress behavior without requiring live Dgraph for unit tests.
+**Delivered fixes:**
+- **DWRITE**: `AddFollowers` now uses bounded per-window contexts inside the existing full-set transaction.
+- **RETRY**: transient Dgraph write-path `DeadlineExceeded` / `Unavailable` is recoverable at the pubkey/update level; `ResourceExhausted` remains fatal.
+- **CORRECTNESS**: transient-failed pubkeys are not stamped as clean hits or misses and existing graph state remains canonical for retry.
+- **OBSERVABILITY**: follow-update logs include pubkey, follow count, chunk/progress, elapsed time, retry count, and final outcome.
+- **TESTING**: deterministic unit tests cover classification, progress accounting, retry scheduling, and fatal passthrough.
 
 ## Previous State: v1.4 Crawler Hang Fix (Relay-Query Liveness) — SHIPPED (2026-06-16)
 
@@ -83,17 +83,15 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **HANG-02** — `queryRelay` bounds `relay.Subscribe` in a child goroutine + ctx-select, returning on timeout even when go-nostr `Fire()` ignores the context — shipped v1.4 (Phase 11)
 - ✓ **HANG-03** — outstanding relays closed + marked-dead on timeout (closed without penalty on quorum-cancel), reaping leaked goroutines; per-batch generation token replaces the marker boolean — shipped v1.4 (Phase 11)
 - ✓ **TEST-02** — regression + partial-progress + close-on-timeout + quorum-close tests; `make test` green, all pass under `-race` — shipped v1.4 (Phase 11)
+- ✓ **DWRITE-01/02/03/04** — transient follow-write failures no longer abort the batch; AddFollowers uses bounded windows while preserving one transaction; SkipAttempt keeps failed pubkeys retry-eligible; fatal write errors still pass through — shipped v1.5 (Phase 12)
+- ✓ **OBS-02** — follow-update diagnostics log pubkey, follow-count/chunk, elapsed time, retry count, and final outcome — shipped v1.5 (Phase 12)
+- ✓ **TEST-06** — short tests cover timeout classification, progress accounting, retry scheduling, and fatal passthrough — shipped v1.5 (Phase 12)
 
-_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Phase 11) all delivered. v1.5 is active for Dgraph follow-update timeout resilience. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05) remain deferred to a later milestone._
+_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 11), and v1.5 (Phase 12) all delivered. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05, crawl-throughput tuning) remain deferred to a later milestone._
 
 ### Active
 
-- [ ] **DWRITE-01**: A transient Dgraph `DeadlineExceeded` during follow updates does not abort the crawler process or discard the rest of the batch.
-- [ ] **DWRITE-02**: Follow-edge writes for large contact lists are bounded into safe units with per-unit context deadlines and partial-progress accounting.
-- [ ] **DWRITE-03**: Failed follow updates leave the pubkey eligible for a later retry without corrupting existing follow edges or permanently aging it out as a clean miss.
-- [ ] **DWRITE-04**: Fatal Dgraph write errors still fail loudly rather than being hidden by the transient-retry path.
-- [ ] **OBS-02**: Production logs identify slow follow-update operations by pubkey, follow-count/chunk, elapsed time, retry count, and final outcome.
-- [ ] **TEST-06**: Unit or integration-style tests cover timeout classification, chunk/partial-progress behavior, retry scheduling, and fatal-error passthrough.
+None.
 
 ### Out of Scope
 
@@ -137,8 +135,10 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10) and v1.4 (Pha
 | v1.3 single generic `retryDgraph[T]` helper over four near-identical blocks | Collapses four bounded retry blocks into one indefinite-retry helper; injected sleep fn enables deterministic unit tests without a live Dgraph | ✓ Shipped v1.3 (Phase 10) |
 | v1.4 bound the hang at the crawler (dispatcher exit + conn-close) rather than fork go-nostr | go-nostr v0.52's `Fire()` ignores the per-call ctx and exposes no write-deadline API; closing the connection cancels the relay's connectionContext to reap the parked write loop + leaked goroutine — satisfies HANG-03's "or equivalent keepalive" without forking | ✓ Shipped v1.4 (Phase 11) |
 | v1.4 per-batch generation token instead of a reset-to-false marker boolean | A monotonic generation has no reset to race, eliminating the cross-batch marker race a leftover goroutine could otherwise cause | ✓ Shipped v1.4 (Phase 11) |
-| v1.5 scoped to Dgraph follow-update timeout resilience before broader throughput tuning | The latest production failure is a correctness/liveness break in the write path; the broader crawl-speed backlog remains useful but should not hide the immediate abort condition | — Pending |
-| v1.5 continues phase numbering with Phase 12 | v1.4 shipped Phase 11 and config uses sequential phase naming | — Pending |
+| v1.5 scoped to Dgraph follow-update timeout resilience before broader throughput tuning | The latest production failure is a correctness/liveness break in the write path; the broader crawl-speed backlog remains useful but should not hide the immediate abort condition | ✓ Shipped v1.5 (Phase 12) |
+| v1.5 continues phase numbering with Phase 12 | v1.4 shipped Phase 11 and config uses sequential phase naming | ✓ Shipped v1.5 (Phase 12) |
+| Transient follow-write failures use FetchResult.SkipAttempt | Leaving the pubkey unstamped by MarkAttempted preserves retry eligibility without retrying inside the current batch | ✓ Shipped v1.5 (Phase 12) |
+| AddFollowers keeps one transaction with bounded child contexts | Preserves replaceable kind-3 all-or-nothing graph semantics while bounding and instrumenting each Dgraph unit | ✓ Shipped v1.5 (Phase 12) |
 
 ## Evolution
 
@@ -158,4 +158,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-18 after v1.5 milestone start — Dgraph Follow-Update Timeout Resilience planned from production `DeadlineExceeded` failure.*
+*Last updated: 2026-06-18 after v1.5 Phase 12 completion.*

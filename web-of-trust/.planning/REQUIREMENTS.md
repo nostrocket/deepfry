@@ -9,18 +9,18 @@ Requirements for Dgraph follow-update timeout resilience. Each maps to Phase 12.
 
 ### Dgraph Follow Writes
 
-- [ ] **DWRITE-01**: A transient Dgraph `DeadlineExceeded` during follow updates does not abort the crawler process or discard the rest of the batch.
-- [ ] **DWRITE-02**: Follow-edge writes for large contact lists are bounded into safe units with per-unit context deadlines and partial-progress accounting.
-- [ ] **DWRITE-03**: Failed follow updates leave the pubkey eligible for a later retry without corrupting existing follow edges or permanently aging it out as a clean miss.
-- [ ] **DWRITE-04**: Fatal Dgraph write errors still fail loudly rather than being hidden by the transient-retry path.
+- [x] **DWRITE-01**: A transient Dgraph `DeadlineExceeded` during follow updates does not abort the crawler process or discard the rest of the batch.
+- [x] **DWRITE-02**: Follow-edge writes for large contact lists are bounded into safe units with per-unit context deadlines and partial-progress accounting.
+- [x] **DWRITE-03**: Failed follow updates leave the pubkey eligible for a later retry without corrupting existing follow edges or permanently aging it out as a clean miss.
+- [x] **DWRITE-04**: Fatal Dgraph write errors still fail loudly rather than being hidden by the transient-retry path.
 
 ### Observability
 
-- [ ] **OBS-02**: Production logs identify slow follow-update operations by pubkey, follow-count/chunk, elapsed time, retry count, and final outcome.
+- [x] **OBS-02**: Production logs identify slow follow-update operations by pubkey, follow-count/chunk, elapsed time, retry count, and final outcome.
 
 ### Testing
 
-- [ ] **TEST-06**: Unit or integration-style tests cover timeout classification, chunk/partial-progress behavior, retry scheduling, and fatal-error passthrough.
+- [x] **TEST-06**: Unit or integration-style tests cover timeout classification, chunk/partial-progress behavior, retry scheduling, and fatal-error passthrough.
 
 ## Future Requirements
 
@@ -47,12 +47,12 @@ Deferred to future milestones. Tracked but not in the current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DWRITE-01 | Phase 12 | Pending |
-| DWRITE-02 | Phase 12 | Pending |
-| DWRITE-03 | Phase 12 | Pending |
-| DWRITE-04 | Phase 12 | Pending |
-| OBS-02 | Phase 12 | Pending |
-| TEST-06 | Phase 12 | Pending |
+| DWRITE-01 | Phase 12 | Complete |
+| DWRITE-02 | Phase 12 | Complete |
+| DWRITE-03 | Phase 12 | Complete |
+| DWRITE-04 | Phase 12 | Complete |
+| OBS-02 | Phase 12 | Complete |
+| TEST-06 | Phase 12 | Complete |
 
 **Coverage:**
 - v1.5 requirements: 6 total
@@ -61,4 +61,4 @@ Deferred to future milestones. Tracked but not in the current roadmap.
 
 ---
 *Requirements defined: 2026-06-18*
-*Last updated: 2026-06-18 after v1.5 milestone definition*
+*Last updated: 2026-06-18 after Phase 12 completion*

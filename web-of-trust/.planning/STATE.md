@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Dgraph Follow-Update Timeout Resilience
-status: ready_to_execute
-last_updated: "2026-06-18T07:58:30Z"
-last_activity: 2026-06-18 — Phase 12 planned
+status: complete
+last_updated: "2026-06-18T08:37:56Z"
+last_activity: 2026-06-18 — Phase 12 completed
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 1
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 100
 ---
 
 # Project State: Web-of-Trust Crawler — v1.5 Dgraph Follow-Update Timeout Resilience
@@ -21,20 +21,20 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 12 — Dgraph Follow-Update Resilience
+**Current focus:** v1.5 complete — Dgraph Follow-Update Resilience delivered
 
 ## Current Position
 
 Phase: 12 — Dgraph Follow-Update Resilience
 Plan: 12-01
-Status: Ready to execute
-Last activity: 2026-06-18 — Phase 12 plan created and verified
+Status: Complete
+Last activity: 2026-06-18 — Phase 12 executed and verified
 
 ## Performance Metrics
 
-- Phases complete (v1.5): 0 / 1
-- Requirements delivered (v1.5): 0 / 6 (DWRITE-01/02/03/04, OBS-02, TEST-06)
-- Plans complete (v1.5): 0 / 1
+- Phases complete (v1.5): 1 / 1
+- Requirements delivered (v1.5): 6 / 6 (DWRITE-01/02/03/04, OBS-02, TEST-06)
+- Plans complete (v1.5): 1 / 1
 
 - Phases complete (v1.4): 1 / 1
 - Requirements delivered (v1.4): 4 / 4 (HANG-01/02/03, TEST-02)
@@ -63,6 +63,9 @@ Last activity: 2026-06-18 — Phase 12 plan created and verified
 | Phase 11-relay-query-liveness P01 | 25 | 3 tasks | 2 files |
 | v1.5 scoped to Dgraph follow-update timeout resilience | The 2026-06-18 production failure is a write-path `DeadlineExceeded` after relay fetch succeeded; fix the abort condition before broader throughput tuning. |
 | Phase 12 = single Dgraph write-path resilience phase | Requirements all touch `AddFollowers` / Dgraph write classification / observability / tests, with no useful intermediate user-visible slice. |
+| Phase 12 AddFollowers keeps one transaction with bounded child contexts | Preserves kind-3 all-or-nothing replacement while bounding each Dgraph query/mutation/commit window for diagnostics and timeout behavior. |
+| Phase 12 transient AddFollowers failures use FetchResult.SkipAttempt | A transient per-pubkey write failure no longer aborts the batch and is omitted from MarkAttempted so it remains retry-eligible. |
+| Phase 12 ResourceExhausted remains fatal through dgraph.IsTransientError | Keeps the Phase 10 anti-livelock decision while sharing classifier logic between Dgraph follow writes and main-loop retry code. |
 
 ### Important Facts
 
@@ -76,12 +79,12 @@ Last activity: 2026-06-18 — Phase 12 plan created and verified
 ### Todos
 
 - [x] Plan Phase 12 (`/gsd-plan-phase 12`)
-- [ ] Execute Phase 12 (`/gsd-execute-phase 12`)
+- [x] Execute Phase 12 (`/gsd-execute-phase 12`)
 
 ### Roadmap Evolution
 
 - Phase 11 added 2026-06-16: "Relay-Query Liveness" — v1.4 opens a single phase fixing the 48-minute hang: dispatcher returns on relay-query timeout (HANG-01), queryRelay bounded against context-ignoring Fire() (HANG-02), websocket write deadline / keepalive hardening (HANG-03), regression test gate (TEST-02).
-- Phase 12 added 2026-06-18: "Dgraph Follow-Update Resilience" — v1.5 opens a single phase for the production Dgraph `DeadlineExceeded` in follow updates: transient timeout handling, bounded large-list writes, partial-progress safety, observability, and regression coverage.
+- Phase 12 completed 2026-06-18: "Dgraph Follow-Update Resilience" — v1.5 delivered transient timeout handling, bounded large-list writes, partial-progress safety, observability, and regression coverage.
 
 ### Blockers
 
@@ -97,7 +100,7 @@ None.
 
 ## Session Continuity
 
-**To resume:** Load `ROADMAP.md`, `REQUIREMENTS.md`, and `.planning/phases/12-dgraph-follow-update-resilience/12-01-PLAN.md`. v1.5 has one phase (Phase 12) covering all 6 requirements (DWRITE-01/02/03/04, OBS-02, TEST-06). Phase 12 is planned and verified; run `/gsd-execute-phase 12` to implement the Dgraph follow-update resilience plan.
+**To resume:** v1.5 Phase 12 is complete and verified. Load `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation details, then run `$gsd-progress` or `$gsd-complete-milestone` for close-out.
 
 ## Decisions
 
@@ -112,11 +115,13 @@ None.
 - [Phase ?]: completedThisBatch atomic.Bool on relayState resets at batch start, set by goroutines on both success/error paths, read by dispatcher to identify outstanding relays (HANG-03)
 - [Phase ?]: relayQueryDoneCh case now independent exit: non-blocking eventsChan drain then return, no wg.Wait dependency (HANG-01)
 - [Phase ?]: mark-dead only on context.DeadlineExceeded not context.Canceled — EOSE-quorum early exit is normal operation, not a fault
+- [Phase 12-01]: dgraph.IsTransientError is the shared Dgraph/gRPC classifier; DeadlineExceeded/Unavailable are transient, ResourceExhausted is fatal
+- [Phase 12-01]: FetchAndUpdateFollows returns FetchResult.Hits plus FetchResult.SkipAttempt; main excludes SkipAttempt from MarkAttempted
+- [Phase 12-01]: AddFollowers wraps failures in FollowUpdateError with pubkey/follows/chunk/elapsed/retry_count/outcome while preserving error unwrapping
 
 ## Operator Next Steps
 
-- **Active milestone — v1.5 Dgraph Follow-Update Timeout Resilience**
-  - Next command: `/gsd-execute-phase 12`
-  - Use `.planning/phases/12-dgraph-follow-update-resilience/12-01-PLAN.md` as the execution contract.
-  - Use the production log from 2026-06-18 as the acceptance scenario: a Dgraph `DeadlineExceeded` in the follow-update path must not abort the crawler run.
-  - Keep the broader crawl-speed optimization backlog in `.planning/spikes/MANIFEST.md` deferred until the write-path abort is fixed.
+- **v1.5 Dgraph Follow-Update Timeout Resilience complete**
+  - Next command: `$gsd-complete-milestone`
+  - Use `.planning/phases/12-dgraph-follow-update-resilience/12-01-SUMMARY.md` for implementation evidence.
+  - Keep the broader crawl-speed optimization backlog in `.planning/spikes/MANIFEST.md` deferred unless opening the next milestone.
