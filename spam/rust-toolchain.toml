@@ -1,5 +1,0 @@
-[toolchain]
-channel = "stable-x86_64-apple-darwin"
-# Minimum version confirmed available: rustc 1.89.0 (2025-08-04)
-# from RESEARCH.md Environment Availability table
-# Note: x86_64 toolchain used on arm64 macOS via Rosetta/compatibility layer
