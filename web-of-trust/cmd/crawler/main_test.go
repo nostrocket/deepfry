@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -24,6 +25,38 @@ func fakeSleep(slept *[]time.Duration) func(time.Duration) <-chan time.Time {
 		ch := make(chan time.Time, 1)
 		ch <- time.Now() // fire immediately
 		return ch
+	}
+}
+
+func TestIsDgraphTransient_ResourceExhaustedFatal(t *testing.T) {
+	if isDgraphTransient(status.Error(codes.ResourceExhausted, "message too large")) {
+		t.Fatal("ResourceExhausted must remain fatal, not transient")
+	}
+}
+
+func TestAttemptableBatchKeys_SkipsTransientWriteFailures(t *testing.T) {
+	pubkeys := map[string]int64{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1,
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2,
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": 3,
+	}
+	skip := map[string]struct{}{
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {},
+	}
+
+	got := attemptableBatchKeys(pubkeys, skip)
+	sort.Strings(got)
+	want := []string{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d keys %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got keys %v, want %v", got, want)
+		}
 	}
 }
 
