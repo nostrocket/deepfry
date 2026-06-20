@@ -107,7 +107,7 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 
 - [ ] **LOOP**: Decouple frontier selection size from relay filter cap so Dgraph work can be amortized across larger crawler batches.
 - [ ] **COUNT**: Reduce count-query overhead without losing useful progress metrics.
 - [ ] **MEASURE**: Compare every optimization round against baseline using `BATCH_METRICS` and `~/deepfry/crawler-metrics.jsonl`.
-- [ ] **DWRITE**: Investigate follow-update throughput after lower-risk loop fixes; preserve kind-3 replacement semantics and retry safety.
+- [ ] **DSCALE**: Eliminate the per-batch full-frontier `count(~follows)` sort in `GetStalePubkeys` (measured ~39s/batch) via a stored, indexed `follower_count` predicate maintained across follow-graph writes. (Write-path investigation closed: `AddFollowers` does not dominate — see Key Decisions.)
 - [ ] **TEST**: Cover config, loop-accounting, and any Dgraph batching changes with fast tests; keep live Dgraph checks behind integration tags or operator-run verification.
 
 ### Out of Scope
@@ -159,6 +159,7 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 
 | AddFollowers keeps one transaction with bounded child contexts | Preserves replaceable kind-3 all-or-nothing graph semantics while bounding and instrumenting each Dgraph unit | ✓ Shipped v1.5 (Phase 12) |
 | v1.6 optimizes loop overhead before Dgraph write concurrency | Decoupling frontier selection and throttling count queries are lower-risk than changing `AddFollowers` transaction semantics; metrics already show overhead dominance and can validate the first round quickly | Planned v1.6 |
 | Keep relay filter caps independent from frontier batch size | Phase 6 fixed relay rejection by limiting per-relay filter chunks; `queryRelay` already chunks authors by learned cap, so larger DB-selected batches must not bypass that guard | Planned v1.6 |
+| v1.6 Phase 14 redefined: read-path `follower_count` over write-path decision | Production batch metrics (2026-06-20) show `GetStalePubkeys` ≈ 39s/batch (full-frontier `count(~follows)` sort) dominates, while write-path `MarkAttempted` ≈ 0.07s — so the write-path investigation (DWRITE-01) is closed as "not dominant" and Phase 14 targets the read-path aggregate via a stored/indexed `follower_count` (DSCALE-01/03). Count-query and frontier-batch wins from the same analysis are pure config (`count_sample_interval`, `frontier_batch_size`) already shipped in Phase 13. | Planned v1.6 (Phase 14) |
 
 ## Evolution
 
@@ -178,4 +179,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-18 after opening v1.6 milestone.*
+*Last updated: 2026-06-20 — Phase 14 redefined from write-path decision to read-path `follower_count` fix (DSCALE-01/03).*

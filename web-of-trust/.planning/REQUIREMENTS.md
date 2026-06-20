@@ -24,11 +24,10 @@
 - [x] **MEASURE-02**: Run records include the new frontier batch size and count-sampling settings so throughput results are self-describing.
 - [x] **MEASURE-03**: The milestone defines an operator verification procedure for running baseline and optimized rounds on the strfry host.
 
-### Dgraph Write Path
+### Dgraph Read Path
 
-- [ ] **DWRITE-01**: Follow-update throughput investigation identifies whether `AddFollowers` remains the dominant overhead after loop fixes.
-- [ ] **DWRITE-02**: Any Dgraph write-path optimization preserves all-or-nothing kind-3 replacement semantics.
-- [ ] **DWRITE-03**: Any Dgraph write-path optimization preserves `SkipAttempt` retry eligibility for transient follow-update failures.
+- [ ] **DSCALE-01**: `GetStalePubkeys` no longer recomputes `count(~follows)` over the entire frontier on each call — frontier ordering reads a stored, indexed `follower_count` predicate instead of an on-the-fly aggregate sort.
+- [ ] **DSCALE-03**: The stored `follower_count` is maintained correctly as follow edges change (`AddFollowers`), so frontier ordering does not drift from the true follower count, with a one-time backfill for existing nodes.
 
 ### Testing
 
@@ -45,8 +44,12 @@
 
 ### Dgraph Scaling
 
-- **DSCALE-01**: Crawler can cache follower counts or otherwise avoid expensive full-frontier `count(~follows)` sorts on very large frontiers.
 - **DSCALE-02**: Crawler can evaluate Dgraph write parallelism with a correctness-preserving transaction strategy.
+
+### Dgraph Write Path (deferred — investigation closed)
+
+- **DWRITE-01**: Investigation closed by Phase 13 + production metrics — `AddFollowers`/write-path (`MarkAttempted` ≈ 0.07s/batch) does NOT dominate per-batch overhead; the read-path frontier sort does. No write-path optimization is justified at this time.
+- **DWRITE-02 / DWRITE-03**: Moot while no write-path optimization is undertaken; re-open only if a future milestone changes `AddFollowers`.
 
 ## Out of Scope
 
@@ -71,9 +74,8 @@
 | MEASURE-01 | Phase 13 | Complete |
 | MEASURE-02 | Phase 13 | Complete |
 | MEASURE-03 | Phase 13 | Complete |
-| DWRITE-01 | Phase 14 | Pending |
-| DWRITE-02 | Phase 14 | Pending |
-| DWRITE-03 | Phase 14 | Pending |
+| DSCALE-01 | Phase 14 | Pending |
+| DSCALE-03 | Phase 14 | Pending |
 | TEST-01 | Phase 13 | Complete |
 | TEST-02 | Phase 13 | Complete |
 | TEST-03 | Phase 14 | Pending |
@@ -83,7 +85,8 @@
 - v1.6 requirements: 16 total
 - Mapped to phases: 16
 - Unmapped: 0
+- Phase 14 redefined 2026-06-20: read-path `follower_count` (DSCALE-01/03) replaces the write-path decision (DWRITE-01/02/03); see PROJECT.md Key Decisions.
 
 ---
 *Requirements defined: 2026-06-18*
-*Last updated: 2026-06-18 after v1.6 milestone definition*
+*Last updated: 2026-06-20 — Phase 14 redefined from write-path decision to read-path `follower_count` fix.*

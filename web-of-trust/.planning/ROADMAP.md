@@ -17,9 +17,9 @@
 **Goal:** Make the crawler expand the web of trust faster by reducing avoidable per-batch Dgraph/bookkeeping overhead and safely increasing useful work per loop.
 
 - [x] Phase 13: Main-Loop Throughput Controls (1 plan) — decouple frontier batch size from relay filter cap, throttle count queries, update metrics/run records, and prove relay filter safety remains intact. (completed 2026-06-18)
-- [ ] Phase 14: Dgraph Write-Path Throughput Decision (1 plan) — use Phase 13 measurements to decide whether `AddFollowers` still dominates overhead, then implement only correctness-preserving Dgraph write-path optimization if justified.
+- [ ] Phase 14: Frontier Read-Path Throughput (`follower_count`) (1 plan) — eliminate the per-batch full-frontier `count(~follows)` sort in `GetStalePubkeys` (the measured ~39s overhead) by maintaining a stored/indexed `follower_count` predicate, kept correct across follow-graph writes.
 
-16/16 requirements mapped (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DWRITE-01/02/03, TEST-01/02/03).
+16/16 requirements mapped (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DSCALE-01/03, TEST-01/02/03).
 
 ### Phase 13: Main-Loop Throughput Controls
 
@@ -27,10 +27,10 @@
 **Status:** Completed 2026-06-18
 **Plans:** 1 plan
 
-### Phase 14: Dgraph Write-Path Throughput Decision
+### Phase 14: Frontier Read-Path Throughput (`follower_count`)
 
-**Goal:** Use Phase 13 throughput measurements to decide whether the Dgraph write path (`AddFollowers`) still dominates per-batch overhead, then implement a correctness-preserving Dgraph write-path optimization only if the data justifies it.
-**Depends on:** Phase 13 main-loop throughput measurements.
+**Goal:** Eliminate the dominant per-batch read-path overhead — `GetStalePubkeys` recomputes `count(~follows)` over the entire never-attempted frontier (~1.3M nodes) on every call to order the frontier, measured at ~39s/batch — by maintaining a stored, indexed `follower_count` predicate so frontier ordering reads a value instead of recomputing the aggregate. The predicate must stay correct as follow edges change (`AddFollowers`).
+**Depends on:** Phase 13 main-loop throughput controls. Premise confirmed by production metrics: `GetStalePubkeys` ≈ 39s/batch dominates; write-path `MarkAttempted` ≈ 0.07s, so the write path (`AddFollowers`) does NOT dominate and is out of scope for this phase.
 **Plans:** 1 plan
 
 </details>
