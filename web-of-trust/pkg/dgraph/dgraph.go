@@ -1292,33 +1292,47 @@ func (c *Client) BackfillNextAttempt(ctx context.Context, hitRefreshCadence int6
 // It is the one-time operator backfill that populates follower_count over the
 // existing ~1.38M nodes after the Phase 14 schema add (DSCALE-03).
 //
+// Operator precondition: run this to completion BEFORE the read path
+// (GetStalePubkeys ordering by follower_count) is trusted. Pre-backfill nodes
+// read 0; the ±1 maintenance the crawler applies during/after backfill self-heals
+// once this overwrite lands, so concurrent crawler writes are safe.
+//
 // Paging invariant: unlike BackfillNextAttempt (which filters NOT has(next_attempt)
 // so each committed window removes its own rows and offset:0 self-empties), this
-// method OVERWRITES follower_count on every node unconditionally, so a filtered
-// offset:0 page would never self-empty. Instead it pages by a uid cursor —
-// `gt(uid, <lastUID>)` ordered by uid ascending — advancing lastUID to the last
-// uid of each page until a page returns 0 rows. A re-run recomputes and rewrites
-// the same values, leaving them unchanged (idempotent). Page size = batchSize
-// (200): count(~follows) per node makes pages heavier than the next_attempt
-// backfill, so the smaller page is the safe default.
+// method OVERWRITES follower_count on every node unconditionally and never changes
+// pubkey membership. The has(pubkey) set is therefore stable across the backfill,
+// so plain offset paging (the proven GetAllPubkeysPaginated idiom) is correct:
+// page by offset 0, batchSize, 2*batchSize, … ordered by pubkey ascending
+// (pubkey is @index(exact)), terminating when a page returns fewer than batchSize
+// rows. A re-run recomputes and rewrites the same values (idempotent). Page size
+// = batchSize (200): count(~follows) per node makes pages heavier than the
+// next_attempt backfill, so the smaller page is the safe default.
 func (c *Client) BackfillFollowerCount(ctx context.Context) (int, error) {
+	return c.backfillFollowerCountPaged(ctx, batchSize)
+}
+
+// backfillFollowerCountPaged is the page-size-injectable implementation behind
+// BackfillFollowerCount. pageSize is exposed only so integration tests can force
+// the multi-page / termination path with a small dataset; production callers use
+// BackfillFollowerCount (pageSize = batchSize).
+func (c *Client) backfillFollowerCountPaged(ctx context.Context, pageSize int) (int, error) {
 	type nodeRow struct {
 		UID string `json:"uid"`
 		FC  int    `json:"fc"`
 	}
 
 	total := 0
-	lastUID := "0x0" // uid cursor; all real uids are > 0x0
+	offset := 0
 	for {
-		// Page by uid cursor (ascending). Selecting uid + the recomputed
+		// Page by offset (ascending pubkey). Selecting uid + the recomputed
 		// follower count for a bounded window keeps the response under the gRPC cap.
 		query := fmt.Sprintf(`
 		{
-			nodes(func: has(pubkey), first: %d, orderasc: uid) @filter(gt(uid, %s)) {
+			nodes(func: has(pubkey), first: %d, offset: %d, orderasc: pubkey) {
 				uid
 				fc: count(~follows)
 			}
-		}`, batchSize, lastUID)
+		}`, pageSize, offset)
 
 		txn := c.dg.NewReadOnlyTxn()
 		resp, err := txn.Query(ctx, query)
@@ -1334,7 +1348,7 @@ func (c *Client) BackfillFollowerCount(ctx context.Context) (int, error) {
 			return total, fmt.Errorf("backfill follower_count unmarshal failed: %w", err)
 		}
 		if len(result.Nodes) == 0 {
-			// Reached the end of the uid space — backfill complete.
+			// Reached the end of the pubkey set — backfill complete.
 			break
 		}
 
@@ -1352,9 +1366,13 @@ func (c *Client) BackfillFollowerCount(ctx context.Context) (int, error) {
 			return total, fmt.Errorf("backfill follower_count mutation failed: %w", mutErr)
 		}
 
-		// Advance the cursor to the last uid of this page.
-		lastUID = result.Nodes[len(result.Nodes)-1].UID
 		total += len(result.Nodes)
+
+		// A short page means we have reached the end of the stable has(pubkey) set.
+		if len(result.Nodes) < pageSize {
+			break
+		}
+		offset += pageSize
 	}
 
 	return total, nil

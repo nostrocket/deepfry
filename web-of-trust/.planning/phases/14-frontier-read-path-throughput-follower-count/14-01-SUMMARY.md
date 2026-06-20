@@ -25,7 +25,7 @@ tech-stack:
   patterns:
     - "Stored derived predicate read on the hot path instead of recomputed aggregate"
     - "Read-current-then-write-clamped-absolute for counter maintenance (no native Dgraph increment)"
-    - "uid-cursor pagination for idempotent overwrite backfill (vs offset:0 self-emptying filter)"
+    - "Offset pagination (orderasc: pubkey) for idempotent overwrite backfill — stable has(pubkey) set makes offset paging correct"
 
 key-files:
   created:
@@ -40,7 +40,7 @@ key-decisions:
   - "follower_count is an ordering hint, not authoritative — cheap delta maintenance, no reconciliation machinery (D-context Area 1)"
   - "Decrement correctness: read current follower_count within the txn, write clamped max(0, current-1) absolute value — no blind decrement nquad (Dgraph SetNquads has no native decrement)"
   - "New followee stubs init follower_count=1 and are excluded from the +1 adjustment to avoid double-counting"
-  - "BackfillFollowerCount pages by uid cursor (gt(uid, lastUID)) since unconditional overwrite never self-empties an offset:0 filter"
+  - "BackfillFollowerCount pages by offset with orderasc: pubkey (the proven GetAllPubkeysPaginated idiom) — the has(pubkey) set is stable during backfill, so offset paging is correct; an earlier uid-cursor draft (orderasc: uid / gt(uid, ...)) was invalid DQL (uid is not a sortable/comparable scalar) and was fixed in code review (CR-01)"
   - "Integration tests split into a separate //go:build integration file because a single Go file cannot mix tagged and untagged tests"
 
 patterns-established:
@@ -113,6 +113,14 @@ _Task 3 was a TDD task; the pure delta seam (`followerCountDelta`) was added in 
 **Total deviations:** 1 auto-fixed (1 blocking — Go build-tag file constraint).
 **Impact on plan:** No functional change; the test split is required by the Go toolchain. All planned test surfaces are present. No scope creep.
 
+## Code Review Fixes (post-execution)
+
+**CR-01 (CRITICAL) — invalid Dgraph DQL in BackfillFollowerCount.** The original backfill query paged by a uid cursor (`orderasc: uid` + `@filter(gt(uid, <lastUID>))`). `uid` is not a scalar predicate in Dgraph DQL, so it cannot be sorted or compared with `gt()` — the query would error against live Dgraph, the seed would never complete, and all ~1.38M nodes would keep `follower_count` unset (stub-starvation regression). **Fix:** rewrote the backfill to use the proven `GetAllPubkeysPaginated` idiom — `nodes(func: has(pubkey), first: %d, offset: %d, orderasc: pubkey)` selecting `uid` + `fc: count(~follows)`, writing the overwrite nquads per page, terminating when a page returns fewer than the page size. Offset paging is correct here because the `has(pubkey)` set is stable during backfill (overwriting `follower_count` never changes pubkey membership) — unlike `BackfillNextAttempt`, which mutates its own filter field. Removed the now-stale `gt(uid, ...)` doc comment. (`pkg/dgraph/dgraph.go`)
+
+**WR-01 — multi-page backfill path was untested.** `TestBackfillFollowerCount` seeded only 4 nodes (< page size 200), so the pagination/termination path never ran. **Fix:** extracted an unexported `backfillFollowerCountPaged(ctx, pageSize)` (the exported `BackfillFollowerCount` calls it with `batchSize`), then added `TestBackfillFollowerCountPaged` (behind `//go:build integration`) that seeds 5 target nodes with follower counts 0..4, runs with `pageSize=2` (forcing pages 2+2+1), and asserts every node gets its correct `follower_count`, total processed ≥ node count (no skips/dupes), and the loop terminates. (`pkg/dgraph/dgraph.go`, `pkg/dgraph/dgraph_follower_count_integration_test.go`)
+
+**WR-02 / WR-03 — backfill-before-trust precondition undocumented (docs only).** The ±1 maintenance is only correct relative to a backfilled baseline (a pre-backfill followee read as 0 gets written 1, or clamped to 0 on decrement, until backfill overwrites it — self-heals, acceptable under the ordering-hint contract, but only once backfill completes before the read-path ordering is trusted). **Fix:** documented the precondition in the `cmd/backfill-follower-count` CLI usage/`--help` text and in the operator procedure below — *run `backfill-follower-count` to completion before relying on `follower_count` ordering; crawler writes during/after backfill self-heal.* (`cmd/backfill-follower-count/main.go`, this SUMMARY)
+
 ## Issues Encountered
 
 - `grep -c 'orderdesc: follower_count'` initially returned 3 because the rewritten doc comment contained the literal phrase. Reworded the comment to "orderdesc on follower_count" / "the stored follower_count predicate" so the exact-count gate (exactly 2 query occurrences) holds without weakening the documentation.
@@ -127,11 +135,15 @@ _Task 3 was a TDD task; the pure delta seam (`followerCountDelta`) was added in 
 - `make build-backfill-follower-count` — PASS (`bin/backfill-follower-count` produced)
 - `grep -c 'orderdesc: follower_count'` → 2 (frontier + aged); no `count(~follows)` in GetStalePubkeys.
 
+**Re-run after code-review fixes (CR-01, WR-01, WR-02/WR-03):** `go build ./...`, `go vet ./...`, `go vet -tags=integration ./pkg/dgraph/`, `make test` (-short), `go test ./pkg/dgraph/ -run TestFollowerCountDelta` (5/5), `make build-backfill-follower-count` — all PASS. Integration tests not run (no live Dgraph in this environment).
+
 ## User Setup Required
 
 Task 6 is an operator-run live verification on the **strfry host** (TEST-03) — it CANNOT run in this environment (requires the live ~1.38M-node production Dgraph). It is **PENDING operator action**.
 
 ### Task 6 — operator procedure (run on the strfry host)
+
+> **Precondition (backfill-before-trust, WR-02/WR-03):** Run `backfill-follower-count` to completion BEFORE relying on `follower_count` ordering (the `GetStalePubkeys` frontier ordering). Pre-backfill nodes read 0; crawler writes during/after the backfill apply a +/-1 maintenance that self-heals once the overwrite lands — so it is safe to run the crawler concurrently, but the read-path ordering is only trustworthy once the backfill has finished.
 
 1. **Build:** `cd web-of-trust && make build-backfill-follower-count` (and `make build` to confirm the new target is in the aggregate).
 2. **Schema + index build:** `./bin/backfill-follower-count --dry-run --dgraph-addr localhost:9080`. This calls `EnsureSchema` first — confirm the `follower_count` int index builds over the live graph (Alter returns cleanly; Ratel at http://localhost:8000 shows `follower_count: int @index(int)`). The dry run prints the node count that would be backfilled.

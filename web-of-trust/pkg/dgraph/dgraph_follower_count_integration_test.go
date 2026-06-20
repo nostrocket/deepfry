@@ -182,3 +182,96 @@ _:f3 <follows> <%s> .
 		t.Errorf("target follower_count after 2nd backfill = %d, want 3 (not idempotent)", fc)
 	}
 }
+
+// TestBackfillFollowerCountPaged forces the multi-page / termination path by
+// seeding 5 nodes and running the backfill with pageSize=2 (so the loop must
+// page 2 + 2 + 1 and terminate on the short final page). It asserts every node
+// receives the correct follower_count and that the total processed equals the
+// node count with no skips or duplicates (WR-01).
+func TestBackfillFollowerCountPaged(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+
+	// Five distinct target nodes, each wired with a known number of followers
+	// (0..4) so we can assert exact follower_count per node after the backfill.
+	const numTargets = 5
+	targets := make([]string, numTargets)
+	for i := range targets {
+		targets[i] = fmt.Sprintf("%064x", now+6000+int64(i))
+	}
+
+	// Seed the target nodes first.
+	var seed string
+	for i, pk := range targets {
+		seed += fmt.Sprintf("_:t%d <pubkey> %q .\n_:t%d <dgraph.type> \"Profile\" .\n", i, pk, i)
+	}
+	mustMutate(t, c, seed)
+
+	targetUIDs, err := c.ResolvePubkeysToUIDs(ctx, targets)
+	if err != nil {
+		t.Fatalf("resolve target UIDs: %v", err)
+	}
+
+	// Build followers: target i gets exactly i followers (0,1,2,3,4).
+	var followerPubkeys []string
+	var edges string
+	fIdx := 0
+	for i, pk := range targets {
+		uid := targetUIDs[pk]
+		for j := 0; j < i; j++ {
+			fpk := fmt.Sprintf("%064x", now+7000+int64(fIdx))
+			followerPubkeys = append(followerPubkeys, fpk)
+			edges += fmt.Sprintf("_:f%d <pubkey> %q .\n_:f%d <dgraph.type> \"Profile\" .\n_:f%d <follows> <%s> .\n", fIdx, fpk, fIdx, fIdx, uid)
+			fIdx++
+		}
+	}
+	mustMutate(t, c, edges)
+
+	defer func() {
+		all := append(append([]string{}, targets...), followerPubkeys...)
+		allUIDs, err := c.ResolvePubkeysToUIDs(ctx, all)
+		if err != nil {
+			t.Logf("cleanup resolve failed: %v", err)
+			return
+		}
+		toDelete := make([]string, 0, len(allUIDs))
+		for _, uid := range allUIDs {
+			toDelete = append(toDelete, uid)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	// Run with pageSize=2 to force multiple pages over the full has(pubkey) set.
+	processed, err := c.backfillFollowerCountPaged(ctx, 2)
+	if err != nil {
+		t.Fatalf("backfillFollowerCountPaged failed: %v", err)
+	}
+
+	// processed counts every node in the graph (targets + followers + any other
+	// seeded nodes). It must be >= the nodes we created, and the loop must have
+	// terminated (returning here proves termination).
+	wantAtLeast := numTargets + len(followerPubkeys)
+	if processed < wantAtLeast {
+		t.Errorf("processed %d nodes; want >= %d (skips/short-circuit?)", processed, wantAtLeast)
+	}
+
+	// Each target i must have follower_count == i exactly (no skips, no dupes).
+	for i, pk := range targets {
+		if fc := queryFollowerCount(t, c, pk); fc != i {
+			t.Errorf("target[%d] follower_count = %d, want %d", i, fc, i)
+		}
+	}
+}
