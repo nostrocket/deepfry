@@ -102,8 +102,8 @@ func TestLoadConfig_ThroughputControlDefaults(t *testing.T) {
 	if cfg.FrontierBatchSize != 100 {
 		t.Fatalf("frontier_batch_size default: want 100, got %d", cfg.FrontierBatchSize)
 	}
-	if cfg.CountSampleInterval != 1 {
-		t.Fatalf("count_sample_interval default: want 1, got %d", cfg.CountSampleInterval)
+	if cfg.CountSampleInterval != 100 {
+		t.Fatalf("count_sample_interval default: want 100, got %d", cfg.CountSampleInterval)
 	}
 }
 

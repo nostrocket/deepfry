@@ -102,7 +102,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("stale_pubkey_threshold", 24*60*60) // 24 hours in seconds
 	viper.SetDefault("relay_filter_batch_size", 100)
 	viper.SetDefault("frontier_batch_size", 100)
-	viper.SetDefault("count_sample_interval", 1)
+	viper.SetDefault("count_sample_interval", 100)
 
 	// clusterscan defaults: the admin/forwarder keys used by the whitelist
 	// plugin (whitelist-plugin/pkg/repository getHardcodedPubkeys) form the
