@@ -492,6 +492,15 @@ func (c *Client) AddFollowers(
 	// at ~10k followees a single query string would itself blow past the ~4MB
 	// gRPC cap (D-06). Invalid followees are skipped and logged so one bad entry
 	// never aborts the rest of the list (D-09).
+	// followeeUIDByPubkey captures the resolved UID for every valid followee so
+	// the follower_count delta nquads (computed after the resolution loop) can
+	// reference each added followee's UID. The per-window followeeUIDs slice is
+	// discarded each iteration, so we accumulate the mapping here instead.
+	// newlyCreatedFollowees records followees created as stubs in THIS write —
+	// their stub nquads initialize follower_count = 1, so they must NOT also get
+	// a separate +1 adjustment (that would double-count).
+	followeeUIDByPubkey := make(map[string]string, len(followeeList))
+	newlyCreatedFollowees := make(map[string]struct{})
 	if len(followeeList) > 0 {
 		var allEdgeNQuads strings.Builder
 		for _, window := range followeeChunks {
@@ -535,7 +544,13 @@ func (c *Client) AddFollowers(
 						blankNodeID, followee)
 					createNQuads += fmt.Sprintf(
 						"_:%s <dgraph.type> \"Profile\" .\n", blankNodeID)
+					// Initialize follower_count = 1: the signer is this stub's
+					// first observed follower (DSCALE-03). Do NOT also emit a +1
+					// adjustment for it below, or it would be double-counted.
+					createNQuads += fmt.Sprintf(
+						"_:%s <follower_count> \"1\" .\n", blankNodeID)
 					followeeUIDs[i] = "_:" + blankNodeID
+					newlyCreatedFollowees[followee] = struct{}{}
 					if debug {
 						log.Printf("New pubkey added to graph (stub): %s", followee)
 					}
@@ -569,9 +584,11 @@ func (c *Client) AddFollowers(
 				progress.completeChunk()
 			}
 
-			// Accumulate follow edges for this window.
-			for _, followeeUID := range followeeUIDs {
+			// Accumulate follow edges for this window and capture each resolved
+			// followee UID so the follower_count delta can reference it later.
+			for i, followeeUID := range followeeUIDs {
 				if followeeUID != "" && !strings.HasPrefix(followeeUID, "_:") {
+					followeeUIDByPubkey[window[i]] = followeeUID
 					allEdgeNQuads.WriteString(fmt.Sprintf("<%s> <follows> <%s> .\n",
 						followerUID, followeeUID))
 				}
@@ -598,6 +615,139 @@ func (c *Client) AddFollowers(
 				return fail("create follow edges failed: %w", err)
 			}
 			progress.completeChunk()
+		}
+	}
+
+	// Step 4: maintain the stored follower_count on each followee whose follow
+	// status changed in THIS kind-3 replacement (DSCALE-03). follower_count is an
+	// ordering hint, not authoritative, so this is cheap delta maintenance — no
+	// reconciliation pass or exactness machinery (D-context Area 1).
+	//
+	// Approach (documented choice): Dgraph SetNquads has no native increment, so a
+	// blind "+1"/"-1" nquad is impossible to write correctly. We instead read each
+	// affected followee's CURRENT follower_count in one batched query within this
+	// same txn, then write the adjusted ABSOLUTE value. Decrements clamp at 0
+	// (never write a negative count). All writes stay inside the existing
+	// all-or-nothing txn and are committed by the single txn.Commit below.
+	//
+	// validFollowees is the set that actually produced follow edges (followeeList),
+	// so count adjustments track the edges that produced them. The delta is computed
+	// against valid sets only — invalid followees were filtered out of followeeList.
+	{
+		validFollowees := make(map[string]struct{}, len(followeeList))
+		for _, f := range followeeList {
+			validFollowees[f] = struct{}{}
+		}
+		added, removed := followerCountDelta(existingFollows, validFollowees)
+
+		// adjustments: pubkey -> signed delta. Newly-created stubs already carry
+		// follower_count = 1 from their creation nquads, so they are excluded from
+		// the +1 set to avoid double-counting. Removed followees get -1.
+		adjust := make(map[string]int, len(added)+len(removed))
+		for _, pk := range added {
+			if _, isNew := newlyCreatedFollowees[pk]; isNew {
+				continue
+			}
+			adjust[pk] = 1
+		}
+		for _, pk := range removed {
+			adjust[pk] = -1
+		}
+
+		if len(adjust) > 0 {
+			// Resolve the UID for each adjusted followee. Added (existing) followees
+			// were captured in followeeUIDByPubkey; removed followees have UIDs in
+			// existingFollows. uidByPubkey maps pubkey -> uid for the read query.
+			uidByPubkey := make(map[string]string, len(adjust))
+			uidToPubkey := make(map[string]string, len(adjust))
+			for pk, d := range adjust {
+				var uid string
+				if d < 0 {
+					uid = existingFollows[pk]
+				} else {
+					uid = followeeUIDByPubkey[pk]
+				}
+				if uid == "" || strings.HasPrefix(uid, "_:") {
+					// Unresolved UID (should not happen for these sets) — skip
+					// rather than write a malformed nquad. Drift is tolerable.
+					continue
+				}
+				uidByPubkey[pk] = uid
+				uidToPubkey[uid] = pk
+			}
+
+			if len(uidByPubkey) > 0 {
+				// Read current follower_count for all affected UIDs in one query
+				// within this txn so the absolute write reflects pre-adjustment state.
+				uids := make([]string, 0, len(uidByPubkey))
+				for _, uid := range uidByPubkey {
+					uids = append(uids, uid)
+				}
+				sort.Strings(uids)
+				fcQuery := fmt.Sprintf(`
+				{
+					affected(func: uid(%s)) {
+						uid
+						follower_count
+					}
+				}`, strings.Join(uids, ", "))
+
+				progress.totalChunks++
+				progress.beginChunk("read_follower_counts", progress.completedChunks+1)
+				windowCtx, windowCancel = withWindowTimeout(queryCtx)
+				fcResp, err := txn.Query(windowCtx, fcQuery)
+				windowCancel()
+				if err != nil {
+					return fail("read follower_count failed: %w", err)
+				}
+				progress.completeChunk()
+
+				var fcResult struct {
+					Affected []struct {
+						UID           string `json:"uid"`
+						FollowerCount int    `json:"follower_count"`
+					} `json:"affected"`
+				}
+				if err := json.Unmarshal(fcResp.Json, &fcResult); err != nil {
+					return fail("unmarshal follower_count failed: %w", err)
+				}
+				current := make(map[string]int, len(fcResult.Affected))
+				for _, n := range fcResult.Affected {
+					current[n.UID] = n.FollowerCount
+				}
+
+				// Compute the new absolute value per affected followee and emit an
+				// nquad. Decrements clamp at 0.
+				countLines := make([]string, 0, len(uidByPubkey))
+				for pk, uid := range uidByPubkey {
+					newVal := current[uid] + adjust[pk]
+					if newVal < 0 {
+						newVal = 0
+					}
+					countLines = append(countLines, fmt.Sprintf(
+						"<%s> <follower_count> \"%d\" .", uid, newVal))
+				}
+				sort.Strings(countLines) // deterministic ordering of nquads
+
+				// Chunk the count-adjustment nquads (mirrors the edge-nquad
+				// chunking) so a >10k follow list stays under the ~4MB gRPC cap.
+				for _, window := range chunkSlice(countLines, batchSize) {
+					countNQuads := strings.Join(window, "\n") + "\n"
+					mu := &api.Mutation{
+						SetNquads: []byte(countNQuads),
+						CommitNow: false,
+					}
+					progress.totalChunks++
+					progress.beginChunk("update_follower_counts", progress.completedChunks+1)
+					windowCtx, windowCancel = withWindowTimeout(queryCtx)
+					_, err = txn.Mutate(windowCtx, mu)
+					windowCancel()
+					if err != nil {
+						return fail("update follower_count failed: %w", err)
+					}
+					progress.completeChunk()
+				}
+			}
 		}
 	}
 
@@ -1131,6 +1281,79 @@ func (c *Client) BackfillNextAttempt(ctx context.Context, hitRefreshCadence int6
 			return total, fmt.Errorf("backfill mutation failed: %w", mutErr)
 		}
 
+		total += len(result.Nodes)
+	}
+
+	return total, nil
+}
+
+// BackfillFollowerCount sets follower_count = count(~follows) on every node in
+// the graph, one page at a time, and is safe to re-run (idempotent overwrite).
+// It is the one-time operator backfill that populates follower_count over the
+// existing ~1.38M nodes after the Phase 14 schema add (DSCALE-03).
+//
+// Paging invariant: unlike BackfillNextAttempt (which filters NOT has(next_attempt)
+// so each committed window removes its own rows and offset:0 self-empties), this
+// method OVERWRITES follower_count on every node unconditionally, so a filtered
+// offset:0 page would never self-empty. Instead it pages by a uid cursor —
+// `gt(uid, <lastUID>)` ordered by uid ascending — advancing lastUID to the last
+// uid of each page until a page returns 0 rows. A re-run recomputes and rewrites
+// the same values, leaving them unchanged (idempotent). Page size = batchSize
+// (200): count(~follows) per node makes pages heavier than the next_attempt
+// backfill, so the smaller page is the safe default.
+func (c *Client) BackfillFollowerCount(ctx context.Context) (int, error) {
+	type nodeRow struct {
+		UID string `json:"uid"`
+		FC  int    `json:"fc"`
+	}
+
+	total := 0
+	lastUID := "0x0" // uid cursor; all real uids are > 0x0
+	for {
+		// Page by uid cursor (ascending). Selecting uid + the recomputed
+		// follower count for a bounded window keeps the response under the gRPC cap.
+		query := fmt.Sprintf(`
+		{
+			nodes(func: has(pubkey), first: %d, orderasc: uid) @filter(gt(uid, %s)) {
+				uid
+				fc: count(~follows)
+			}
+		}`, batchSize, lastUID)
+
+		txn := c.dg.NewReadOnlyTxn()
+		resp, err := txn.Query(ctx, query)
+		txn.Discard(ctx) // inline discard — not deferred — so it fires every iteration (HARD-01)
+		if err != nil {
+			return total, fmt.Errorf("backfill follower_count query failed: %w", err)
+		}
+
+		var result struct {
+			Nodes []nodeRow `json:"nodes"`
+		}
+		if err := json.Unmarshal(resp.Json, &result); err != nil {
+			return total, fmt.Errorf("backfill follower_count unmarshal failed: %w", err)
+		}
+		if len(result.Nodes) == 0 {
+			// Reached the end of the uid space — backfill complete.
+			break
+		}
+
+		// Overwrite follower_count = count(~follows) for this page (idempotent).
+		var nquads strings.Builder
+		for _, n := range result.Nodes {
+			nquads.WriteString(fmt.Sprintf("<%s> <follower_count> \"%d\" .\n", n.UID, n.FC))
+		}
+
+		muTxn := c.dg.NewTxn()
+		mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
+		_, mutErr := muTxn.Mutate(ctx, mu)
+		muTxn.Discard(ctx) // inline discard — not deferred — so it fires every iteration
+		if mutErr != nil {
+			return total, fmt.Errorf("backfill follower_count mutation failed: %w", mutErr)
+		}
+
+		// Advance the cursor to the last uid of this page.
+		lastUID = result.Nodes[len(result.Nodes)-1].UID
 		total += len(result.Nodes)
 	}
 
