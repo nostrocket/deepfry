@@ -33,6 +33,9 @@
 **Depends on:** Phase 13 main-loop throughput controls. Premise confirmed by production metrics: `GetStalePubkeys` ≈ 39s/batch dominates; write-path `MarkAttempted` ≈ 0.07s, so the write path (`AddFollowers`) does NOT dominate and is out of scope for this phase.
 **Plans:** 1 plan
 
+Plans:
+- [ ] 14-01-PLAN.md — schema `follower_count` predicate, GetStalePubkeys read-path rewrite, AddFollowers delta maintenance, backfill CLI, and unit/integration tests (DSCALE-01, DSCALE-03, TEST-03)
+
 </details>
 
 <details>
