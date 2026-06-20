@@ -3,6 +3,7 @@ APP_PUBKEYS=pubkeys
 APP_DISCOVER=discover-relays
 APP_HEALTHCHECK=healthcheck
 APP_CLUSTERSCAN=clusterscan
+APP_BACKFILL_FC=backfill-follower-count
 PKG=web-of-trust
 
 # Version can be set via environment variable or defaults to dev
@@ -27,13 +28,13 @@ LDFLAGS=-X 'web-of-trust/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan run-crawler run-pubkeys run-discover-relays run-healthcheck run-clusterscan test fmt vet tidy clean help lint lint-fix
+.PHONY: all build build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan build-backfill-follower-count run-crawler run-pubkeys run-discover-relays run-healthcheck run-clusterscan run-backfill-follower-count test fmt vet tidy clean help lint lint-fix
 
 ## Default target: runs tidy, format, vet, tests, and builds all applications
 all: tidy fmt vet test build
 
 ## Build all applications
-build: build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan
+build: build-crawler build-pubkeys build-discover-relays build-healthcheck build-clusterscan build-backfill-follower-count
 
 ## Build crawler application
 build-crawler:
@@ -55,6 +56,10 @@ build-healthcheck:
 build-clusterscan:
 	go build $(BUILD_FLAGS) -o bin/$(APP_CLUSTERSCAN)$(BINARY_EXT) ./cmd/$(APP_CLUSTERSCAN)
 
+## Build backfill-follower-count application
+build-backfill-follower-count:
+	go build $(BUILD_FLAGS) -o bin/$(APP_BACKFILL_FC)$(BINARY_EXT) ./cmd/$(APP_BACKFILL_FC)
+
 ## Run discover-relays application
 run-discover-relays:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_DISCOVER)
@@ -74,6 +79,10 @@ run-healthcheck:
 ## Run clusterscan application
 run-clusterscan:
 	go run $(BUILD_FLAGS) ./cmd/$(APP_CLUSTERSCAN)
+
+## Run backfill-follower-count application
+run-backfill-follower-count:
+	go run $(BUILD_FLAGS) ./cmd/$(APP_BACKFILL_FC)
 
 ## Run tests
 test:
@@ -113,10 +122,12 @@ help:
 	@echo   build-discover-relays - Build discover-relays application
 	@echo   build-healthcheck - Build healthcheck application
 	@echo   build-clusterscan - Build clusterscan application
+	@echo   build-backfill-follower-count - Build follower_count backfill CLI
 	@echo   run-crawler     - Run crawler application
 	@echo   run-pubkeys     - Run pubkeys application
 	@echo   run-discover-relays - Run discover-relays application
 	@echo   run-healthcheck - Run healthcheck application
+	@echo   run-backfill-follower-count - Run follower_count backfill CLI
 	@echo   test            - Run tests
 	@echo   fmt             - Format code
 	@echo   vet             - Vet code
