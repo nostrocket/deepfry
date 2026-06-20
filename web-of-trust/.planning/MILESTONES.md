@@ -1,5 +1,26 @@
 # Milestones
 
+## v1.6 Crawl Throughput Optimization (Shipped: 2026-06-20)
+
+**Phases completed:** 2 phases, 2 plans, 8 tasks
+
+**Key accomplishments:**
+
+- Dgraph frontier sizing, sampled count queries, exact batch accounting, and relay-cap safety coverage for crawler throughput tuning
+- Replaced the per-call count(~follows) frontier aggregate in GetStalePubkeys with a stored, int-indexed follower_count predicate — maintained cheaply (+1/-1) in AddFollowers' existing transaction and backfilled by a new idempotent operator CLI.
+
+**Phase breakdown:** 13 (Main-Loop Throughput Controls) · 14 (Frontier Read-Path Throughput — `follower_count`)
+
+**Requirements:** 16/16 delivered (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DSCALE-01/03, TEST-01/02/03)
+
+**Live verification:** `GetStalePubkeys` ~119s → ~1.3s on the 1.38M-node production Dgraph (frontier 69s→0.01s via `eq(uncrawled,1)`; aged 50s→1.3s via `ge(follower_count,0)`); `follower_count` backfilled full-graph (~2.5 min, idempotent, exact). See `milestones/v1.6-phases/14-.../14-VERIFICATION.md`.
+
+**Git range:** `ccbca03` (fix(13)) → `6d095b8` (docs(14) live-verified) — 28 commits, 27 files (+3954/-224).
+
+**Known deferred (operational):** new crawler binary not yet redeployed to production. Read-path speedup is live-verified against the production Dgraph but not yet running in the deployed crawler. Cutover = redeploy binary + one-time `uncrawled=1` safety seed for never-attempted nodes (per 14-VERIFICATION.md runbook). Tracked in PROJECT.md → Current Focus.
+
+---
+
 ## v1.5 Dgraph Follow-Update Timeout Resilience (Shipped: 2026-06-18)
 
 **Phases completed:** 1 phases, 1 plans, 3 tasks

@@ -3,36 +3,47 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Crawl Throughput Optimization
 current_phase: 14
-current_phase_name: frontier-read-path-throughput-follower-count
-status: verified
-stopped_at: Phase 14 VERIFIED on live Dgraph; crawler redeploy is the remaining operational step
-last_updated: "2026-06-20T11:00:00.000Z"
+status: Awaiting next milestone
+stopped_at: v1.6 shipped + archived; crawler binary redeploy is a deferred operational item
+last_updated: "2026-06-20T12:12:31.206Z"
 last_activity: 2026-06-20
-last_activity_desc: Phase 14 live-verified — GetStalePubkeys ~119s → ~1.3s; awaiting crawler redeploy + v1.6 close
+last_activity_desc: Milestone v1.6 completed and archived
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 2
-  completed_plans: 1
-  percent: 50
+  completed_plans: 2
+  percent: 100
+current_phase_name: frontier-read-path-throughput-follower-count
 ---
 
-# Project State: Web-of-Trust Crawler — v1.6 Crawl Throughput Optimization
+# Project State: Web-of-Trust Crawler — between milestones (v1.6 shipped)
 
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-20 after v1.6 milestone close
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-06-20)
+
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 14 — Frontier Read-Path Throughput (`follower_count`)
+**Current focus:** No active milestone — start the next with `/gsd-new-milestone`. One open operational item carried from v1.6: redeploy the new crawler binary (see Deferred Items).
+
+## Deferred Items
+
+Items acknowledged and deferred at v1.6 milestone close on 2026-06-20:
+
+| Category | Item | Status |
+|----------|------|--------|
+| operational | Production cutover — redeploy new crawler binary + one-time `uncrawled=1` safety seed for `NOT has(last_attempt)` nodes (per 14-VERIFICATION.md runbook) | open — read-path win live-verified on Dgraph but old binary still running |
+| config-tuning | Bump `count_sample_interval` (1→~20) and `frontier_batch_size` (100→~1000) in `~/deepfry/web-of-trust.yaml` | open — Phase 13 mechanisms shipped; operator-applied at redeploy |
 
 ## Current Position
 
-Phase: 14 (Frontier Read-Path Throughput — `follower_count`) — VERIFIED on live Dgraph
-Plan: 14-01 — complete + live-verified (2 fix cycles: index-entry query, uncrawled marker, uid-cursor backfill)
-Status: Live-verified on the production Dgraph (1.38M nodes): `GetStalePubkeys` ~119s → ~1.3s (frontier 69s→0.01s via `eq(uncrawled,1)`; aged 50s→1.3s via `ge(follower_count,0)`). follower_count backfilled full graph (2.5 min, idempotent, exact accuracy). REMAINING: production cutover = redeploy the new crawler binary (+ one-time `uncrawled=1` safety seed for any never-attempted nodes) per 14-VERIFICATION.md runbook; then close v1.6.
-Last activity: 2026-06-20 — Phase 14 live-verified
+Phase: Milestone v1.6 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-20 — Milestone v1.6 completed and archived
 
 ## Performance Metrics
 
@@ -140,5 +151,4 @@ None.
 
 ## Operator Next Steps
 
-- Run the Phase 13 baseline/optimized `WOT_ROUND` comparison from `13-01-PLAN.md`
-- Decide whether Phase 14 is still needed from the measured overhead profile
+- Start the next milestone with /gsd-new-milestone

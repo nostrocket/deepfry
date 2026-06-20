@@ -8,18 +8,19 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 
 The crawler must continuously **expand** the web of trust — discovering and fetching contact lists for newly-seen pubkeys — not just re-refresh the accounts it already knows.
 
-## Current Milestone: v1.6 Crawl Throughput Optimization
+## Current Focus
+
+**v1.6 Crawl Throughput Optimization shipped 2026-06-20.** No next milestone is defined yet — start one with `/gsd-new-milestone`.
+
+**Open operational follow-up (carried from v1.6):** the optimized crawler binary is **not yet redeployed to production**. Phase 14's read-path speedup (~119s → ~1.3s `GetStalePubkeys`) is live-verified against the production Dgraph but the deployed crawler still runs the old binary. Cutover = redeploy the new binary + a one-time `uncrawled=1` safety seed for any never-attempted nodes (see `milestones/v1.6-phases/14-frontier-read-path-throughput-follower-count/14-VERIFICATION.md` runbook).
+
+## Previous State: v1.6 Crawl Throughput Optimization — SHIPPED (2026-06-20)
 
 **Goal:** Make the crawler expand the web of trust faster by reducing avoidable per-batch Dgraph/bookkeeping overhead and safely increasing useful work per loop.
 
-**Target features:**
-- Decouple the Dgraph frontier-selection batch size from the per-relay filter cap so each main-loop iteration can process more pubkeys without sending oversized relay filters.
-- Throttle or async expensive per-batch count queries that currently exist mainly for log lines and summary metrics.
-- Preserve the Phase 6 relay filter safety model: relay requests must still be chunked by each relay's learned cap.
-- Use the existing `BATCH_METRICS` stream and `~/deepfry/crawler-metrics.jsonl` records to prove round-over-round throughput improvement.
-- Investigate Dgraph write-path throughput only after the lower-risk main-loop overhead fixes are measured.
+**Status:** All 16 requirements delivered across Phases 13–14. Phase 13 decoupled the Dgraph frontier-selection batch size from the relay filter cap (`frontier_batch_size`), throttled the per-batch `CountPubkeys`/`CountStalePubkeys` queries (`count_sample_interval`), kept exact batch accounting, and proved the Phase 6 relay-filter safety model intact. Phase 14 replaced the dominant read-path overhead — `GetStalePubkeys` recomputing `count(~follows)` over the entire ~1.3M-node frontier every call — with a stored, int-indexed `follower_count` predicate plus an `uncrawled` frontier marker: frontier selection enters via `eq(uncrawled,1)`, aged selection via `ge(follower_count,0)`, both ordered by the stored value. `follower_count` is maintained cheaply (±1 delta) inside `AddFollowers`' existing transaction and was backfilled across the full 1.38M-node graph by a new idempotent uid-cursor CLI (~2.5 min, exact accuracy). **Live-verified on the production Dgraph: `GetStalePubkeys` ~119s → ~1.3s** (frontier 69s→0.01s; aged 50s→1.3s). Full evidence: `milestones/v1.6-ROADMAP.md`, `milestones/v1.6-REQUIREMENTS.md`, and the Phase 14 SUMMARY/VERIFICATION.
 
-**Key context:** Codebase-memory graph analysis identified `cmd/crawler.main`, `pkg/crawler.FetchAndUpdateFollows`, and `pkg/dgraph.AddFollowers` as the important runtime path. The latest production signal queried 1000 pubkeys with 567 hits, spent about 13.8s in relay fetch, and about 47.4s in overhead after relay fetch. Existing spike `001-crawl-speed-instrumentation` already validates the measurement loop, so this milestone should optimize and measure rather than add another observability pass.
+**Key context (at milestone start):** Codebase-memory graph analysis identified `cmd/crawler.main`, `pkg/crawler.FetchAndUpdateFollows`, and `pkg/dgraph.AddFollowers` as the important runtime path. A production signal queried 1000 pubkeys with 567 hits, spent ~13.8s in relay fetch and ~47.4s in post-fetch overhead — and the 2026-06-20 batch-metrics analysis localized that overhead to the `GetStalePubkeys` frontier sort (~39s/batch), which is what Phase 14 eliminated.
 
 ## Previous State: v1.5 Dgraph Follow-Update Timeout Resilience — SHIPPED (2026-06-18)
 
@@ -99,16 +100,17 @@ The crawler must continuously **expand** the web of trust — discovering and fe
 - ✓ **DWRITE-01/02/03/04** — transient follow-write failures no longer abort the batch; AddFollowers uses bounded windows while preserving one transaction; SkipAttempt keeps failed pubkeys retry-eligible; fatal write errors still pass through — shipped v1.5 (Phase 12)
 - ✓ **OBS-02** — follow-update diagnostics log pubkey, follow-count/chunk, elapsed time, retry count, and final outcome — shipped v1.5 (Phase 12)
 - ✓ **TEST-06** — short tests cover timeout classification, progress accounting, retry scheduling, and fatal passthrough — shipped v1.5 (Phase 12)
+- ✓ **LOOP-01/02/03/04** — `frontier_batch_size` decouples Dgraph selection from the relay filter cap; relay requests still chunk by learned cap; batch metrics report actual selected/queried/hit/skipped/marked counts; larger frontier batches don't reintroduce Phase 6 oversized-filter rejection — shipped v1.6 (Phase 13)
+- ✓ **COUNT-01/02/03** — `count_sample_interval` throttles `CountPubkeys`/`CountStalePubkeys`; logs and run records stay accurate when counts are skipped; count failures stay recoverable via the Dgraph retry path — shipped v1.6 (Phase 13)
+- ✓ **MEASURE-01/02/03** — rounds comparable via `BATCH_METRICS` + `~/deepfry/crawler-metrics.jsonl`; run records self-describe frontier-batch and count-sampling settings; operator verification procedure defined — shipped v1.6 (Phase 13)
+- ✓ **DSCALE-01/03** — `GetStalePubkeys` no longer recomputes `count(~follows)`; both blocks enter via an index (frontier `eq(uncrawled,1)`, aged `ge(follower_count,0)`) ordered by stored `follower_count`, maintained ±1 in `AddFollowers` + `uncrawled` marker, full-graph backfill via idempotent uid-cursor CLI. Live-verified ~119s → ~1.3s — shipped v1.6 (Phase 14)
+- ✓ **TEST-01/02 (v1.6)** — unit tests cover frontier-batch/count-sampling config and loop accounting without touching `~/deepfry/`; **TEST-03** — live verification on the 1.38M-node production Dgraph recorded before/after read-path latency + accuracy spot-check — shipped v1.6 (Phases 13–14)
 
-_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 11), and v1.5 (Phase 12) all delivered. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TUNE-01, TEST-05, crawl-throughput tuning) remain deferred to a later milestone._
+_v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 11), v1.5 (Phase 12), and v1.6 (Phases 13–14) all delivered. Remaining nice-to-haves (IN-01/02/04) and the "Future Requirements" backlog (DISC, SEC, TEST-05, TUNE-01/02, DSCALE-02) remain deferred to a later milestone._
 
 ### Active
 
-- [ ] **LOOP**: Decouple frontier selection size from relay filter cap so Dgraph work can be amortized across larger crawler batches.
-- [ ] **COUNT**: Reduce count-query overhead without losing useful progress metrics.
-- [ ] **MEASURE**: Compare every optimization round against baseline using `BATCH_METRICS` and `~/deepfry/crawler-metrics.jsonl`.
-- [ ] **DSCALE**: Eliminate the per-batch full-frontier `count(~follows)` sort in `GetStalePubkeys` (measured ~39s/batch) via a stored, indexed `follower_count` predicate maintained across follow-graph writes. (Write-path investigation closed: `AddFollowers` does not dominate — see Key Decisions.)
-- [ ] **TEST**: Cover config, loop-accounting, and any Dgraph batching changes with fast tests; keep live Dgraph checks behind integration tags or operator-run verification.
+_No active milestone. Start the next one with `/gsd-new-milestone`. Candidate carry-overs from the v1.6 future-requirements backlog: TUNE-01/02 (relay quorum/timeout + reconnect-scheduling tuning), DSCALE-02 (Dgraph write parallelism with a correctness-preserving transaction strategy)._
 
 ### Out of Scope
 
@@ -125,7 +127,9 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 
 - Key root causes: `nostr.GetPublicKey` misused as pubkey validator; 500-author filter exceeds most relay limits; stale frontier ordered by age not by graph significance (follower count).
 - v1.5 production signal: with `RelayFilterBatchSize` effectively at 1000 for the measured run, relay fetch was ~13.8s but total batch time was ~61.2s; Dgraph/bookkeeping overhead dominated before the follow-update path hit `DeadlineExceeded`.
 - v1.6 starts from codebase-memory graph analysis plus spike `001-crawl-speed-instrumentation`: `GetStalePubkeys` selection is coupled to `RelayFilterBatchSize`; `queryRelay` already chunks authors per relay filter cap; `CountPubkeys` and `CountStalePubkeys` run every batch mainly for logs; `AddFollowers` is the largest Dgraph hot path and remains sequential.
-- Tech: Go 1.24.1+, `go-nostr`, `dgo/v210` Dgraph gRPC client, `viper` for YAML config.
+- v1.6 shipped (2026-06-20): `frontier_batch_size` + `count_sample_interval` config (Phase 13) and a stored, int-indexed `follower_count` predicate + `uncrawled` frontier marker (Phase 14). Production Dgraph is 1.38M nodes; `follower_count` backfilled across the full graph (~2.5 min, idempotent, exact). Live-verified `GetStalePubkeys` ~119s → ~1.3s. The 2026-06-20 batch-metrics analysis confirmed `MarkAttempted` ≈ 0.07s, closing the write-path (`AddFollowers`) optimization as not-dominant.
+- **Open operational item:** the new crawler binary is not yet redeployed to production — the read-path win is verified on live Dgraph but not yet running in the deployed crawler (see Current Focus + 14-VERIFICATION.md runbook).
+- Tech: Go 1.24.1+, `go-nostr`, `dgo/v210` Dgraph gRPC client, `viper` for YAML config. ~28 commits / 27 files (+3954/-224) across v1.6.
 
 ## Constraints
 
@@ -157,9 +161,10 @@ _v1.2 requirements all delivered (Phases 05–09); v1.3 (Phase 10), v1.4 (Phase 
 | v1.5 continues phase numbering with Phase 12 | v1.4 shipped Phase 11 and config uses sequential phase naming | ✓ Shipped v1.5 (Phase 12) |
 | Transient follow-write failures use FetchResult.SkipAttempt | Leaving the pubkey unstamped by MarkAttempted preserves retry eligibility without retrying inside the current batch | ✓ Shipped v1.5 (Phase 12) |
 | AddFollowers keeps one transaction with bounded child contexts | Preserves replaceable kind-3 all-or-nothing graph semantics while bounding and instrumenting each Dgraph unit | ✓ Shipped v1.5 (Phase 12) |
-| v1.6 optimizes loop overhead before Dgraph write concurrency | Decoupling frontier selection and throttling count queries are lower-risk than changing `AddFollowers` transaction semantics; metrics already show overhead dominance and can validate the first round quickly | Planned v1.6 |
-| Keep relay filter caps independent from frontier batch size | Phase 6 fixed relay rejection by limiting per-relay filter chunks; `queryRelay` already chunks authors by learned cap, so larger DB-selected batches must not bypass that guard | Planned v1.6 |
-| v1.6 Phase 14 redefined: read-path `follower_count` over write-path decision | Production batch metrics (2026-06-20) show `GetStalePubkeys` ≈ 39s/batch (full-frontier `count(~follows)` sort) dominates, while write-path `MarkAttempted` ≈ 0.07s — so the write-path investigation (DWRITE-01) is closed as "not dominant" and Phase 14 targets the read-path aggregate via a stored/indexed `follower_count` (DSCALE-01/03). Count-query and frontier-batch wins from the same analysis are pure config (`count_sample_interval`, `frontier_batch_size`) already shipped in Phase 13. | Planned v1.6 (Phase 14) |
+| v1.6 optimizes loop overhead before Dgraph write concurrency | Decoupling frontier selection and throttling count queries are lower-risk than changing `AddFollowers` transaction semantics; metrics already show overhead dominance and can validate the first round quickly | ✓ Shipped v1.6 (Phase 13) |
+| Keep relay filter caps independent from frontier batch size | Phase 6 fixed relay rejection by limiting per-relay filter chunks; `queryRelay` already chunks authors by learned cap, so larger DB-selected batches must not bypass that guard | ✓ Shipped v1.6 (Phase 13) |
+| v1.6 Phase 14 redefined: read-path `follower_count` over write-path decision | Production batch metrics (2026-06-20) show `GetStalePubkeys` ≈ 39s/batch (full-frontier `count(~follows)` sort) dominates, while write-path `MarkAttempted` ≈ 0.07s — so the write-path investigation (DWRITE-01) is closed as "not dominant" and Phase 14 targets the read-path aggregate via a stored/indexed `follower_count` (DSCALE-01/03). Count-query and frontier-batch wins from the same analysis are pure config (`count_sample_interval`, `frontier_batch_size`) already shipped in Phase 13. | ✓ Shipped v1.6 (Phase 14) — live-verified ~119s → ~1.3s |
+| v1.6 frontier ordering via stored `follower_count` + `uncrawled` marker (index-entry), not a `count(~follows)` sort | DQL can't enter a query through a virtual `~follows` aggregate, so the per-call recompute over ~1.3M nodes was unavoidable while sorting on it; storing an int-indexed `follower_count` (±1 in `AddFollowers`) and an `eq(uncrawled,1)` frontier marker lets both selection blocks enter via an index and read the value instead of recomputing it | ✓ Shipped v1.6 (Phase 14) |
 
 ## Evolution
 
@@ -179,4 +184,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-20 — Phase 14 redefined from write-path decision to read-path `follower_count` fix (DSCALE-01/03).*
+*Last updated: 2026-06-20 after v1.6 milestone — Crawl Throughput Optimization shipped (Phases 13–14); crawler binary redeploy pending.*
