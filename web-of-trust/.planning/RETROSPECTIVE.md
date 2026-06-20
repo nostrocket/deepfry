@@ -149,6 +149,42 @@
 
 ---
 
+## Milestone: v1.6 — Crawl Throughput Optimization
+
+**Shipped:** 2026-06-20
+**Phases:** 2 (13–14) | **Plans:** 2 | **Requirements:** 16/16
+
+### What Was Built
+- Phase 13 decoupled the Dgraph frontier-selection batch size from the relay filter cap (`frontier_batch_size`) and throttled the per-batch `CountPubkeys`/`CountStalePubkeys` queries (`count_sample_interval`), while keeping exact batch accounting and proving the Phase 6 relay-filter safety model intact.
+- Phase 14 eliminated the dominant read-path cost: `GetStalePubkeys` recomputing `count(~follows)` over the entire ~1.3M-node frontier on every call. A stored, int-indexed `follower_count` predicate plus an `uncrawled` frontier marker let both selection blocks enter via an index (frontier `eq(uncrawled,1)`, aged `ge(follower_count,0)`) ordered by the stored value.
+- `follower_count` is maintained cheaply (±1 delta) inside `AddFollowers`' existing transaction; a new idempotent uid-cursor backfill CLI seeded the full 1.38M-node graph (~2.5 min, exact accuracy).
+- **Live-verified on the production Dgraph:** `GetStalePubkeys` ~119s → ~1.3s (frontier 69s→0.01s; aged 50s→1.3s).
+
+### What Worked
+- Measurement-first scoping paid off: the 2026-06-20 batch-metrics analysis localized the overhead to the frontier sort (~39s/batch) and showed `MarkAttempted` ≈ 0.07s, which let Phase 14 be **redefined** mid-milestone from a write-path decision (DWRITE) to the read-path `follower_count` fix (DSCALE) — and closed the write-path investigation as not-dominant rather than speculatively optimizing it.
+- Live verification on the actual production graph (not a synthetic fixture) gave a real before/after number and caught that an early read-path query wasn't actually index-driven.
+- Maintaining the counter inside the existing `AddFollowers` transaction kept the predicate correct without a second write path.
+
+### What Was Inefficient
+- The first live-verify pass found gaps (read query not index-driven; backfill too slow) and required a second fix cycle — the index-entry semantics of DQL (`eq(uncrawled,1)` / `ge(follower_count,0)`) weren't fully pinned down at plan time.
+- No `v1.6-MILESTONE-AUDIT.md` was produced; close relied on phase verification + the clean `audit-open` query.
+
+### Patterns Established
+- When sorting on an aggregate over a virtual reverse edge (`count(~follows)`) dominates a hot read path, materialize it as a stored indexed scalar maintained by deltas at write time, and add a boolean/marker predicate so selection queries can *enter* through an index instead of scanning to compute the sort key.
+- Use a uid-cursor (lexical UID floor) for full-graph backfills so the operation is idempotent and resumable on a multi-million-node graph.
+- Let production batch metrics decide phase scope: a planned phase can be legitimately redefined or closed when measurement contradicts the premise.
+
+### Key Lessons
+1. "Order by `count(~follows)`" silently means "recompute the aggregate over the whole frontier every call" in DQL — there's no index entry through a virtual aggregate, so the sort key must be materialized to be cheap.
+2. Live-verify on the real graph, not a fixture: the production 1.38M-node scale is what exposed both the index-entry gap and the backfill-speed problem.
+3. A redeploy is not a planning artifact — the optimization is verified on Dgraph but won't help production until the binary ships; track that explicitly as a deferred operational item at close.
+
+### Cost Observations
+- Sessions: execute → review → live-verify (2 fix cycles) → complete.
+- Notable: ~28 commits / 27 files (+3954/-224); two-phase coarse milestone, no closure phase needed.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -160,6 +196,7 @@
 | v1.3 | 10 | Single coarse phase; auto code-review→fix loop caught a refactor regression + flaky test the verifier missed |
 | v1.4 | 11 | Diagnose-then-fix across two sessions; RED regression test written before the milestone as the acceptance gate; review→fix loop ran full 3 iterations, each surfacing a deeper concurrency defect |
 | v1.5 | 12 | Production write-path abort fixed as a per-pubkey retry scheduling problem; single coarse phase with no closure gaps |
+| v1.6 | 13–14 | Measurement-driven scoping; a planned phase (14) was redefined mid-milestone from write-path to read-path after batch metrics contradicted the premise; live-verified on the real 1.38M-node graph |
 
 ### Cumulative Quality
 
@@ -170,6 +207,7 @@
 | v1.3 | unit (`package main`, injected-clock retry/backoff/cancel) | retry helper deterministically covered without a live Dgraph; first `cmd/crawler` unit-test file |
 | v1.4 | unit `-race` (4 dispatcher-liveness tests via `queryRelayFn` seam) | concurrency hang reproduced by injecting context-ignoring behavior, not the network condition; `pkg/crawler` coverage 25→27% |
 | v1.5 | unit + guarded integration-tag command | Dgraph write classification/progress and crawler retry scheduling covered without live services; integration-tag package build kept current |
+| v1.6 | unit (config/loop-accounting/`follower_count` delta) + integration-tag (ordering/backfill) + live production verification | read-path latency proven on the 1.38M-node production Dgraph (~119s → ~1.3s) with an exact-accuracy spot-check; live-verify caught a non-index-driven query the unit/integration tests passed |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -177,3 +215,4 @@
 2. Coarse phase granularity tied to real coupling clusters keeps plan counts minimal without losing dependency correctness.
 3. The auto code-review→fix loop repeatedly catches defects (regressions, flaky tests, concurrency hazards) that pass both the executor and the goal-backward verifier — it is the highest-leverage gate for refactors and concurrency work.
 4. For crawler batch liveness, preserving retry eligibility can be cleaner than retrying inline: omit transient-failed pubkeys from attempt stamping and let frontier selection retry later.
+5. Let production measurement, not the original plan, decide phase scope: v1.6's Phase 14 was redefined (write-path → read-path) and a sibling investigation closed once batch metrics localized the real cost — and "order by an aggregate over a virtual edge" must be materialized to an indexed scalar to be cheap.
