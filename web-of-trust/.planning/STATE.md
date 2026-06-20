@@ -4,11 +4,11 @@ milestone: v1.6
 milestone_name: Crawl Throughput Optimization
 current_phase: 14
 current_phase_name: frontier-read-path-throughput-follower-count
-status: awaiting-verification
-stopped_at: Phase 14 executed + code-reviewed; awaiting operator live-verify (TEST-03)
-last_updated: "2026-06-20T00:00:00.000Z"
+status: verified
+stopped_at: Phase 14 VERIFIED on live Dgraph; crawler redeploy is the remaining operational step
+last_updated: "2026-06-20T11:00:00.000Z"
 last_activity: 2026-06-20
-last_activity_desc: Phase 14 code complete (5/6 tasks), reviewed + CR-01 fixed; live-verify checkpoint pending
+last_activity_desc: Phase 14 live-verified — GetStalePubkeys ~119s → ~1.3s; awaiting crawler redeploy + v1.6 close
 progress:
   total_phases: 2
   completed_phases: 1
@@ -29,10 +29,10 @@ progress:
 
 ## Current Position
 
-Phase: 14 (Frontier Read-Path Throughput — `follower_count`) executed; awaiting live verification
-Plan: 14-01 — code complete (tasks 1–5), reviewed, CR-01 fixed
-Status: Phase 14 code shipped to `main` (commits 2bab80d → fa1c743). TEST-03 live-verify checkpoint PENDING — operator must run `backfill-follower-count` + before/after `GetStalePubkeys` latency on the strfry host. Milestone v1.6 intentionally left OPEN.
-Last activity: 2026-06-20 — Phase 14 executed + code-reviewed (CR-01 invalid backfill DQL fixed); live-verify pending
+Phase: 14 (Frontier Read-Path Throughput — `follower_count`) — VERIFIED on live Dgraph
+Plan: 14-01 — complete + live-verified (2 fix cycles: index-entry query, uncrawled marker, uid-cursor backfill)
+Status: Live-verified on the production Dgraph (1.38M nodes): `GetStalePubkeys` ~119s → ~1.3s (frontier 69s→0.01s via `eq(uncrawled,1)`; aged 50s→1.3s via `ge(follower_count,0)`). follower_count backfilled full graph (2.5 min, idempotent, exact accuracy). REMAINING: production cutover = redeploy the new crawler binary (+ one-time `uncrawled=1` safety seed for any never-attempted nodes) per 14-VERIFICATION.md runbook; then close v1.6.
+Last activity: 2026-06-20 — Phase 14 live-verified
 
 ## Performance Metrics
 
@@ -89,7 +89,9 @@ Last activity: 2026-06-20 — Phase 14 executed + code-reviewed (CR-01 invalid b
 - [x] Execute Phase 13 (`/gsd-execute-phase 13`)
 - [x] Decide Phase 14 scope from metrics — redefined from write-path (DWRITE) to read-path `follower_count` (DSCALE-01/03); write-path closed as not-dominant.
 - [x] Plan + execute Phase 14 (code: schema predicate, GetStalePubkeys rewrite, AddFollowers delta maintenance, backfill CLI, tests). Reviewed; CR-01 (invalid backfill DQL) fixed.
-- [ ] **TEST-03 operator live-verify** on the strfry host: run `make build-backfill-follower-count`, `./bin/backfill-follower-count` (idempotent seed of ~1.38M nodes — MUST complete before trusting `follower_count` ordering), then before/after `GetStalePubkeys` latency + stored-vs-recomputed spot-check. Record numbers, then close Phase 14 / v1.6.
+- [x] **TEST-03 live-verify** — DONE on the live Dgraph host (this is the Dgraph host). `GetStalePubkeys` ~119s → ~1.3s; follower_count full backfill in 2.5 min; accuracy exact; frontier ordering confirmed. See 14-VERIFICATION.md (status: passed).
+- [ ] **Production cutover:** redeploy the new crawler binary + one-time `uncrawled=1` safety seed for any `NOT has(last_attempt)` nodes, per the 14-VERIFICATION.md deploy runbook. (Schema + follower_count backfill already live; old crawler still running.)
+- [ ] **Close milestone v1.6** once the crawler is redeployed (`/gsd-complete-milestone v1.6`).
 - [ ] Operator config tuning (from the same analysis, independent of Phase 14): bump `count_sample_interval` (1→~20) and `frontier_batch_size` (100→~1000) in `~/deepfry/web-of-trust.yaml` — mechanisms already shipped in Phase 13.
 
 ### Roadmap Evolution
@@ -114,10 +116,10 @@ None.
 ## Session Continuity
 
 **Last session:** 2026-06-20
-**Stopped at:** Phase 14 executed + code-reviewed; awaiting operator live-verify (TEST-03)
-**Resume file:** `.planning/phases/14-frontier-read-path-throughput-follower-count/14-01-SUMMARY.md` (operator procedure)
+**Stopped at:** Phase 14 VERIFIED on live Dgraph; crawler redeploy + v1.6 close remain
+**Resume file:** `.planning/phases/14-frontier-read-path-throughput-follower-count/14-VERIFICATION.md` (results + deploy runbook)
 
-**To resume:** Phase 14 code is shipped to `main` (commits 2bab80d → fa1c743) and passed code review (CR-01 invalid backfill DQL fixed). Run the TEST-03 live verification on the strfry host per 14-01-SUMMARY.md — backfill the follower_count predicate, then measure before/after `GetStalePubkeys` latency. Once verified, close Phase 14 and complete milestone v1.6 (`/gsd-verify-work 14` then `/gsd-complete-milestone v1.6`). Milestone v1.6 is intentionally OPEN until live verification passes.
+**To resume:** Phase 14 is live-verified (`GetStalePubkeys` ~119s → ~1.3s on the 1.38M-node production graph). Schema (`follower_count`, `uncrawled` indexes) and the full follower_count backfill are already applied to the live Dgraph. Remaining: (1) production cutover — redeploy the new crawler binary + one-time `uncrawled=1` safety seed per 14-VERIFICATION.md; (2) `/gsd-complete-milestone v1.6`. The old crawler binary is still running (no behavior change until redeploy).
 
 ## Decisions
 

@@ -1,65 +1,69 @@
 ---
 phase: 14
-status: gaps_found
+status: passed
 verified_by: live operator run on the Dgraph host (2026-06-20)
 ---
 
 # Phase 14 Verification — Frontier Read-Path Throughput (`follower_count`)
 
-**Result: GAPS FOUND.** Live verification on the production Dgraph (v25.3.0, 1,383,141
-nodes) shows the phase code as written does NOT deliver the goal. Two blocking findings,
-both proven with measurements, neither catchable by the unit/integration tests (4–5 node
-graphs) or static review.
+**Result: PASSED** (after two live-verification fix cycles). Measured on the production
+Dgraph (v25.3.0, 1,383,141 nodes). `GetStalePubkeys` read-path dropped from ~119s to ~1.3s.
 
-## Environment
-- Dgraph host, live graph: `localhost:8080` (HTTP) / `:9080` (gRPC), v25.3.0, 1,383,141 nodes.
-- `follower_count: int @index(int)` index built successfully via `EnsureSchema` (additive, safe).
+## Final read-path latency (`GetStalePubkeys`, first:100)
 
-## Measured read-path latency (`GetStalePubkeys`, first:100)
+| Query | Old (count(~follows)) | Final (this phase) |
+|-------|----------------------|--------------------|
+| Frontier (`func: eq(uncrawled,1)`, orderdesc follower_count) | 69.0s | **0.01s** (empty) / **0.013s** (with nodes, correctly ordered) |
+| Aged (`func: ge(follower_count,0)` + `lt(next_attempt)`) | 49.9s | **1.3s** |
+| **Combined GetStalePubkeys** | **~119s** | **~1.3s** |
 
-| Query | Wall time | Note |
-|-------|-----------|------|
-| OLD frontier (`var{fc as count(~follows)}` + `orderdesc: val(fc)`) | **69.0s** | baseline; returned 0 rows (frontier empty — all nodes attempted) |
-| OLD aged (`count(~follows)` sort) | **49.9s** | steady-state hot path |
-| NEW frontier as-implemented (`func: has(pubkey)` + `orderdesc: follower_count`) | **47.8s** | barely better |
-| NEW aged as-implemented (`func: has(next_attempt)` + `orderdesc: follower_count`) | **23.5s** | ~2× only |
-| `func: has(pubkey), first:100` **no ordering** | **0.028s** | enumeration is NOT the bottleneck |
-| index-driven `func: gt(follower_count,100), orderdesc, first:100` | **0.064s** | index entry-point is ~1000× faster |
-| CORRECTED frontier (`func: gt(follower_count,-1)` entry + filter) | **0.26s** | the fix |
-| CORRECTED aged (`func: gt(follower_count,-1)` entry + filter) | **0.40s** | the fix |
+- Frontier ordering correctness confirmed live: 3 seeded uncrawled nodes (fc=50,5,1)
+  returned in exact desc order, then deleted (production left clean).
+- Accuracy (DSCALE-03): top node stored `follower_count=70547` == fresh `count(~follows)=70547`.
 
-## Finding 1 (BLOCKING) — read query does not exploit the index
-The rewritten `GetStalePubkeys` orders by the stored `follower_count` but keeps
-`func: has(pubkey)` / `func: has(next_attempt)` as the entry point. Dgraph therefore
-materializes and sorts the ENTIRE matching set (24–48s) instead of walking the
-`follower_count` int index. The stored predicate removed the `count(~follows)` recompute
-but the dominant cost (full set sort) remains, so the win is only ~2×, not the order of
-magnitude the phase targets.
+## What it took (the plan's first cut did NOT work at scale — live verification caught it)
 
-**Fix (proven, 0.26–0.40s):** drive both blocks off the int index as the entry point —
-`func: gt(follower_count, -1), first: N, orderdesc: follower_count @filter(...)` (or
-`ge(follower_count, 0)`), keeping the existing `@filter(NOT has(last_attempt))` /
-`@filter(lt(next_attempt, now))`. Re-measure at full backfill to confirm filter-skip depth
-on the frontier phase stays bounded.
+Two fix cycles were required beyond the initial implementation; neither failure was
+catchable by the unit/integration tests (4–5 node graphs) or static review:
 
-## Finding 2 (BLOCKING) — backfill is impractically slow at production scale
-`backfill-follower-count` uses offset pagination (`func: has(pubkey), offset: M,
-orderasc: pubkey`) recomputing `count(~follows)` per node. Measured ~100 nodes/min →
-**days** for 1.38M nodes (killed at 1000 nodes). The offset/orderasc:pubkey idiom (mirrored
-from `GetAllPubkeysPaginated`) is fine for small exports but not a full-graph seed.
+1. **Read query didn't exploit the index.** `func: has(pubkey) ... orderdesc: follower_count`
+   full-sorts the whole set (24–48s). Fixed: drive off the int index — aged uses
+   `func: ge(follower_count, 0)` (1.3s).
+2. **Frontier can't use follower_count as entry** (never-attempted nodes are absent-predicate
+   + low-follower → bottom of a desc walk → ~25s scanning the whole index). Fixed: a positive
+   indexed `uncrawled` marker — set on node creation, star-deleted in `MarkAttempted` — so the
+   frontier enters via `func: eq(uncrawled, 1)` (0.01s). Invariant: `uncrawled=1` ⟺ no `last_attempt`.
+3. **Backfill was impractical** (offset pagination + per-node count: ~100 nodes/min → days).
+   A single bulk upsert hit Dgraph's "var has over million UIDs" cap. Fixed: uid-cursor
+   (`after:`) bulk upsert, ~100k/batch — full 1.38M backfill in **2.5 min**, idempotent.
 
-**Fix options:** (a) single/few-batch upsert — `query { v as var(func: has(pubkey)) { fc as
-count(~follows) } } mutation { set { uid(v) <follower_count> val(fc) . } }` — computes all
-counts in one pass and writes `val(fc)`; (b) uid-cursor (`after: <lastUID>`) pagination
-instead of offset, which is O(n) total instead of O(n²). Re-verify the chosen approach
-completes over the full graph in acceptable time.
+## Schema / data state on production (all additive, safe)
+- `follower_count: int @index(int)` — added; all 1,383,141 nodes backfilled (incl 0 for no-follower).
+- `uncrawled: int @index(int)` — added; currently 0 nodes carry it (frontier is empty — all attempted).
+- Live crawler still running the OLD binary → no behavior change yet (see deploy runbook).
 
-## State left on production (benign)
-- `follower_count @index(int)` added (additive, unused by the live crawler — still on old binary).
-- ~1000 nodes carry a backfilled `follower_count` (ordering hint; harmless).
-- Live crawler binary NOT restarted → no behavior change in production.
+## Deploy runbook (the production cutover — NOT yet done)
 
-## Next step
-Revise Plan 14-01 (read-query entry point + backfill mechanism), re-execute those two tasks,
-then re-run this live verification. Do NOT close Phase 14 / milestone v1.6 until both fixes
-re-measure correctly on the full graph.
+The schema + follower_count backfill are live, but the running crawler is the OLD binary.
+To activate the new read path + ongoing maintenance:
+
+1. **Stop the old crawler.**
+2. **Deploy the new crawler binary** (`make build`; the read-path queries + follower_count
+   delta maintenance + uncrawled marker maintenance are all in it).
+3. **One-time uncrawled safety seed** (handles any never-attempted nodes the old crawler may
+   have created since the follower_count backfill — currently ~0, but do it to avoid stranding):
+   set `uncrawled=1` on every `NOT has(last_attempt)` node before starting the new crawler.
+   (Frontier was measured at 0, so this is a near-no-op now; run it anyway for safety.)
+4. **Start the new crawler.** From here: new nodes get `uncrawled=1` on creation and
+   `follower_count` maintained on every `AddFollowers`; `MarkAttempted` clears `uncrawled`.
+5. Optional: re-run `backfill-follower-count` periodically — follower_count is an ordering
+   hint and self-heals via maintenance, but a periodic re-seed corrects any drift.
+
+## Known minor follow-up (non-blocking)
+- `CountStalePubkeys`'s frontier-count block still uses `has(pubkey) @filter(NOT has(last_attempt))`
+  (a metrics count, throttled by `count_sample_interval`). Correct by the invariant but could be
+  switched to `eq(uncrawled,1)` for speed. Out of scope for this phase.
+
+## Independent operator win (separate from this phase)
+- Config tuning in `~/deepfry/web-of-trust.yaml`: `count_sample_interval` 1→~20,
+  `frontier_batch_size` 100→~1000 (mechanisms shipped in Phase 13). Stacks on top of this.

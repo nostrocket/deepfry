@@ -17,7 +17,7 @@
 **Goal:** Make the crawler expand the web of trust faster by reducing avoidable per-batch Dgraph/bookkeeping overhead and safely increasing useful work per loop.
 
 - [x] Phase 13: Main-Loop Throughput Controls (1 plan) — decouple frontier batch size from relay filter cap, throttle count queries, update metrics/run records, and prove relay filter safety remains intact. (completed 2026-06-18)
-- [ ] Phase 14: Frontier Read-Path Throughput (`follower_count`) (1 plan) — eliminate the per-batch full-frontier `count(~follows)` sort in `GetStalePubkeys` (the measured ~39s overhead) by maintaining a stored/indexed `follower_count` predicate, kept correct across follow-graph writes.
+- [x] Phase 14: Frontier Read-Path Throughput (`follower_count`) (1 plan) — eliminate the per-batch full-frontier `count(~follows)` sort in `GetStalePubkeys`. Live-verified: ~119s → ~1.3s (frontier via `eq(uncrawled,1)`; aged via `ge(follower_count,0)`). Crawler redeploy pending. (verified 2026-06-20)
 
 16/16 requirements mapped (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DSCALE-01/03, TEST-01/02/03).
 
@@ -34,7 +34,7 @@
 **Plans:** 1 plan
 
 Plans:
-- [ ] 14-01-PLAN.md — schema `follower_count` predicate, GetStalePubkeys read-path rewrite, AddFollowers delta maintenance, backfill CLI, and unit/integration tests (DSCALE-01, DSCALE-03, TEST-03)
+- [x] 14-01-PLAN.md — schema `follower_count` + `uncrawled` predicates, GetStalePubkeys index-entry rewrite (frontier `eq(uncrawled,1)`, aged `ge(follower_count,0)`), AddFollowers delta + marker maintenance, uid-cursor backfill CLI, tests (DSCALE-01, DSCALE-03, TEST-03) — live-verified 2026-06-20
 
 </details>
 
@@ -106,4 +106,4 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP
 | 11. Relay-Query Liveness | v1.4 | 1/1 | Complete | 2026-06-16 |
 | 12. Dgraph Follow-Update Resilience | v1.5 | 1/1 | Complete | 2026-06-18 |
 | 13. Main-Loop Throughput Controls | v1.6 | 1/1 | Complete    | 2026-06-18 |
-| 14. Frontier Read-Path Throughput (`follower_count`) | v1.6 | 1/1 code | Executed — live-verify pending | — |
+| 14. Frontier Read-Path Throughput (`follower_count`) | v1.6 | 1/1 | Verified (live) — crawler redeploy pending | 2026-06-20 |

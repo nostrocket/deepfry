@@ -26,14 +26,14 @@
 
 ### Dgraph Read Path
 
-- [ ] **DSCALE-01**: `GetStalePubkeys` no longer recomputes `count(~follows)` over the entire frontier on each call — frontier ordering reads a stored, indexed `follower_count` predicate instead of an on-the-fly aggregate sort.
-- [ ] **DSCALE-03**: The stored `follower_count` is maintained correctly as follow edges change (`AddFollowers`), so frontier ordering does not drift from the true follower count, with a one-time backfill for existing nodes.
+- [x] **DSCALE-01**: `GetStalePubkeys` no longer recomputes `count(~follows)` — both blocks enter via an index (aged `ge(follower_count,0)`, frontier `eq(uncrawled,1)`), ordered by the stored `follower_count`. Live-verified ~119s → ~1.3s.
+- [x] **DSCALE-03**: `follower_count` maintained on `AddFollowers` (±1 delta) + the `uncrawled` frontier marker maintained on create/`MarkAttempted`; one-time uid-cursor backfill seeded the full 1.38M-node graph (idempotent, exact accuracy).
 
 ### Testing
 
 - [x] **TEST-01**: Unit tests cover config loading/defaults for frontier batch and count-sampling settings without touching `~/deepfry/`.
 - [x] **TEST-02**: Unit tests cover loop accounting for larger selected batches, skipped attempts, and throttled count queries.
-- [ ] **TEST-03**: Integration or operator-run verification covers a live Dgraph/relay round and records before-vs-after throughput evidence.
+- [x] **TEST-03**: Live verification on the production Dgraph (1.38M nodes) recorded before/after read-path latency (~119s → ~1.3s) + accuracy spot-check; see 14-VERIFICATION.md.
 
 ## Future Requirements
 
@@ -74,11 +74,11 @@
 | MEASURE-01 | Phase 13 | Complete |
 | MEASURE-02 | Phase 13 | Complete |
 | MEASURE-03 | Phase 13 | Complete |
-| DSCALE-01 | Phase 14 | Pending |
-| DSCALE-03 | Phase 14 | Pending |
+| DSCALE-01 | Phase 14 | Complete (live-verified) |
+| DSCALE-03 | Phase 14 | Complete (live-verified) |
 | TEST-01 | Phase 13 | Complete |
 | TEST-02 | Phase 13 | Complete |
-| TEST-03 | Phase 14 | Pending |
+| TEST-03 | Phase 14 | Complete (live-verified) |
 
 **Coverage:**
 
