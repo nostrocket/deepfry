@@ -969,6 +969,16 @@ func (c *Crawler) queryRelay(ctx context.Context, rs *relayState, filter nostr.F
 	relay := rs.conn
 	relayURL := rs.url
 
+	// NIL-01: rs.conn can be niled out concurrently by markRelayDead (line 331)
+	// or the dispatcher's stale-generation cleanup (line 799) — e.g. for an
+	// abandoned query goroutine from a prior batch whose relay was since marked
+	// dead. Guard here so relay.Subscribe is never called on a nil *Relay (which
+	// segfaults the process); treat it as a transport failure so the relay flows
+	// through the normal dead-relay handling instead.
+	if relay == nil {
+		return &transportError{err: fmt.Errorf("relay %s: connection is nil (closed concurrently)", relayURL)}
+	}
+
 	if c.debug {
 		log.Printf("Querying relay %s for %d pubkeys", relayURL, len(filter.Authors))
 	}

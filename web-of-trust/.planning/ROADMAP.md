@@ -21,6 +21,18 @@
 
 16/16 requirements mapped (LOOP-01/02/03/04, COUNT-01/02/03, MEASURE-01/02/03, DWRITE-01/02/03, TEST-01/02/03).
 
+### Phase 13: Main-Loop Throughput Controls
+
+**Goal:** Increase useful crawl work per main loop by decoupling frontier batch size from the relay filter cap and throttling count queries, without weakening relay filter safety.
+**Status:** Completed 2026-06-18
+**Plans:** 1 plan
+
+### Phase 14: Dgraph Write-Path Throughput Decision
+
+**Goal:** Use Phase 13 throughput measurements to decide whether the Dgraph write path (`AddFollowers`) still dominates per-batch overhead, then implement a correctness-preserving Dgraph write-path optimization only if the data justifies it.
+**Depends on:** Phase 13 main-loop throughput measurements.
+**Plans:** 1 plan
+
 </details>
 
 <details>
