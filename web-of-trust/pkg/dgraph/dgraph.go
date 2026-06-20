@@ -734,25 +734,27 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // whose next_attempt timestamp is in the past.
 //
 // Both phases are ordered by descending follower count (PERF-01, D-08).
-// D-09 verification: `orderdesc: count(~follows)` in the `func:` line is NOT
-// supported by Dgraph v25 (rejects "Expected val(). Got count() with order.").
-// The workaround uses a `var` block to compute `count(~follows)` into an
-// aggregation variable `fc`, then uses `val(fc)` as the orderdesc key — this
-// is semantically equivalent and verified working on the production graph.
-// D-10 (stored follower_count predicate) is NOT needed since the val() pattern
-// achieves the same ordering with a computed aggregate.
+// Phase 14 (DSCALE-01) perf rationale: ordering now reads the STORED, indexed
+// follower_count predicate (orderdesc on follower_count) instead of recomputing
+// count(~follows) into a val() variable on every call. The previous D-09 val(fc)
+// workaround and the D-10 "stored follower_count predicate is NOT needed" note
+// are SUPERSEDED: recomputing the aggregate over the entire ~1.3M never-attempted
+// frontier was the single largest per-batch cost (≈39s of an ~80s batch). Reading
+// a stored int-indexed predicate removes that cost; follower_count is maintained
+// cheaply as follow edges change (AddFollowers) and backfilled once for existing
+// nodes (BackfillFollowerCount). It is an ORDERING HINT, not authoritative — small
+// drift is acceptable by design.
 //
 // Large-frontier sort-cap evidence (HARD-04/WR-05): 08-REVIEW.md WR-05 raises
-// the concern that `orderdesc: val(fc)` over a large frontier set may be capped
-// at 1000 rows by Dgraph before the explicit `first:` limit is applied,
-// potentially re-introducing the historical stub-starvation bug for very large
-// frontiers. This concern was resolved via the D-09 human checkpoint in Phase 8:
-// on the production graph (100k+ frontier nodes) `first: N` was verified to be
-// honored together with `orderdesc: val(fc)` — the top-N nodes by follower count
-// were returned, not a pre-truncated subset capped at 1000. The D-09 checkpoint
-// is the standing live-verified evidence for this guarantee (08-REVIEW.md WR-05).
-// The integration test TestGetStalePubkeysOrder exercises correctness at small
-// scale; the >1000-row regime is covered by the D-09 live verification.
+// the concern that an `orderdesc` over a large frontier set may be capped at 1000
+// rows by Dgraph before the explicit `first:` limit is applied, potentially
+// re-introducing the historical stub-starvation bug for very large frontiers.
+// After backfill every frontier node carries follower_count, so ordering by the
+// stored follower_count predicate + explicit `first: N` is the intended pattern: it
+// returns the true top-N-by-count frontier, not a pre-truncated subset. This is
+// re-verified live in TEST-03 on the production graph (>1000-row frontier). The
+// integration test in dgraph_follower_count_test.go exercises ordering correctness
+// at small scale; the >1000-row regime is covered by the TEST-03 live verification.
 //
 // Phase 8 change: the aged phase now keys on next_attempt (D-02) instead of
 // last_attempt. The olderThanUnix parameter is kept for API compatibility but
@@ -771,13 +773,11 @@ func (c *Client) GetStalePubkeys(
 	out := make(map[string]int64, limit)
 
 	// Phase 1: the uncrawled frontier — pubkeys we have never attempted.
-	// Ordered by descending follower count (PERF-01) via val() aggregation (D-09 fix).
+	// Ordered by descending follower count (PERF-01) via the stored, indexed
+	// follower_count predicate (DSCALE-01) — no per-call count(~follows) aggregate.
 	frontierQuery := fmt.Sprintf(`
 	{
-		var(func: has(pubkey)) @filter(NOT has(last_attempt)) {
-			fc as count(~follows)
-		}
-		frontier(func: uid(fc), first: %d, orderdesc: val(fc)) {
+		frontier(func: has(pubkey), first: %d, orderdesc: follower_count) @filter(NOT has(last_attempt)) {
 			pubkey
 			kind3CreatedAt
 		}
@@ -787,19 +787,17 @@ func (c *Client) GetStalePubkeys(
 	}
 
 	// Phase 2: top up with previously-attempted pubkeys whose next_attempt
-	// is in the past (D-02). Ordered by descending follower count (PERF-01).
+	// is in the past (D-02). Ordered by descending follower count (PERF-01) via
+	// the stored follower_count predicate (DSCALE-01) — no count(~follows) aggregate.
 	if remaining := limit - len(out); remaining > 0 {
 		nowUnix := time.Now().Unix()
 		agedQuery := fmt.Sprintf(`
 		{
-			var(func: has(next_attempt)) @filter(lt(next_attempt, %d)) {
-				ac as count(~follows)
-			}
-			aged(func: uid(ac), first: %d, orderdesc: val(ac)) {
+			aged(func: has(next_attempt), first: %d, orderdesc: follower_count) @filter(lt(next_attempt, %d)) {
 				pubkey
 				kind3CreatedAt
 			}
-		}`, nowUnix, remaining)
+		}`, remaining, nowUnix)
 		if err := c.collectStale(ctx, agedQuery, "aged", out); err != nil {
 			return nil, err
 		}
