@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,6 +61,12 @@ func (c *Client) Close() error {
 
 // EnsureSchema sets the schema needed for this module.
 // Phase 8 adds next_attempt and miss_count predicates (D-01, additive only).
+// Phase 14 adds the follower_count predicate (DSCALE-01, additive only): a
+// stored, int-indexed count maintained on the write path and ordered by on the
+// read path, so GetStalePubkeys no longer recomputes count(~follows) per call.
+// The @index(int) is REQUIRED for an efficient orderdesc on the read path.
+// Dgraph schema is additive, so this single Alter call remains the only
+// declaration site — no migration step is needed.
 func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int @index(int) .
@@ -67,6 +74,7 @@ last_db_update: int @index(int) .
 last_attempt: int @index(int) .
 next_attempt: int @index(int) .
 miss_count: int .
+follower_count: int @index(int) .
 follows: [uid] @reverse .
 
 type Profile {
@@ -77,6 +85,7 @@ type Profile {
   last_attempt
   next_attempt
   miss_count
+  follower_count
 }`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
@@ -238,6 +247,35 @@ func chunkSlice(items []string, size int) [][]string {
 		chunks = append(chunks, items[start:end])
 	}
 	return chunks
+}
+
+// followerCountDelta computes the follow-set delta between a signer's prior
+// follow set (existing, keyed pubkey->uid) and its new follow set (updated, a
+// set of pubkeys). It is a PURE helper (no Dgraph dependency, no I/O) so it can
+// be unit-tested as the seam for the follower_count maintenance in AddFollowers,
+// exactly like chunkSlice is the seam for batching (Phase 14, DSCALE-03).
+//
+//   - added   = keys in updated that are NOT in existing (newly-followed)
+//   - removed = keys in existing that are NOT in updated (unfollowed)
+//   - the intersection (unchanged follows) is omitted from both
+//
+// Both slices are returned deterministically sorted so callers and tests are
+// order-stable. It does NOT filter pubkey validity — that is the caller's
+// concern; this is pure set math over the keys it is given.
+func followerCountDelta(existing map[string]string, updated map[string]struct{}) (added, removed []string) {
+	for pk := range updated {
+		if _, ok := existing[pk]; !ok {
+			added = append(added, pk)
+		}
+	}
+	for pk := range existing {
+		if _, ok := updated[pk]; !ok {
+			removed = append(removed, pk)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
 }
 
 // AddFollowers adds multiple follows edges from a single follower to multiple
