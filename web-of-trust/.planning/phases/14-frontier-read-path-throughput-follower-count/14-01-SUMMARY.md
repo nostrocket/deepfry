@@ -25,7 +25,8 @@ tech-stack:
   patterns:
     - "Stored derived predicate read on the hot path instead of recomputed aggregate"
     - "Read-current-then-write-clamped-absolute for counter maintenance (no native Dgraph increment)"
-    - "Offset pagination (orderasc: pubkey) for idempotent overwrite backfill — stable has(pubkey) set makes offset paging correct"
+    - "UID-cursor bulk upsert (after: <last-uid>, val(count(~follows)) per page) for idempotent O(n) backfill — replaces offset paging, which measured ~100 nodes/min live; a single all-nodes upsert trips Dgraph's 1M-UID var limit"
+    - "Hot-path selection enters via an int-index root (func: ge(follower_count, 0)) with @filter restrictions, NOT a has(...) root — avoids a full sort before first:N (~150x on the live graph)"
 
 key-files:
   created:
@@ -161,10 +162,23 @@ Task 6 is an operator-run live verification on the **strfry host** (TEST-03) —
 - Code is complete, builds clean, and passes all automatable gates. The phase cannot be marked fully complete until the operator runs the Task 6 live verification on the strfry host and records the before/after read-path latency evidence (TEST-03).
 - No blockers for the operator step beyond access to the live Dgraph + crawler on the strfry host.
 
+## Live-verification fixes
+
+Live verification on the production Dgraph (1.38M nodes) proved the as-shipped Phase 14 code did NOT deliver the throughput goal. Three fixes were applied to `pkg/dgraph/dgraph.go` and the backfill CLI:
+
+- **Fix A — GetStalePubkeys must enter via the follower_count int index, not `has(...)`.** Both the frontier and aged blocks ordered by `follower_count` but still rooted on `func: has(pubkey)` / `func: has(next_attempt)`. Measured: Dgraph full-sorts the whole matched set before applying `first: N` → 24–48s, barely better than the pre-Phase-14 ~50–69s baseline. Changing the entry point to `func: ge(follower_count, 0)` (int-index walk in desc order, stop after `first: N` filter-passing rows) measured 0.26–0.40s (~150x). The original `@filter(...)` restrictions (`NOT has(last_attempt)`, `lt(next_attempt, now)`) are preserved as filters. Query strings extracted to package-level `frontierStaleQueryFmt`/`agedStaleQueryFmt` constants so the unit suite asserts the entry point without a live Dgraph.
+- **Fix B — new signer nodes must initialise `follower_count`.** The new-signer create path (the `_:follower ... <dgraph.type> "Profile"` nquads) did not set `follower_count`, so a first-seen signer was invisible to `ge(follower_count, 0)` and never crawled. Added `_:follower <follower_count> "0" .`. The signer's own count is independent of the followees it adds (it starts at 0 and is incremented by Step-4 maintenance when others follow it; no double-count). Followee stubs already initialise `follower_count "1"` (unchanged).
+- **Fix C — backfill must use a uid-cursor bulk upsert, not offset + per-node count.** The offset/`orderasc: pubkey` + per-node `count(~follows)` read-then-write approach measured ~100 nodes/min (days for 1.38M), and a single all-nodes upsert trips Dgraph's "var has over a million UIDs" limit. `backfillFollowerCountPaged` now loops bounded upserts paged by uid cursor: per batch, `v as var(func: has(pubkey), first: pageSize, after: cursor) { fc as count(~follows) }` + a `page(...)` block, with mutation `uid(v) <follower_count> val(fc) .` (one index pass per batch, O(n) overall). Cursor advances to the last uid of each page; terminates on a short page. Production pageSize = 100000 (< 1M var limit), cursor starts at `0x0`. `val(fc)` writes 0 for zero-follower nodes — REQUIRED so every node carries `follower_count` for Fix A; zero-count nodes are not skipped.
+
+**Tests:** `TestBackfillFollowerCountPaged` now asserts the zero-follower target gets an explicitly-present `follower_count = 0` (new `queryFollowerCountPresent` helper distinguishes a written 0 from a missing predicate), still exercising the multi-page uid-cursor path with pageSize=2 and asserting no skips/dupes/termination. Added unit test `TestGetStalePubkeysQueryEntersViaFollowerCountIndex` asserting both query strings contain `func: ge(follower_count, 0)` + `orderdesc: follower_count` and contain neither `func: has(pubkey)` nor `func: has(next_attempt)` as the root. `TestFollowerCountDelta` retained.
+
+**Gate results (re-run after fixes):** `go build ./...` PASS · `go vet ./...` PASS · `go vet -tags=integration ./pkg/dgraph/` PASS · `make test` (-short) PASS · `go test ./pkg/dgraph/ -run TestFollowerCountDelta` PASS · `make build-backfill-follower-count` PASS. Integration tests NOT run (live Dgraph busy).
+
 ## Self-Check: PASSED
 
 - All created files present on disk (cmd/backfill-follower-count/main.go, both test files, this SUMMARY).
 - All 5 task commits present in git history (2bab80d, 7aea2fc, 95f4ded, 688eacd, 0172305).
+- Live-verification fix commit recorded below.
 
 ---
 *Phase: 14-frontier-read-path-throughput-follower-count*

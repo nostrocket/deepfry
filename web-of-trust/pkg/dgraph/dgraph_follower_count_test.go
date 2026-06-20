@@ -1,8 +1,11 @@
 package dgraph
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestFollowerCountDelta pins the pure follow-set delta math that drives
@@ -57,5 +60,40 @@ func TestFollowerCountDelta(t *testing.T) {
 				t.Errorf("removed = %v, want %v", removed, tc.wantRemoved)
 			}
 		})
+	}
+}
+
+// TestGetStalePubkeysQueryEntersViaFollowerCountIndex pins the live-verification
+// Fix A invariant WITHOUT a live Dgraph: both GetStalePubkeys selection blocks
+// must enter through the follower_count int index (func: ge(follower_count, 0))
+// ordered desc, and must NOT root on has(pubkey) / has(next_attempt) (which made
+// Dgraph full-sort the whole set, ~150x slower on the production graph).
+func TestGetStalePubkeysQueryEntersViaFollowerCountIndex(t *testing.T) {
+	frontier := fmt.Sprintf(frontierStaleQueryFmt, 100)
+	aged := fmt.Sprintf(agedStaleQueryFmt, 100, time.Now().Unix())
+
+	for name, q := range map[string]string{"frontier": frontier, "aged": aged} {
+		if !strings.Contains(q, "func: ge(follower_count, 0)") {
+			t.Errorf("%s query must enter via the follower_count int index "+
+				"(func: ge(follower_count, 0)); got:\n%s", name, q)
+		}
+		if !strings.Contains(q, "orderdesc: follower_count") {
+			t.Errorf("%s query must order by orderdesc: follower_count; got:\n%s", name, q)
+		}
+		if strings.Contains(q, "func: has(pubkey)") {
+			t.Errorf("%s query must NOT root on func: has(pubkey) (forces full sort); got:\n%s", name, q)
+		}
+		if strings.Contains(q, "func: has(next_attempt)") {
+			t.Errorf("%s query must NOT root on func: has(next_attempt) (forces full sort); got:\n%s", name, q)
+		}
+	}
+
+	// The aged block still restricts by next_attempt — as a @filter, not the root.
+	if !strings.Contains(aged, "@filter(lt(next_attempt,") {
+		t.Errorf("aged query must keep lt(next_attempt, now) as a @filter; got:\n%s", aged)
+	}
+	// The frontier block still restricts to never-attempted nodes — as a @filter.
+	if !strings.Contains(frontier, "@filter(NOT has(last_attempt))") {
+		t.Errorf("frontier query must keep NOT has(last_attempt) as a @filter; got:\n%s", frontier)
 	}
 }

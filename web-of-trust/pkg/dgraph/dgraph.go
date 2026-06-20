@@ -403,12 +403,20 @@ func (c *Client) AddFollowers(
 	progress.totalChunks = 2 + len(followeeChunks)*3 + 1 // follower + timestamp + windows + commit
 
 	if len(result.Follower) == 0 {
-		// Create new follower
+		// Create new follower (the SIGNER node). It MUST initialise
+		// follower_count = 0 (DSCALE-03, live-verification Fix B): the read path
+		// enters via the follower_count int index (`func: ge(follower_count, 0)`),
+		// so a first-seen signer with no follower_count predicate would be
+		// INVISIBLE to GetStalePubkeys and never get crawled. The signer's own
+		// follower_count is independent of the followees it adds here — it counts
+		// who follows the signer, which starts at 0 and is incremented by the
+		// follower_count maintenance step (Step 4) when other signers follow it.
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
 			_:follower <dgraph.type> "Profile" .
 			_:follower <kind3CreatedAt> "%d" .
 			_:follower <last_db_update> "%d" .
+			_:follower <follower_count> "0" .
 		`, signerPubkey, kind3createdAt, lastUpdate)
 
 		mu := &api.Mutation{
@@ -878,6 +886,42 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 	return true, nil
 }
 
+// frontierStaleQueryFmt and agedStaleQueryFmt are the GetStalePubkeys selection
+// queries, extracted as package-level format strings so the unit suite can assert
+// on their shape without a live Dgraph (the integration suite covers behaviour).
+//
+// CRITICAL ENTRY-POINT RATIONALE (Phase 14 live-verification fix): both blocks
+// enter via the follower_count INT INDEX — `func: ge(follower_count, 0)` — not via
+// `func: has(pubkey)` / `func: has(next_attempt)`. Measured on the production graph
+// (1.38M nodes): a `has(...)` root with `orderdesc: follower_count` forces Dgraph to
+// materialise and FULL-SORT the entire matched set before applying `first: N`
+// (24–48s, barely better than the pre-Phase-14 ~50–69s count(~follows) baseline).
+// Entering through `ge(follower_count, 0)` makes Dgraph walk the int index in
+// descending order and stop after `first: N` filter-passing rows — measured
+// 0.26–0.40s (~150x faster). The `@filter(...)` clauses are unchanged and still
+// restrict to the frontier (NOT has(last_attempt)) and aged (lt(next_attempt, now))
+// subsets respectively. PRECONDITION: every Profile node must carry follower_count
+// (>= 0) or it is invisible to `ge(follower_count, 0)` — see the node-creation paths
+// in AddFollowers (signer + followee stubs both initialise it) and the one-time
+// BackfillFollowerCount operator run.
+const (
+	frontierStaleQueryFmt = `
+	{
+		frontier(func: ge(follower_count, 0), first: %d, orderdesc: follower_count) @filter(NOT has(last_attempt)) {
+			pubkey
+			kind3CreatedAt
+		}
+	}`
+
+	agedStaleQueryFmt = `
+		{
+			aged(func: ge(follower_count, 0), first: %d, orderdesc: follower_count) @filter(lt(next_attempt, %d)) {
+				pubkey
+				kind3CreatedAt
+			}
+		}`
+)
+
 // GetStalePubkeys returns up to `limit` pubkeys that need (re)crawling, as a map
 // of pubkey -> kind3CreatedAt. It prioritises the uncrawled frontier (pubkeys
 // never attempted) and only then tops up with previously-attempted pubkeys
@@ -894,6 +938,13 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // cheaply as follow edges change (AddFollowers) and backfilled once for existing
 // nodes (BackfillFollowerCount). It is an ORDERING HINT, not authoritative — small
 // drift is acceptable by design.
+//
+// Live-verification fix (Phase 14): both blocks enter through the follower_count
+// int index (`func: ge(follower_count, 0)`) rather than `has(pubkey)` /
+// `has(next_attempt)`. Rooting on `has(...)` made Dgraph full-sort the whole set
+// before `first: N` (24–48s on the 1.38M-node graph); the index entry point lets it
+// walk the index in desc order and stop early (0.26–0.40s, ~150x). See the constant
+// docs on frontierStaleQueryFmt/agedStaleQueryFmt for the measured rationale.
 //
 // Large-frontier sort-cap evidence (HARD-04/WR-05): 08-REVIEW.md WR-05 raises
 // the concern that an `orderdesc` over a large frontier set may be capped at 1000
@@ -924,30 +975,22 @@ func (c *Client) GetStalePubkeys(
 
 	// Phase 1: the uncrawled frontier — pubkeys we have never attempted.
 	// Ordered by descending follower count (PERF-01) via the stored, indexed
-	// follower_count predicate (DSCALE-01) — no per-call count(~follows) aggregate.
-	frontierQuery := fmt.Sprintf(`
-	{
-		frontier(func: has(pubkey), first: %d, orderdesc: follower_count) @filter(NOT has(last_attempt)) {
-			pubkey
-			kind3CreatedAt
-		}
-	}`, limit)
+	// follower_count predicate (DSCALE-01). Entry point is the int index
+	// (ge(follower_count, 0)), NOT has(pubkey), to avoid a full sort — see
+	// frontierStaleQueryFmt docs for the live-measured rationale.
+	frontierQuery := fmt.Sprintf(frontierStaleQueryFmt, limit)
 	if err := c.collectStale(ctx, frontierQuery, "frontier", out); err != nil {
 		return nil, err
 	}
 
 	// Phase 2: top up with previously-attempted pubkeys whose next_attempt
 	// is in the past (D-02). Ordered by descending follower count (PERF-01) via
-	// the stored follower_count predicate (DSCALE-01) — no count(~follows) aggregate.
+	// the stored follower_count predicate (DSCALE-01). Entry point is the int
+	// index (ge(follower_count, 0)), NOT has(next_attempt) — the lt(next_attempt)
+	// restriction is applied as a @filter so the index drives the walk.
 	if remaining := limit - len(out); remaining > 0 {
 		nowUnix := time.Now().Unix()
-		agedQuery := fmt.Sprintf(`
-		{
-			aged(func: has(next_attempt), first: %d, orderdesc: follower_count) @filter(lt(next_attempt, %d)) {
-				pubkey
-				kind3CreatedAt
-			}
-		}`, remaining, nowUnix)
+		agedQuery := fmt.Sprintf(agedStaleQueryFmt, remaining, nowUnix)
 		if err := c.collectStale(ctx, agedQuery, "aged", out); err != nil {
 			return nil, err
 		}
@@ -1297,82 +1340,96 @@ func (c *Client) BackfillNextAttempt(ctx context.Context, hitRefreshCadence int6
 // read 0; the ±1 maintenance the crawler applies during/after backfill self-heals
 // once this overwrite lands, so concurrent crawler writes are safe.
 //
-// Paging invariant: unlike BackfillNextAttempt (which filters NOT has(next_attempt)
-// so each committed window removes its own rows and offset:0 self-empties), this
-// method OVERWRITES follower_count on every node unconditionally and never changes
-// pubkey membership. The has(pubkey) set is therefore stable across the backfill,
-// so plain offset paging (the proven GetAllPubkeysPaginated idiom) is correct:
-// page by offset 0, batchSize, 2*batchSize, … ordered by pubkey ascending
-// (pubkey is @index(exact)), terminating when a page returns fewer than batchSize
-// rows. A re-run recomputes and rewrites the same values (idempotent). Page size
-// = batchSize (200): count(~follows) per node makes pages heavier than the
-// next_attempt backfill, so the smaller page is the safe default.
+// Paging invariant (live-verification Fix C): paging is by UID CURSOR
+// (`after: <last-uid>`), NOT offset. The earlier offset + per-node
+// `fc: count(~follows)` read-then-write approach measured ~100 nodes/min on the
+// production graph (offset paging degrades and the per-node aggregate is paid in
+// the response), which is days for 1.38M nodes. A single all-nodes upsert is not
+// an option either: it trips Dgraph's "var has over a million UIDs" limit.
+//
+// The working approach (verified live): per batch run ONE bounded upsert. The
+// upsert query computes count(~follows) into a val() variable for a uid-cursor
+// page AND selects that page's uids; the mutation `uid(v) <follower_count> val(fc) .`
+// writes the count for the whole page in bulk in a single index pass (O(n) total).
+// We advance the cursor to the last uid of the page and repeat until a page
+// returns fewer than pageSize rows.
+//
+// val(fc) writes 0 for nodes with no incoming follows — this is REQUIRED, not a
+// bug: the read path (`func: ge(follower_count, 0)`) only sees nodes that carry
+// follower_count, so EVERY node must get a value including zero-follower nodes. Do
+// NOT skip zero-count nodes. A re-run recomputes and rewrites the same values
+// (idempotent). Production page size is 100000 — comfortably under the ~1M var
+// limit while keeping the per-batch index pass bounded.
 func (c *Client) BackfillFollowerCount(ctx context.Context) (int, error) {
-	return c.backfillFollowerCountPaged(ctx, batchSize)
+	return c.backfillFollowerCountPaged(ctx, 100000)
 }
 
 // backfillFollowerCountPaged is the page-size-injectable implementation behind
 // BackfillFollowerCount. pageSize is exposed only so integration tests can force
 // the multi-page / termination path with a small dataset; production callers use
-// BackfillFollowerCount (pageSize = batchSize).
+// BackfillFollowerCount (pageSize = 100000).
+//
+// pageSize MUST stay below Dgraph's ~1,000,000-UID var limit, since each batch's
+// `var(... first: pageSize)` materialises that page's UIDs into the `v` variable
+// the mutation references.
 func (c *Client) backfillFollowerCountPaged(ctx context.Context, pageSize int) (int, error) {
-	type nodeRow struct {
+	type uidRow struct {
 		UID string `json:"uid"`
-		FC  int    `json:"fc"`
 	}
 
 	total := 0
-	offset := 0
+	cursor := "0x0" // uid cursor; `after: 0x0` starts before the first node.
 	for {
-		// Page by offset (ascending pubkey). Selecting uid + the recomputed
-		// follower count for a bounded window keeps the response under the gRPC cap.
+		// One bounded upsert per batch. `v`/`fc` compute the follower count for
+		// this uid-cursor page; `page` selects the same page's uids so we can
+		// advance the cursor. The mutation writes follower_count = val(fc) for
+		// every uid in `v` (including 0 for zero-follower nodes) in one pass.
 		query := fmt.Sprintf(`
-		{
-			nodes(func: has(pubkey), first: %d, offset: %d, orderasc: pubkey) {
-				uid
-				fc: count(~follows)
+		query {
+			v as var(func: has(pubkey), first: %d, after: %s) {
+				fc as count(~follows)
 			}
-		}`, pageSize, offset)
+			page(func: has(pubkey), first: %d, after: %s) {
+				uid
+			}
+		}`, pageSize, cursor, pageSize, cursor)
 
-		txn := c.dg.NewReadOnlyTxn()
-		resp, err := txn.Query(ctx, query)
+		mu := &api.Mutation{
+			SetNquads: []byte("uid(v) <follower_count> val(fc) ."),
+		}
+		req := &api.Request{
+			Query:     query,
+			Mutations: []*api.Mutation{mu},
+			CommitNow: true,
+		}
+
+		txn := c.dg.NewTxn()
+		resp, err := txn.Do(ctx, req)
 		txn.Discard(ctx) // inline discard — not deferred — so it fires every iteration (HARD-01)
 		if err != nil {
-			return total, fmt.Errorf("backfill follower_count query failed: %w", err)
+			return total, fmt.Errorf("backfill follower_count upsert failed: %w", err)
 		}
 
 		var result struct {
-			Nodes []nodeRow `json:"nodes"`
+			Page []uidRow `json:"page"`
 		}
 		if err := json.Unmarshal(resp.Json, &result); err != nil {
 			return total, fmt.Errorf("backfill follower_count unmarshal failed: %w", err)
 		}
-		if len(result.Nodes) == 0 {
+		if len(result.Page) == 0 {
 			// Reached the end of the pubkey set — backfill complete.
 			break
 		}
 
-		// Overwrite follower_count = count(~follows) for this page (idempotent).
-		var nquads strings.Builder
-		for _, n := range result.Nodes {
-			nquads.WriteString(fmt.Sprintf("<%s> <follower_count> \"%d\" .\n", n.UID, n.FC))
-		}
+		total += len(result.Page)
 
-		muTxn := c.dg.NewTxn()
-		mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
-		_, mutErr := muTxn.Mutate(ctx, mu)
-		muTxn.Discard(ctx) // inline discard — not deferred — so it fires every iteration
-		if mutErr != nil {
-			return total, fmt.Errorf("backfill follower_count mutation failed: %w", mutErr)
-		}
+		// Advance the cursor to the last uid of this page.
+		cursor = result.Page[len(result.Page)-1].UID
 
-		total += len(result.Nodes)
-
-		// A short page means we have reached the end of the stable has(pubkey) set.
-		if len(result.Nodes) < pageSize {
+		// A short page means we have reached the end of the has(pubkey) set.
+		if len(result.Page) < pageSize {
 			break
 		}
-		offset += pageSize
 	}
 
 	return total, nil

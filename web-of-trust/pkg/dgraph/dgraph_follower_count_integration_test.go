@@ -13,6 +13,17 @@ import (
 // queryFollowerCount reads the stored follower_count for a pubkey (0 if unset).
 func queryFollowerCount(t *testing.T, c *Client, pubkey string) int {
 	t.Helper()
+	fc, _ := queryFollowerCountPresent(t, c, pubkey)
+	return fc
+}
+
+// queryFollowerCountPresent reads the stored follower_count for a pubkey and also
+// reports whether the predicate is actually SET on the node. This distinguishes a
+// genuinely-written 0 (zero-follower node, which the uid-cursor backfill MUST
+// write so the read-path index sees it) from a missing predicate that JSON
+// unmarshalling would also surface as 0.
+func queryFollowerCountPresent(t *testing.T, c *Client, pubkey string) (int, bool) {
+	t.Helper()
 	ctx := context.Background()
 	txn := c.dg.NewReadOnlyTxn()
 	defer txn.Discard(ctx)
@@ -23,17 +34,23 @@ func queryFollowerCount(t *testing.T, c *Client, pubkey string) int {
 		t.Fatalf("queryFollowerCount(%q) query failed: %v", pubkey, err)
 	}
 	var parsed struct {
-		Node []struct {
-			FollowerCount int `json:"follower_count"`
-		} `json:"node"`
+		Node []map[string]json.RawMessage `json:"node"`
 	}
 	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
 		t.Fatalf("queryFollowerCount(%q) unmarshal failed: %v", pubkey, err)
 	}
 	if len(parsed.Node) == 0 {
-		return 0
+		return 0, false
 	}
-	return parsed.Node[0].FollowerCount
+	raw, present := parsed.Node[0]["follower_count"]
+	if !present {
+		return 0, false
+	}
+	var fc int
+	if err := json.Unmarshal(raw, &fc); err != nil {
+		t.Fatalf("queryFollowerCount(%q) value unmarshal failed: %v", pubkey, err)
+	}
+	return fc, true
 }
 
 // TestGetStalePubkeysOrderByFollowerCount verifies GetStalePubkeys returns
@@ -183,11 +200,14 @@ _:f3 <follows> <%s> .
 	}
 }
 
-// TestBackfillFollowerCountPaged forces the multi-page / termination path by
-// seeding 5 nodes and running the backfill with pageSize=2 (so the loop must
-// page 2 + 2 + 1 and terminate on the short final page). It asserts every node
-// receives the correct follower_count and that the total processed equals the
-// node count with no skips or duplicates (WR-01).
+// TestBackfillFollowerCountPaged forces the multi-page / termination path of the
+// uid-cursor backfill (Fix C) by seeding 5 target nodes (plus their followers)
+// and running with pageSize=2 (> the page size, so the loop must advance the uid
+// cursor across several pages and terminate on the short final page). It asserts:
+//   - every target gets the correct follower_count (0..4),
+//   - the zero-follower target gets an EXPLICITLY-written follower_count = 0 (not a
+//     missing predicate) — required so it is visible to the read-path index,
+//   - total processed >= the seeded node count (no skips), and the loop terminates.
 func TestBackfillFollowerCountPaged(t *testing.T) {
 	ctx := context.Background()
 	c, err := NewClient("localhost:9080")
@@ -268,9 +288,16 @@ func TestBackfillFollowerCountPaged(t *testing.T) {
 		t.Errorf("processed %d nodes; want >= %d (skips/short-circuit?)", processed, wantAtLeast)
 	}
 
-	// Each target i must have follower_count == i exactly (no skips, no dupes).
+	// Each target i must have follower_count == i exactly, and the predicate must
+	// be PRESENT on every target including the zero-follower one (no skips, no
+	// dupes). A present-but-0 value on target[0] proves the uid-cursor upsert
+	// writes val(fc)=0 rather than skipping zero-follower nodes.
 	for i, pk := range targets {
-		if fc := queryFollowerCount(t, c, pk); fc != i {
+		fc, present := queryFollowerCountPresent(t, c, pk)
+		if !present {
+			t.Errorf("target[%d] missing follower_count predicate (zero-count node skipped?)", i)
+		}
+		if fc != i {
 			t.Errorf("target[%d] follower_count = %d, want %d", i, fc, i)
 		}
 	}
