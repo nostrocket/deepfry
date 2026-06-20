@@ -53,6 +53,285 @@ func queryFollowerCountPresent(t *testing.T, c *Client, pubkey string) (int, boo
 	return fc, true
 }
 
+// queryUncrawledPresent reports whether the uncrawled predicate is SET on a node
+// and its value (Phase 14 uncrawled-marker fix). It distinguishes a written
+// uncrawled=1 from a missing predicate (which JSON unmarshalling also surfaces as 0).
+func queryUncrawledPresent(t *testing.T, c *Client, pubkey string) (int, bool) {
+	t.Helper()
+	ctx := context.Background()
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+
+	q := fmt.Sprintf(`{ node(func: eq(pubkey, %q)) { uncrawled } }`, pubkey)
+	resp, err := txn.Query(ctx, q)
+	if err != nil {
+		t.Fatalf("queryUncrawled(%q) query failed: %v", pubkey, err)
+	}
+	var parsed struct {
+		Node []map[string]json.RawMessage `json:"node"`
+	}
+	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
+		t.Fatalf("queryUncrawled(%q) unmarshal failed: %v", pubkey, err)
+	}
+	if len(parsed.Node) == 0 {
+		return 0, false
+	}
+	raw, present := parsed.Node[0]["uncrawled"]
+	if !present {
+		return 0, false
+	}
+	var v int
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("queryUncrawled(%q) value unmarshal failed: %v", pubkey, err)
+	}
+	return v, true
+}
+
+// inUncrawledFrontier reports whether a pubkey is returned by an eq(uncrawled, 1)
+// frontier query (the actual frontier read-path entry point, Phase 14).
+func inUncrawledFrontier(t *testing.T, c *Client, pubkey string, first int) bool {
+	t.Helper()
+	ctx := context.Background()
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+
+	q := fmt.Sprintf(
+		`{ frontier(func: eq(uncrawled, 1), first: %d, orderdesc: follower_count) { pubkey } }`, first)
+	resp, err := txn.Query(ctx, q)
+	if err != nil {
+		t.Fatalf("inUncrawledFrontier query failed: %v", err)
+	}
+	var parsed struct {
+		Frontier []struct {
+			Pubkey string `json:"pubkey"`
+		} `json:"frontier"`
+	}
+	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
+		t.Fatalf("inUncrawledFrontier unmarshal failed: %v", err)
+	}
+	for _, n := range parsed.Frontier {
+		if n.Pubkey == pubkey {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAddFollowersSetsUncrawledMarker verifies that nodes created by AddFollowers
+// (both the signer node and a followee stub) carry uncrawled = 1 (Phase 14), so
+// they enter the eq(uncrawled, 1) frontier index. INVARIANT: uncrawled = 1 ⟺ never
+// attempted, and a fresh node has by definition never been attempted.
+func TestAddFollowersSetsUncrawledMarker(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+	signer := fmt.Sprintf("%064x", now+8000)
+	followee := fmt.Sprintf("%064x", now+8001)
+
+	defer func() {
+		allUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{signer, followee})
+		if err != nil {
+			t.Logf("cleanup resolve failed: %v", err)
+			return
+		}
+		toDelete := make([]string, 0, len(allUIDs))
+		for _, uid := range allUIDs {
+			toDelete = append(toDelete, uid)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	follows := map[string]struct{}{followee: {}}
+	if err := c.AddFollowers(ctx, signer, now, follows, false); err != nil {
+		t.Fatalf("AddFollowers failed: %v", err)
+	}
+
+	// The newly-created signer node must carry uncrawled = 1.
+	if v, present := queryUncrawledPresent(t, c, signer); !present || v != 1 {
+		t.Errorf("signer uncrawled = (%d, present=%v), want (1, true)", v, present)
+	}
+	// The newly-created followee stub must carry uncrawled = 1.
+	if v, present := queryUncrawledPresent(t, c, followee); !present || v != 1 {
+		t.Errorf("followee stub uncrawled = (%d, present=%v), want (1, true)", v, present)
+	}
+	// Both must appear in the eq(uncrawled, 1) frontier query.
+	big := countFrontier(t, c) + 100
+	if !inUncrawledFrontier(t, c, signer, big) {
+		t.Errorf("signer %s not in eq(uncrawled, 1) frontier", signer)
+	}
+	if !inUncrawledFrontier(t, c, followee, big) {
+		t.Errorf("followee stub %s not in eq(uncrawled, 1) frontier", followee)
+	}
+}
+
+// TestMarkAttemptedClearsUncrawledMarker verifies that MarkAttempted star-deletes
+// the uncrawled predicate on every stamped node (Phase 14), so it leaves the
+// eq(uncrawled, 1) frontier index once it has been attempted. INVARIANT: uncrawled
+// = 1 ⟺ never attempted.
+func TestMarkAttemptedClearsUncrawledMarker(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+	pk := fmt.Sprintf("%064x", now+9000)
+
+	// Seed an uncrawled frontier node directly (uncrawled=1, no last_attempt).
+	mustMutate(t, c, fmt.Sprintf(
+		`_:n <pubkey> %q .
+_:n <dgraph.type> "Profile" .
+_:n <follower_count> "5" .
+_:n <uncrawled> "1" .
+`, pk))
+
+	defer func() {
+		allUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{pk})
+		if err != nil {
+			t.Logf("cleanup resolve failed: %v", err)
+			return
+		}
+		toDelete := make([]string, 0, len(allUIDs))
+		for _, uid := range allUIDs {
+			toDelete = append(toDelete, uid)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	big := countFrontier(t, c) + 100
+
+	// Precondition: the node is in the frontier before being attempted.
+	if !inUncrawledFrontier(t, c, pk, big) {
+		t.Fatalf("seed node %s not in eq(uncrawled, 1) frontier before MarkAttempted", pk)
+	}
+
+	// Stamp it as attempted (treat as a miss — empty hits set).
+	if err := c.MarkAttempted(ctx, []string{pk}, time.Now().Unix(),
+		map[string]struct{}{}, DefaultBackoffParams()); err != nil {
+		t.Fatalf("MarkAttempted failed: %v", err)
+	}
+
+	// The uncrawled predicate must be gone after the attempt.
+	if v, present := queryUncrawledPresent(t, c, pk); present {
+		t.Errorf("uncrawled still present (=%d) after MarkAttempted; star-delete failed", v)
+	}
+	// And the node must no longer appear in the eq(uncrawled, 1) frontier.
+	if inUncrawledFrontier(t, c, pk, big) {
+		t.Errorf("node %s still in eq(uncrawled, 1) frontier after MarkAttempted", pk)
+	}
+}
+
+// TestUncrawledFrontierOrderedByFollowerCount verifies an eq(uncrawled, 1) frontier
+// query returns uncrawled nodes ordered by follower_count (Phase 14): the frontier
+// enters via the uncrawled index but still surfaces high-follower nodes first.
+func TestUncrawledFrontierOrderedByFollowerCount(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewClient("localhost:9080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixNano()
+	high := fmt.Sprintf("%064x", now+9100)
+	mid := fmt.Sprintf("%064x", now+9101)
+	low := fmt.Sprintf("%064x", now+9102)
+
+	mustMutate(t, c, fmt.Sprintf(
+		`_:h <pubkey> %q .
+_:h <dgraph.type> "Profile" .
+_:h <follower_count> "300" .
+_:h <uncrawled> "1" .
+_:m <pubkey> %q .
+_:m <dgraph.type> "Profile" .
+_:m <follower_count> "200" .
+_:m <uncrawled> "1" .
+_:l <pubkey> %q .
+_:l <dgraph.type> "Profile" .
+_:l <follower_count> "100" .
+_:l <uncrawled> "1" .
+`, high, mid, low))
+
+	defer func() {
+		allUIDs, err := c.ResolvePubkeysToUIDs(ctx, []string{high, mid, low})
+		if err != nil {
+			t.Logf("cleanup resolve failed: %v", err)
+			return
+		}
+		toDelete := make([]string, 0, len(allUIDs))
+		for _, uid := range allUIDs {
+			toDelete = append(toDelete, uid)
+		}
+		if len(toDelete) > 0 {
+			if err := c.DeleteNodes(ctx, toDelete); err != nil {
+				t.Logf("cleanup delete failed: %v", err)
+			}
+		}
+	}()
+
+	// Read the actual frontier selection (the production query string) and confirm
+	// our three high-follower uncrawled nodes appear, ordered high→low among themselves.
+	txn := c.dg.NewReadOnlyTxn()
+	defer txn.Discard(ctx)
+	q := fmt.Sprintf(frontierStaleQueryFmt, countFrontier(t, c)+100)
+	resp, err := txn.Query(ctx, q)
+	if err != nil {
+		t.Fatalf("frontier query failed: %v", err)
+	}
+	var parsed struct {
+		Frontier []struct {
+			Pubkey string `json:"pubkey"`
+		} `json:"frontier"`
+	}
+	if err := json.Unmarshal(resp.Json, &parsed); err != nil {
+		t.Fatalf("frontier unmarshal failed: %v", err)
+	}
+
+	// Record the order positions of our three seeded nodes.
+	pos := map[string]int{high: -1, mid: -1, low: -1}
+	for i, n := range parsed.Frontier {
+		if _, tracked := pos[n.Pubkey]; tracked {
+			pos[n.Pubkey] = i
+		}
+	}
+	for name, pk := range map[string]string{"high": high, "mid": mid, "low": low} {
+		if pos[pk] < 0 {
+			t.Errorf("%s-follower uncrawled node %s missing from frontier", name, pk)
+		}
+	}
+	// orderdesc: follower_count → high before mid before low.
+	if pos[high] >= 0 && pos[mid] >= 0 && pos[high] > pos[mid] {
+		t.Errorf("high (%d) must precede mid (%d) by follower_count desc", pos[high], pos[mid])
+	}
+	if pos[mid] >= 0 && pos[low] >= 0 && pos[mid] > pos[low] {
+		t.Errorf("mid (%d) must precede low (%d) by follower_count desc", pos[mid], pos[low])
+	}
+}
+
 // TestGetStalePubkeysOrderByFollowerCount verifies GetStalePubkeys returns
 // frontier pubkeys ordered by the STORED follower_count predicate (DSCALE-01).
 // follower_count is set directly via mustMutate — no real follow edges are
@@ -74,17 +353,23 @@ func TestGetStalePubkeysOrderByFollowerCount(t *testing.T) {
 	mid := fmt.Sprintf("%064x", now+1)
 	low := fmt.Sprintf("%064x", now+2)
 
-	// Three frontier nodes (no last_attempt) with stored follower_count 30/20/10.
+	// Three frontier nodes (uncrawled=1, never attempted) with stored
+	// follower_count 30/20/10. Phase 14: the frontier read enters via the uncrawled
+	// marker index (eq(uncrawled, 1)), so seed nodes must carry uncrawled=1 to be
+	// selected — this mirrors how AddFollowers stamps newly-created nodes.
 	mustMutate(t, c, fmt.Sprintf(
 		`_:h <pubkey> %q .
 _:h <dgraph.type> "Profile" .
 _:h <follower_count> "30" .
+_:h <uncrawled> "1" .
 _:m <pubkey> %q .
 _:m <dgraph.type> "Profile" .
 _:m <follower_count> "20" .
+_:m <uncrawled> "1" .
 _:l <pubkey> %q .
 _:l <dgraph.type> "Profile" .
 _:l <follower_count> "10" .
+_:l <uncrawled> "1" .
 `, high, mid, low))
 
 	defer func() {

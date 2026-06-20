@@ -67,6 +67,13 @@ func (c *Client) Close() error {
 // The @index(int) is REQUIRED for an efficient orderdesc on the read path.
 // Dgraph schema is additive, so this single Alter call remains the only
 // declaration site — no migration step is needed.
+//
+// Phase 14 also adds the uncrawled predicate (additive only): an int-indexed,
+// positive marker (uncrawled = 1) for nodes never attempted (no last_attempt).
+// It is the index-entry form of the frontier so the frontier read can enter via
+// eq(uncrawled, 1) instead of full-scanning the 1.38M follower_count index for an
+// absent predicate. INVARIANT: uncrawled = 1 ⟺ node has never been attempted.
+// Set on node creation (AddFollowers), deleted on first attempt (MarkAttempted).
 func (c *Client) EnsureSchema(ctx context.Context) error {
 	schema := `pubkey: string @index(exact) @upsert @unique .
 kind3CreatedAt: int @index(int) .
@@ -75,6 +82,7 @@ last_attempt: int @index(int) .
 next_attempt: int @index(int) .
 miss_count: int .
 follower_count: int @index(int) .
+uncrawled: int @index(int) .
 follows: [uid] @reverse .
 
 type Profile {
@@ -86,6 +94,7 @@ type Profile {
   next_attempt
   miss_count
   follower_count
+  uncrawled
 }`
 	return c.dg.Alter(ctx, &api.Operation{Schema: schema})
 }
@@ -411,12 +420,18 @@ func (c *Client) AddFollowers(
 		// follower_count is independent of the followees it adds here — it counts
 		// who follows the signer, which starts at 0 and is incremented by the
 		// follower_count maintenance step (Step 4) when other signers follow it.
+		//
+		// It also gets uncrawled = 1: a first-seen signer has never been attempted,
+		// so it belongs to the frontier index (eq(uncrawled, 1)). If this same batch
+		// later stamps it via MarkAttempted, that delete-star clears uncrawled and it
+		// leaves the frontier — the invariant (uncrawled=1 ⟺ never attempted) holds.
 		followerNQuads := fmt.Sprintf(`
 			_:follower <pubkey> %q .
 			_:follower <dgraph.type> "Profile" .
 			_:follower <kind3CreatedAt> "%d" .
 			_:follower <last_db_update> "%d" .
 			_:follower <follower_count> "0" .
+			_:follower <uncrawled> "1" .
 		`, signerPubkey, kind3createdAt, lastUpdate)
 
 		mu := &api.Mutation{
@@ -557,6 +572,11 @@ func (c *Client) AddFollowers(
 					// adjustment for it below, or it would be double-counted.
 					createNQuads += fmt.Sprintf(
 						"_:%s <follower_count> \"1\" .\n", blankNodeID)
+					// Initialize uncrawled = 1: a freshly-created followee stub has
+					// never been attempted, so it belongs to the frontier index
+					// (eq(uncrawled, 1)). MarkAttempted clears it on first attempt.
+					createNQuads += fmt.Sprintf(
+						"_:%s <uncrawled> \"1\" .\n", blankNodeID)
 					followeeUIDs[i] = "_:" + blankNodeID
 					newlyCreatedFollowees[followee] = struct{}{}
 					if debug {
@@ -890,24 +910,37 @@ func (c *Client) RemovePubKeyIfNoFollowers(
 // queries, extracted as package-level format strings so the unit suite can assert
 // on their shape without a live Dgraph (the integration suite covers behaviour).
 //
-// CRITICAL ENTRY-POINT RATIONALE (Phase 14 live-verification fix): both blocks
-// enter via the follower_count INT INDEX — `func: ge(follower_count, 0)` — not via
-// `func: has(pubkey)` / `func: has(next_attempt)`. Measured on the production graph
-// (1.38M nodes): a `has(...)` root with `orderdesc: follower_count` forces Dgraph to
-// materialise and FULL-SORT the entire matched set before applying `first: N`
-// (24–48s, barely better than the pre-Phase-14 ~50–69s count(~follows) baseline).
-// Entering through `ge(follower_count, 0)` makes Dgraph walk the int index in
-// descending order and stop after `first: N` filter-passing rows — measured
-// 0.26–0.40s (~150x faster). The `@filter(...)` clauses are unchanged and still
-// restrict to the frontier (NOT has(last_attempt)) and aged (lt(next_attempt, now))
-// subsets respectively. PRECONDITION: every Profile node must carry follower_count
-// (>= 0) or it is invisible to `ge(follower_count, 0)` — see the node-creation paths
-// in AddFollowers (signer + followee stubs both initialise it) and the one-time
-// BackfillFollowerCount operator run.
+// CRITICAL ENTRY-POINT RATIONALE:
+//
+// FRONTIER (Phase 14 uncrawled-marker fix): the frontier block enters via the
+// uncrawled INT INDEX — `func: eq(uncrawled, 1)` — NOT via `ge(follower_count, 0)`
+// with an `@filter(NOT has(last_attempt))`. Live-measured problem: the prior
+// `ge(follower_count, 0) ... @filter(NOT has(last_attempt))` form walked the entire
+// 1.38M follower_count index (~25s) because never-attempted nodes are an
+// ABSENT-predicate set (NOT has) AND they cluster at LOW follower_count (signer=0,
+// stub=1) — i.e. at the bottom of the orderdesc walk, so Dgraph scanned almost the
+// whole index before the `first: N` filter-passing rows accumulated. `eq(uncrawled, 1)`
+// is the POSITIVE, indexed form of "frontier": Dgraph enters the uncrawled index
+// directly at the never-attempted set with no absent-predicate filter. The block
+// keeps `orderdesc: follower_count` (uncrawled nodes carry follower_count: signer=0,
+// stub=1). INVARIANT: uncrawled = 1 ⟺ never attempted — set on node creation
+// (AddFollowers signer + stub), star-deleted on first attempt (MarkAttempted), so
+// the index always matches the `NOT has(last_attempt)` set it replaces.
+//
+// AGED (Phase 14 live-verification fix, UNCHANGED): the aged block enters via the
+// follower_count INT INDEX — `func: ge(follower_count, 0)` — not via
+// `func: has(next_attempt)`. Measured on the production graph (1.38M nodes): a
+// `has(...)` root with `orderdesc: follower_count` forces Dgraph to materialise and
+// FULL-SORT the entire matched set before applying `first: N` (24–48s); entering
+// through `ge(follower_count, 0)` walks the int index in descending order and stops
+// after `first: N` filter-passing rows — measured 1.3s. The `lt(next_attempt, now)`
+// restriction stays an `@filter` so the index drives the walk. PRECONDITION: every
+// attempted Profile node must carry follower_count (>= 0) or it is invisible to
+// `ge(follower_count, 0)` — see AddFollowers and the one-time BackfillFollowerCount run.
 const (
 	frontierStaleQueryFmt = `
 	{
-		frontier(func: ge(follower_count, 0), first: %d, orderdesc: follower_count) @filter(NOT has(last_attempt)) {
+		frontier(func: eq(uncrawled, 1), first: %d, orderdesc: follower_count) {
 			pubkey
 			kind3CreatedAt
 		}
@@ -939,12 +972,14 @@ const (
 // nodes (BackfillFollowerCount). It is an ORDERING HINT, not authoritative — small
 // drift is acceptable by design.
 //
-// Live-verification fix (Phase 14): both blocks enter through the follower_count
-// int index (`func: ge(follower_count, 0)`) rather than `has(pubkey)` /
-// `has(next_attempt)`. Rooting on `has(...)` made Dgraph full-sort the whole set
-// before `first: N` (24–48s on the 1.38M-node graph); the index entry point lets it
-// walk the index in desc order and stop early (0.26–0.40s, ~150x). See the constant
-// docs on frontierStaleQueryFmt/agedStaleQueryFmt for the measured rationale.
+// Live-verification fix (Phase 14): the FRONTIER block enters through the uncrawled
+// int index (`func: eq(uncrawled, 1)`) and the AGED block through the follower_count
+// int index (`func: ge(follower_count, 0)`) — neither roots on `has(pubkey)` /
+// `has(next_attempt)`. The earlier frontier form (`ge(follower_count, 0)` +
+// `@filter(NOT has(last_attempt))`) full-scanned the 1.38M follower_count index (~25s)
+// because never-attempted nodes are an absent-predicate, low-follower set clustered at
+// the bottom of the orderdesc walk; `eq(uncrawled, 1)` enters the positive frontier
+// index directly. See the constant docs on frontierStaleQueryFmt/agedStaleQueryFmt.
 //
 // Large-frontier sort-cap evidence (HARD-04/WR-05): 08-REVIEW.md WR-05 raises
 // the concern that an `orderdesc` over a large frontier set may be capped at 1000
@@ -961,11 +996,14 @@ const (
 // last_attempt. The olderThanUnix parameter is kept for API compatibility but
 // is no longer used by the aged phase — it is deprecated and ignored.
 //
-// IMPORTANT: never-attempted nodes are selected by an explicit `NOT has(last_attempt)`
-// query with an explicit `first:`. Do NOT use `orderasc: last_attempt` to surface
-// them — missing-value nodes sort last and Dgraph caps an unbounded sorted query at
-// 1000 rows, which is the bug this function previously had (it returned only
-// already-crawled accounts and never a single stub).
+// IMPORTANT: never-attempted nodes are selected by the uncrawled marker index
+// (`eq(uncrawled, 1)`) with an explicit `first:`. Do NOT revert to an absent-predicate
+// form (`NOT has(last_attempt)`) or `orderasc: last_attempt` — missing-value nodes sort
+// last and Dgraph caps an unbounded sorted query at 1000 rows (the original stub-
+// starvation bug), and the `NOT has(...)` filter over the follower_count index
+// full-scanned 1.38M rows (~25s, the Phase 14 uncrawled-marker fix). The marker is the
+// positive, indexed form of the frontier and is kept in lockstep with `NOT has(last_attempt)`
+// by AddFollowers (set on create) and MarkAttempted (star-delete on first attempt).
 func (c *Client) GetStalePubkeys(
 	ctx context.Context,
 	olderThanUnix int64, // deprecated as of Phase 8; aged phase now uses lt(next_attempt, now)
@@ -974,10 +1012,11 @@ func (c *Client) GetStalePubkeys(
 	out := make(map[string]int64, limit)
 
 	// Phase 1: the uncrawled frontier — pubkeys we have never attempted.
-	// Ordered by descending follower count (PERF-01) via the stored, indexed
-	// follower_count predicate (DSCALE-01). Entry point is the int index
-	// (ge(follower_count, 0)), NOT has(pubkey), to avoid a full sort — see
-	// frontierStaleQueryFmt docs for the live-measured rationale.
+	// Entry point is the uncrawled int index (eq(uncrawled, 1)), the positive
+	// indexed form of "never attempted", ordered by descending follower count
+	// (PERF-01) via the stored follower_count predicate (DSCALE-01). This avoids
+	// the prior full-scan of the follower_count index for an absent last_attempt
+	// predicate — see frontierStaleQueryFmt docs for the live-measured rationale.
 	frontierQuery := fmt.Sprintf(frontierStaleQueryFmt, limit)
 	if err := c.collectStale(ctx, frontierQuery, "frontier", out); err != nil {
 		return nil, err
@@ -1157,10 +1196,19 @@ func (c *Client) MarkAttempted(
 	}
 
 	var nquads strings.Builder
+	var delNquads strings.Builder
 	for _, n := range nodeInfo {
 		// Stamp last_attempt for all valid pubkeys (preserves existing aging
 		// semantics and truthfulness of the field).
 		nquads.WriteString(fmt.Sprintf("<%s> <last_attempt> \"%d\" .\n", n.UID, ts))
+
+		// Clear the uncrawled frontier marker (Phase 14): a node we are now
+		// stamping with last_attempt is, by definition, no longer never-attempted,
+		// so it must leave the eq(uncrawled, 1) frontier index. The star-delete
+		// `<uid> <uncrawled> * .` removes the predicate regardless of its value and
+		// is a no-op when absent — safe to apply unconditionally to every stamped
+		// node. This preserves the invariant: uncrawled = 1 ⟺ never attempted.
+		delNquads.WriteString(fmt.Sprintf("<%s> <uncrawled> * .\n", n.UID))
 
 		if _, isHit := hits[n.Pubkey]; isHit {
 			// HIT (D-03): pubkey returned a kind-3 event — reset backoff.
@@ -1182,7 +1230,11 @@ func (c *Client) MarkAttempted(
 
 	txn := c.dg.NewTxn()
 	defer txn.Discard(ctx)
-	mu := &api.Mutation{SetNquads: []byte(nquads.String()), CommitNow: true}
+	mu := &api.Mutation{
+		SetNquads: []byte(nquads.String()),
+		DelNquads: []byte(delNquads.String()),
+		CommitNow: true,
+	}
 	if _, err := txn.Mutate(ctx, mu); err != nil {
 		return fmt.Errorf("mark attempted failed: %w", err)
 	}
@@ -1329,6 +1381,14 @@ func (c *Client) BackfillNextAttempt(ctx context.Context, hitRefreshCadence int6
 
 	return total, nil
 }
+
+// NO uncrawled backfill (Phase 14 uncrawled-marker fix): unlike follower_count,
+// the uncrawled marker is NOT backfilled onto existing nodes. A live check confirmed
+// the frontier is empty (all 1,383,141 existing nodes are already attempted), so by
+// the invariant (uncrawled = 1 ⟺ never attempted) none should carry the marker — it is
+// correct by construction when the predicate is added fresh. Only NEW nodes created
+// after the schema add get uncrawled = 1 (AddFollowers); MarkAttempted clears it on the
+// first attempt. Do NOT write uncrawled to existing nodes.
 
 // BackfillFollowerCount sets follower_count = count(~follows) on every node in
 // the graph, one page at a time, and is safe to re-run (idempotent overwrite).

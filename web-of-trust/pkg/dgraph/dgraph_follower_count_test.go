@@ -63,37 +63,48 @@ func TestFollowerCountDelta(t *testing.T) {
 	}
 }
 
-// TestGetStalePubkeysQueryEntersViaFollowerCountIndex pins the live-verification
-// Fix A invariant WITHOUT a live Dgraph: both GetStalePubkeys selection blocks
-// must enter through the follower_count int index (func: ge(follower_count, 0))
-// ordered desc, and must NOT root on has(pubkey) / has(next_attempt) (which made
-// Dgraph full-sort the whole set, ~150x slower on the production graph).
+// TestGetStalePubkeysQueryEntersViaFollowerCountIndex pins the entry-point
+// invariants of both GetStalePubkeys selection blocks WITHOUT a live Dgraph.
+//
+//   - FRONTIER (Phase 14 uncrawled-marker fix): enters via the uncrawled int index
+//     (func: eq(uncrawled, 1)) ordered desc by follower_count, and must NOT carry the
+//     absent-predicate @filter(NOT has(last_attempt)) (which full-scanned the 1.38M
+//     follower_count index, ~25s). eq(uncrawled, 1) IS the never-attempted set.
+//   - AGED (live-verification Fix A, unchanged): enters via the follower_count int
+//     index (func: ge(follower_count, 0)) ordered desc, restricting by
+//     lt(next_attempt, now) as a @filter, and must NOT root on has(next_attempt).
 func TestGetStalePubkeysQueryEntersViaFollowerCountIndex(t *testing.T) {
 	frontier := fmt.Sprintf(frontierStaleQueryFmt, 100)
 	aged := fmt.Sprintf(agedStaleQueryFmt, 100, time.Now().Unix())
 
-	for name, q := range map[string]string{"frontier": frontier, "aged": aged} {
-		if !strings.Contains(q, "func: ge(follower_count, 0)") {
-			t.Errorf("%s query must enter via the follower_count int index "+
-				"(func: ge(follower_count, 0)); got:\n%s", name, q)
-		}
-		if !strings.Contains(q, "orderdesc: follower_count") {
-			t.Errorf("%s query must order by orderdesc: follower_count; got:\n%s", name, q)
-		}
-		if strings.Contains(q, "func: has(pubkey)") {
-			t.Errorf("%s query must NOT root on func: has(pubkey) (forces full sort); got:\n%s", name, q)
-		}
-		if strings.Contains(q, "func: has(next_attempt)") {
-			t.Errorf("%s query must NOT root on func: has(next_attempt) (forces full sort); got:\n%s", name, q)
-		}
+	// FRONTIER: enters via the uncrawled marker index, ordered by follower_count.
+	if !strings.Contains(frontier, "func: eq(uncrawled, 1)") {
+		t.Errorf("frontier query must enter via the uncrawled int index "+
+			"(func: eq(uncrawled, 1)); got:\n%s", frontier)
+	}
+	if !strings.Contains(frontier, "orderdesc: follower_count") {
+		t.Errorf("frontier query must order by orderdesc: follower_count; got:\n%s", frontier)
+	}
+	if strings.Contains(frontier, "NOT has(last_attempt)") {
+		t.Errorf("frontier query must DROP the @filter(NOT has(last_attempt)) "+
+			"absent-predicate scan; eq(uncrawled, 1) is the never-attempted set; got:\n%s", frontier)
+	}
+	if strings.Contains(frontier, "func: has(pubkey)") {
+		t.Errorf("frontier query must NOT root on func: has(pubkey) (forces full sort); got:\n%s", frontier)
 	}
 
-	// The aged block still restricts by next_attempt — as a @filter, not the root.
+	// AGED: enters via the follower_count int index, restricts by next_attempt filter.
+	if !strings.Contains(aged, "func: ge(follower_count, 0)") {
+		t.Errorf("aged query must enter via the follower_count int index "+
+			"(func: ge(follower_count, 0)); got:\n%s", aged)
+	}
+	if !strings.Contains(aged, "orderdesc: follower_count") {
+		t.Errorf("aged query must order by orderdesc: follower_count; got:\n%s", aged)
+	}
 	if !strings.Contains(aged, "@filter(lt(next_attempt,") {
 		t.Errorf("aged query must keep lt(next_attempt, now) as a @filter; got:\n%s", aged)
 	}
-	// The frontier block still restricts to never-attempted nodes — as a @filter.
-	if !strings.Contains(frontier, "@filter(NOT has(last_attempt))") {
-		t.Errorf("frontier query must keep NOT has(last_attempt) as a @filter; got:\n%s", frontier)
+	if strings.Contains(aged, "func: has(next_attempt)") {
+		t.Errorf("aged query must NOT root on func: has(next_attempt) (forces full sort); got:\n%s", aged)
 	}
 }

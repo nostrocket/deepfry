@@ -174,6 +174,25 @@ Live verification on the production Dgraph (1.38M nodes) proved the as-shipped P
 
 **Gate results (re-run after fixes):** `go build ./...` PASS · `go vet ./...` PASS · `go vet -tags=integration ./pkg/dgraph/` PASS · `make test` (-short) PASS · `go test ./pkg/dgraph/ -run TestFollowerCountDelta` PASS · `make build-backfill-follower-count` PASS. Integration tests NOT run (live Dgraph busy).
 
+## Uncrawled frontier marker
+
+A second live-verification round on the production Dgraph (1.38M nodes) showed the frontier read was still slow: `frontier(func: ge(follower_count, 0), orderdesc: follower_count) @filter(NOT has(last_attempt))` walked the ENTIRE 1.38M follower_count index (~25s). Root cause: never-attempted nodes are an **absent-predicate** set (`NOT has(last_attempt)`) that also clusters at **low** follower_count (signer=0, stub=1) — at the bottom of the orderdesc walk — so Dgraph scanned almost the whole index before `first: N` filter-passing rows accumulated.
+
+**Fix — `uncrawled` marker (the positive, indexed form of "frontier").** All edits in `pkg/dgraph/dgraph.go`. INVARIANT maintained: `uncrawled = 1` ⟺ node has never been attempted (no `last_attempt`).
+
+- **Schema (`EnsureSchema`):** added `uncrawled: int @index(int) .` and `uncrawled` to the `Profile` type. Additive — no migration.
+- **Set on node creation (`AddFollowers`):** the new-signer create block now emits `_:follower <uncrawled> "1" .` and the new-followee-stub block emits `_:<stub> <uncrawled> "1" .`. New nodes are by definition never-crawled. If a created signer is stamped in the same batch, MarkAttempted clears it.
+- **Clear on attempt (`MarkAttempted`):** every stamped node gets a star-delete `<uid> <uncrawled> * .` (via the mutation's `DelNquads`) so it leaves the frontier index. Star-delete removes the predicate regardless of value and is a no-op when absent → safe to apply unconditionally. All existing stamping (last_attempt, next_attempt, miss_count, hit/miss backoff) and the VALID-03 recover-or-purge path are intact.
+- **Frontier read (`frontierStaleQueryFmt`):** changed to `frontier(func: eq(uncrawled, 1), first: %d, orderdesc: follower_count)` and **dropped** the `@filter(NOT has(last_attempt))` — `eq(uncrawled, 1)` IS the never-attempted set. Kept `orderdesc: follower_count`. The AGED block is UNCHANGED (already fast at 1.3s: `ge(follower_count, 0) ... @filter(lt(next_attempt, %d))`). Frontier doc comment updated with the index-entry rationale.
+- **NO backfill for `uncrawled`.** Live check confirmed frontier = 0 (all 1,383,141 existing nodes are attempted), so by the invariant none should carry the marker — correct by construction when the predicate is added fresh. The code does NOT write `uncrawled` to existing nodes (documented in a code comment above `BackfillFollowerCount`). Only NEW nodes get the marker; MarkAttempted clears it on first attempt.
+
+**Tests:**
+- Updated unit test `TestGetStalePubkeysQueryEntersViaFollowerCountIndex`: FRONTIER asserts `func: eq(uncrawled, 1)` + `orderdesc: follower_count` and NO `NOT has(last_attempt)`; AGED still asserts `func: ge(follower_count, 0)` + `@filter(lt(next_attempt,` and no `func: has(next_attempt)` root.
+- New `//go:build integration` tests in `dgraph_follower_count_integration_test.go`: `TestAddFollowersSetsUncrawledMarker`, `TestMarkAttemptedClearsUncrawledMarker`, `TestUncrawledFrontierOrderedByFollowerCount`. Helpers `queryUncrawledPresent`/`inUncrawledFrontier` added.
+- Updated existing integration seeds to carry `uncrawled "1"` so they remain valid under the new frontier entry point (`TestGetStalePubkeysOrderByFollowerCount`, `TestGetStalePubkeysIncludesFrontier`, `TestGetStalePubkeysOrder`); `countFrontier` now counts `eq(uncrawled, 1)`.
+
+**Gate results (uncrawled marker):** `go build ./...` PASS · `go vet ./...` PASS · `go vet -tags=integration ./pkg/dgraph/` PASS · `make test` (-short) PASS · `go test ./pkg/dgraph/ -run 'TestFollowerCountDelta|TestGetStalePubkeys'` PASS · `make build-backfill-follower-count` PASS. Integration tests NOT run (live Dgraph).
+
 ## Self-Check: PASSED
 
 - All created files present on disk (cmd/backfill-follower-count/main.go, both test files, this SUMMARY).

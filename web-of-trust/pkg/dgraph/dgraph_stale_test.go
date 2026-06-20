@@ -23,12 +23,18 @@ func TestGetStalePubkeysIncludesFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A crawled node (has last_attempt + kind3CreatedAt) and a pure stub (neither).
+	// A crawled node (has last_attempt + kind3CreatedAt, no uncrawled marker) and a
+	// pure stub (uncrawled=1, follower_count=0, never attempted). Phase 14: the
+	// frontier read enters via eq(uncrawled, 1), so the stub must carry the marker
+	// (mirroring how AddFollowers stamps newly-created nodes); the crawled node must
+	// NOT, so it is excluded from the frontier.
 	stub := fmt.Sprintf("%064x", time.Now().UnixNano()) // unique fake pubkey
 	crawled := fmt.Sprintf("%064x", time.Now().UnixNano()+1)
 	now := time.Now().Unix()
 	mustMutate(t, c, fmt.Sprintf(`_:s <pubkey> %q .
 _:s <dgraph.type> "Profile" .
+_:s <follower_count> "0" .
+_:s <uncrawled> "1" .
 _:c <pubkey> %q .
 _:c <dgraph.type> "Profile" .
 _:c <kind3CreatedAt> "%d" .
@@ -36,11 +42,11 @@ _:c <last_db_update> "%d" .
 _:c <last_attempt> "%d" .
 `, stub, crawled, now, now, now))
 
-	// Size the frontier limit above the current never-attempted node count so the
+	// Size the frontier limit above the current uncrawled-marked node count so the
 	// freshly-inserted stub is guaranteed to be among the returned frontier rows,
-	// regardless of how many real stubs the live graph already holds. (Phase 1 of
-	// GetStalePubkeys is an unordered `NOT has(last_attempt)` selection, so a limit
-	// below the frontier size could non-deterministically exclude this test's stub.)
+	// regardless of how many marked stubs the live graph already holds. (Phase 14:
+	// the frontier is the eq(uncrawled, 1) set ordered by follower_count; a limit
+	// below the frontier size could exclude this test's stub.)
 	frontierLimit := countFrontier(t, c) + 1000
 
 	got, err := c.GetStalePubkeys(ctx, now-3600, frontierLimit)
@@ -57,14 +63,16 @@ _:c <last_attempt> "%d" .
 	}
 }
 
-// countFrontier returns the number of never-attempted ("frontier") pubkey nodes
-// in the graph, so the test can size GetStalePubkeys' limit above it.
+// countFrontier returns the number of frontier (uncrawled, never-attempted) pubkey
+// nodes in the graph, so the test can size GetStalePubkeys' limit above it. Phase 14:
+// the frontier is now the eq(uncrawled, 1) set (the index-entry form of "never
+// attempted"), matching the production frontier read path.
 func countFrontier(t *testing.T, c *Client) int {
 	t.Helper()
 	ctx := context.Background()
 	txn := c.dg.NewReadOnlyTxn()
 	defer txn.Discard(ctx)
-	resp, err := txn.Query(ctx, `{ f(func: has(pubkey)) @filter(NOT has(last_attempt)) { c: count(uid) } }`)
+	resp, err := txn.Query(ctx, `{ f(func: eq(uncrawled, 1)) { c: count(uid) } }`)
 	if err != nil {
 		t.Fatalf("count frontier failed: %v", err)
 	}
@@ -119,14 +127,23 @@ func TestGetStalePubkeysOrder(t *testing.T) {
 	f2 := fmt.Sprintf("%064x", now+11)
 	f3 := fmt.Sprintf("%064x", now+12)
 
-	// Insert frontier nodes (no last_attempt).
+	// Insert frontier nodes (uncrawled=1, never attempted). Phase 14: the frontier
+	// read enters via eq(uncrawled, 1) ordered by the STORED follower_count, so seed
+	// the marker plus the follower_count that matches the wired follows below
+	// (high=3, mid=2, low=1), mirroring AddFollowers' newly-created-node stamping.
 	mustMutate(t, c, fmt.Sprintf(
 		`_:h <pubkey> %q .
 _:h <dgraph.type> "Profile" .
+_:h <follower_count> "3" .
+_:h <uncrawled> "1" .
 _:m <pubkey> %q .
 _:m <dgraph.type> "Profile" .
+_:m <follower_count> "2" .
+_:m <uncrawled> "1" .
 _:l <pubkey> %q .
 _:l <dgraph.type> "Profile" .
+_:l <follower_count> "1" .
+_:l <uncrawled> "1" .
 `, high, mid, low))
 
 	// Resolve UIDs for frontier nodes (needed to add follows edges).
