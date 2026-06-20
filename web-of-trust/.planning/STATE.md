@@ -123,6 +123,7 @@ None.
 | 260610-fft | commit current uncommitted web-of-trust changes | 2026-06-10 | c62c2c5 | [260610-fft-commit-current-uncommitted-web-of-trust-](./quick/260610-fft-commit-current-uncommitted-web-of-trust-/) |
 | 260611-ott | Document crawler logic flow for cross-language reimplementation in fable_logic_flow.md | 2026-06-11 | b105f84 | [260611-ott-document-crawler-logic-flow-for-cross-la](./quick/260611-ott-document-crawler-logic-flow-for-cross-la/) |
 | 260617-doc | Refresh README + STATE for resumability (config, clusterscan, metrics, optimization backlog) | 2026-06-17 | 9084927 | — |
+| 260620-srw | Raise count_sample_interval default 1→100 — amortize per-batch count queries (~58s→~0.6s), ~10x crawler throughput | 2026-06-20 | 52a3fe3 | [260620-srw-raise-count-sample-interval-from-1-to-10](./quick/260620-srw-raise-count-sample-interval-from-1-to-10/) |
 
 ## Session Continuity
 
