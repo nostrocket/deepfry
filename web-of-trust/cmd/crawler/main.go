@@ -411,15 +411,27 @@ mainLoop:
 		// Clamp at 0 (WR-01): totalStale is counted before this batch is stamped,
 		// so on a shrinking frontier totalStale-markedAttempted can go negative.
 		staleRemaining := max(0, countSnapshot.totalStale-markedAttempted)
-		countSource := "sampled"
-		if !countSnapshot.countsSampled {
-			countSource = "cached"
+		// The DB counts (stale + total) only refresh on sampled batches. On cached
+		// batches the total is frozen and repeating it every batch is noise, so log
+		// the fresh counts only when sampled; in between, show just the decrementing
+		// stale estimate with its age so the staleness is explicit.
+		batchSummary := fmt.Sprintf("Batch complete: selected %d pubkeys, queried %d valid pubkeys (%d had events), skipped_attempts=%d, marked_attempted=%d",
+			selectedCount, queriedCount, hitCount, skippedAttempts, markedAttempted)
+		if countSnapshot.countsSampled {
+			log.Printf("%s | %d stale remaining | %d total in DB", batchSummary, staleRemaining, countSnapshot.totalPubkeys)
+		} else {
+			log.Printf("%s | ~%d stale remaining (est, count age=%d batches)", batchSummary, staleRemaining, countSnapshot.countSampleAgeBatches)
 		}
-		log.Printf("Batch complete: selected %d pubkeys, queried %d valid pubkeys (%d had events), skipped_attempts=%d, marked_attempted=%d | %d stale remaining (%s, age_batches=%d) | %d total in DB (%s)",
-			selectedCount, queriedCount, hitCount, skippedAttempts, markedAttempted, staleRemaining, countSource, countSnapshot.countSampleAgeBatches, countSnapshot.totalPubkeys, countSource)
 		// OBS-01 (D-05/D-06): cumulative avg per call type, success-only, since process start.
-		log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
-			metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
+		// CountPubkeys/CountStalePubkeys only run on sampled batches (every count_sample_interval),
+		// so their averages are frozen in between — only log them when a sample was actually taken.
+		if countSnapshot.countsSampled {
+			log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v CountPubkeys=%v CountStalePubkeys=%v MarkAttempted=%v",
+				metrics.avg("GetStalePubkeys"), metrics.avg("CountPubkeys"), metrics.avg("CountStalePubkeys"), metrics.avg("MarkAttempted"))
+		} else {
+			log.Printf("Avg Dgraph call duration (cumulative): GetStalePubkeys=%v MarkAttempted=%v",
+				metrics.avg("GetStalePubkeys"), metrics.avg("MarkAttempted"))
+		}
 
 		// Speed instrumentation: fold this batch into the run totals and emit a
 		// structured per-batch metrics line. fetch_ms is the relay fetch;
