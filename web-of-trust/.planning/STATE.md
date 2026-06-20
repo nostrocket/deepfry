@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Crawl Throughput Optimization
 current_phase: 14
-current_phase_name: dgraph-write-path-throughput-decision
-status: planning
-stopped_at: Completed Phase 13
-last_updated: "2026-06-18T14:11:34.863Z"
-last_activity: 2026-06-18
-last_activity_desc: Phase 13 verified complete
+current_phase_name: frontier-read-path-throughput-follower-count
+status: awaiting-verification
+stopped_at: Phase 14 executed + code-reviewed; awaiting operator live-verify (TEST-03)
+last_updated: "2026-06-20T00:00:00.000Z"
+last_activity: 2026-06-20
+last_activity_desc: Phase 14 code complete (5/6 tasks), reviewed + CR-01 fixed; live-verify checkpoint pending
 progress:
   total_phases: 2
   completed_phases: 1
@@ -25,14 +25,14 @@ progress:
 
 **Core value:** The crawler must continuously expand the web of trust — fetching contact lists for newly-seen pubkeys — not just re-refresh accounts it already knows.
 
-**Current focus:** Phase 14 — Dgraph Write-Path Throughput Decision
+**Current focus:** Phase 14 — Frontier Read-Path Throughput (`follower_count`)
 
 ## Current Position
 
-Phase: 14 (Dgraph Write-Path Throughput Decision) ready to plan
-Plan: —
-Status: Phase 13 verified complete; Phase 14 remains planned
-Last activity: 2026-06-18 — Phase 13 verified complete
+Phase: 14 (Frontier Read-Path Throughput — `follower_count`) executed; awaiting live verification
+Plan: 14-01 — code complete (tasks 1–5), reviewed, CR-01 fixed
+Status: Phase 14 code shipped to `main` (commits 2bab80d → fa1c743). TEST-03 live-verify checkpoint PENDING — operator must run `backfill-follower-count` + before/after `GetStalePubkeys` latency on the strfry host. Milestone v1.6 intentionally left OPEN.
+Last activity: 2026-06-20 — Phase 14 executed + code-reviewed (CR-01 invalid backfill DQL fixed); live-verify pending
 
 ## Performance Metrics
 
@@ -87,7 +87,10 @@ Last activity: 2026-06-18 — Phase 13 verified complete
 
 - [x] Plan Phase 13 (`/gsd-plan-phase 13`)
 - [x] Execute Phase 13 (`/gsd-execute-phase 13`)
-- [ ] Decide whether Phase 14 is still needed from Phase 13 metrics.
+- [x] Decide Phase 14 scope from metrics — redefined from write-path (DWRITE) to read-path `follower_count` (DSCALE-01/03); write-path closed as not-dominant.
+- [x] Plan + execute Phase 14 (code: schema predicate, GetStalePubkeys rewrite, AddFollowers delta maintenance, backfill CLI, tests). Reviewed; CR-01 (invalid backfill DQL) fixed.
+- [ ] **TEST-03 operator live-verify** on the strfry host: run `make build-backfill-follower-count`, `./bin/backfill-follower-count` (idempotent seed of ~1.38M nodes — MUST complete before trusting `follower_count` ordering), then before/after `GetStalePubkeys` latency + stored-vs-recomputed spot-check. Record numbers, then close Phase 14 / v1.6.
+- [ ] Operator config tuning (from the same analysis, independent of Phase 14): bump `count_sample_interval` (1→~20) and `frontier_batch_size` (100→~1000) in `~/deepfry/web-of-trust.yaml` — mechanisms already shipped in Phase 13.
 
 ### Roadmap Evolution
 
@@ -110,11 +113,11 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-06-18T14:11:34.863Z
-**Stopped at:** Completed Phase 13
-**Resume file:** None
+**Last session:** 2026-06-20
+**Stopped at:** Phase 14 executed + code-reviewed; awaiting operator live-verify (TEST-03)
+**Resume file:** `.planning/phases/14-frontier-read-path-throughput-follower-count/14-01-SUMMARY.md` (operator procedure)
 
-**To resume:** Phase 13 is verified complete. Use the documented `WOT_ROUND` baseline/optimized runs to decide whether Phase 14 is still needed, then start with `$gsd-discuss-phase 14` or `$gsd-plan-phase 14`.
+**To resume:** Phase 14 code is shipped to `main` (commits 2bab80d → fa1c743) and passed code review (CR-01 invalid backfill DQL fixed). Run the TEST-03 live verification on the strfry host per 14-01-SUMMARY.md — backfill the follower_count predicate, then measure before/after `GetStalePubkeys` latency. Once verified, close Phase 14 and complete milestone v1.6 (`/gsd-verify-work 14` then `/gsd-complete-milestone v1.6`). Milestone v1.6 is intentionally OPEN until live verification passes.
 
 ## Decisions
 
