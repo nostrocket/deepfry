@@ -312,3 +312,48 @@ func TestEjectRelayURL_AppendsNotReplaces(t *testing.T) {
 		t.Errorf("wss://b should be in ejected_relays after second ejection, got %v", ejected)
 	}
 }
+
+// TestEjectRelayURL_Idempotent verifies that ejecting the same URL twice does
+// not create a duplicate entry in ejected_relays — ejection must be idempotent
+// so the list does not grow unbounded across restarts or repeat calls.
+func TestEjectRelayURL_Idempotent(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	configDir := tmpHome + "/deepfry"
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configContent := `relay_urls:
+  - wss://a
+  - wss://b
+`
+	if err := os.WriteFile(configDir+"/web-of-trust.yaml", []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	viper.Reset()
+	if _, err := LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Eject twice. The second call has nothing to remove from relay_urls and
+	// the URL is already in ejected_relays, so it must be a no-op.
+	if err := EjectRelayURL("wss://a"); err != nil {
+		t.Fatalf("first EjectRelayURL returned error: %v", err)
+	}
+	if err := EjectRelayURL("wss://a"); err != nil {
+		t.Fatalf("second EjectRelayURL returned error: %v", err)
+	}
+
+	ejected := viper.GetStringSlice("ejected_relays")
+	count := 0
+	for _, u := range ejected {
+		if u == "wss://a" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("wss://a should appear exactly once in ejected_relays, got %d (%v)", count, ejected)
+	}
+}

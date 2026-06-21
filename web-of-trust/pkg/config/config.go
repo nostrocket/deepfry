@@ -288,12 +288,30 @@ func EjectRelayURL(url string) error {
 			filtered = append(filtered, u)
 		}
 	}
-	viper.Set("relay_urls", filtered)
+	removed := len(filtered) != len(current)
 
-	// Append to ejected_relays (URL only; no metadata in YAML per D-08).
+	// Append to ejected_relays (URL only; no metadata in YAML per D-08),
+	// but only if not already present — ejection must be idempotent so the
+	// list does not accumulate duplicates across restarts or repeat calls.
 	ejected := viper.GetStringSlice("ejected_relays")
-	ejected = append(ejected, url)
-	viper.Set("ejected_relays", ejected)
+	alreadyEjected := false
+	for _, u := range ejected {
+		if u == url {
+			alreadyEjected = true
+			break
+		}
+	}
+
+	// Nothing to do: URL was neither in relay_urls nor newly added to the
+	// ejected list. Skip the write to avoid needless config churn.
+	if !removed && alreadyEjected {
+		return nil
+	}
+
+	viper.Set("relay_urls", filtered)
+	if !alreadyEjected {
+		viper.Set("ejected_relays", append(ejected, url))
+	}
 
 	return viper.WriteConfig()
 }
