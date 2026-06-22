@@ -1,0 +1,1 @@
+{"content":"Sigma.js v3 (2024) is a pure WebGL renderer over graphology data model; renders 100k edges easily but its CPU force layout (forceatlas2) degrades beyond ~50k edges. Good for sub-100k graphs, not million-node live layout.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-06-22T06:53:11.781Z","ttl":86400000,"kind":"web"}
