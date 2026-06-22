@@ -80,25 +80,25 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| DATA-03 | TBD | Pending |
-| REND-01 | TBD | Pending |
-| REND-02 | TBD | Pending |
-| REND-03 | TBD | Pending |
-| REND-04 | TBD | Pending |
-| OVER-01 | TBD | Pending |
-| OVER-02 | TBD | Pending |
-| EXPL-01 | TBD | Pending |
-| EXPL-02 | TBD | Pending |
-| EXPL-03 | TBD | Pending |
-| FILT-01 | TBD | Pending |
+| DATA-01 | Phase 1 | Pending |
+| DATA-02 | Phase 3 | Pending |
+| DATA-03 | Phase 1 | Pending |
+| REND-01 | Phase 1 | Pending |
+| REND-02 | Phase 1 | Pending |
+| REND-03 | Phase 1 | Pending |
+| REND-04 | Phase 1 | Pending |
+| OVER-01 | Phase 2 | Pending |
+| OVER-02 | Phase 2 | Pending |
+| EXPL-01 | Phase 3 | Pending |
+| EXPL-02 | Phase 3 | Pending |
+| EXPL-03 | Phase 3 | Pending |
+| FILT-01 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 13 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 13 ⚠️ (resolved by roadmap)
+- Mapped to phases: 13 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-22*
-*Last updated: 2026-06-22 after initial definition*
+*Last updated: 2026-06-22 after roadmap creation (traceability mapped)*
