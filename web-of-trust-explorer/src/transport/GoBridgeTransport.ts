@@ -73,7 +73,10 @@ export class GoBridgeTransport implements GraphTransport {
       // exact count once decoded (Assumption A5). Each directed edge is 2×u32 = 8B.
       const edgesEstimate =
         received > HEADER_BYTES ? Math.floor((received - HEADER_BYTES) / 8) : 0;
-      onProgress({ stage: 'receive', edgesSoFar: edgesEstimate });
+      // bytesSoFar drives the loader's bytes counter + MB/s rate for the binary
+      // path; the exact byte total is unknown upfront (chunked, no Content-Length),
+      // so the loader derives a rate rather than a percentage (D-09).
+      onProgress({ stage: 'receive', edgesSoFar: edgesEstimate, bytesSoFar: received });
     }
 
     // --- Single transient copy into one offset-0 buffer (guarantees 4-byte

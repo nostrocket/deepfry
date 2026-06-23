@@ -6,7 +6,13 @@ import { renderGraph } from './graph/cosmos';
 import { createAutoFreezeSampler } from './graph/autofreeze';
 import { mountControls } from './ui/controls';
 import { mountLoader } from './ui/loader';
-import { measurePeakHeap, renderVerdict, type VerdictMetrics } from './ui/verdict';
+import {
+  measurePeakHeap,
+  renderVerdict,
+  renderBridgeVerdict,
+  type VerdictMetrics,
+  type BridgeVerdictMetrics,
+} from './ui/verdict';
 
 /**
  * App entry — the data spine wiring.
@@ -30,19 +36,23 @@ import { measurePeakHeap, renderVerdict, type VerdictMetrics } from './ui/verdic
  * later (PERF-01).
  */
 
-function selectTransport(): { transport: GraphTransport; isDgraph: boolean } {
+function selectTransport(): {
+  transport: GraphTransport;
+  isDgraph: boolean;
+  isBridge: boolean;
+} {
   const which = new URLSearchParams(location.search).get('transport');
   if (which === 'dgraph') {
-    return { transport: new DgraphTransport(), isDgraph: true };
+    return { transport: new DgraphTransport(), isDgraph: true, isBridge: false };
   }
   if (which === 'bridge') {
-    // The bridge path renders via the existing render pipeline. The full verdict
-    // wiring (loader stages + re-verdict over the binary path) is Plan 03, so we
-    // do NOT flag isDgraph here — that would cast the transport to DgraphTransport
-    // for the lastEncodingNs verdict readout, which the bridge does not provide.
-    return { transport: new GoBridgeTransport(), isDgraph: false };
+    // The binary-wire PERF-01 path. It mounts the loader (binary stages) and, on
+    // completion, records the bridge verdict (server/stream/decode ms + counts +
+    // peak heap) — NOT the DgraphTransport lastEncodingNs/30M extrapolation, so
+    // isDgraph stays false and isBridge drives the bridge verdict instead (D-09).
+    return { transport: new GoBridgeTransport(), isDgraph: false, isBridge: true };
   }
-  return { transport: new SyntheticTransport(), isDgraph: false };
+  return { transport: new SyntheticTransport(), isDgraph: false, isBridge: false };
 }
 
 async function main(): Promise<void> {
@@ -50,19 +60,34 @@ async function main(): Promise<void> {
   if (!container) throw new Error('#graph container not found');
   const controlsMount = document.querySelector<HTMLElement>('#controls') ?? document.body;
 
-  const { transport, isDgraph } = selectTransport();
+  const { transport, isDgraph, isBridge } = selectTransport();
 
-  // Staged loader (D-09) is the real-wire measurement instrument; mount it only
-  // for the Dgraph path. The synthetic path keeps the lightweight console log.
-  const loader = isDgraph ? mountLoader(controlsMount) : null;
+  // Staged loader (D-09) is the real-wire measurement instrument; mount it for
+  // both real-wire paths (JSON Dgraph + binary bridge). The synthetic path keeps
+  // the lightweight console log.
+  const loader = isDgraph || isBridge ? mountLoader(controlsMount) : null;
 
-  // Verdict timing (D-10): split fetch vs parse by watching the stage flip.
+  // Verdict timing (D-09/D-10):
+  //  - JSON path: split fetch vs parse on the 'parse' stage flip.
+  //  - Bridge path: server-compute = loadStart → first 'receive' (first byte);
+  //    stream = first 'receive' → last 'receive'; decode = last 'receive' → 'layout'.
   const loadStart = performance.now();
   let firstParseAt: number | null = null;
+  let firstReceiveAt: number | null = null;
+  let lastReceiveAt: number | null = null;
+  let layoutStageAt: number | null = null;
 
   const buffers = await transport.load((progress: LoadProgress) => {
+    const now = performance.now();
     if (progress.stage === 'parse' && firstParseAt === null) {
-      firstParseAt = performance.now();
+      firstParseAt = now;
+    }
+    if (progress.stage === 'receive') {
+      if (firstReceiveAt === null) firstReceiveAt = now;
+      lastReceiveAt = now;
+    }
+    if (progress.stage === 'layout' && layoutStageAt === null) {
+      layoutStageAt = now;
     }
     loader?.update(progress);
     console.log(`[load] ${progress.stage}: ${progress.edgesSoFar} edges`);
@@ -115,6 +140,37 @@ async function main(): Promise<void> {
       peakHeapSource: source,
     };
     renderVerdict(controlsMount, metrics);
+  }
+
+  // Bridge (binary-wire) verdict readout (D-09/D-10): the PERF-01 re-verdict.
+  // server-compute = loadStart→first byte; stream = first→last byte; decode =
+  // last byte→buffers built. No 30M extrapolation — the bridge loads the real
+  // graph directly. The qualitative PASS (usable / no swap / 60fps holds) is
+  // recorded by the operator at the human-verify checkpoint; left undefined here
+  // so the panel reads PENDING-HUMAN-VERIFY until then.
+  if (isBridge) {
+    const serverComputeMs =
+      firstReceiveAt !== null ? firstReceiveAt - loadStart : loadEndMs;
+    const streamMs =
+      firstReceiveAt !== null && lastReceiveAt !== null
+        ? Math.max(0, lastReceiveAt - firstReceiveAt)
+        : 0;
+    const decodeMs =
+      lastReceiveAt !== null && layoutStageAt !== null
+        ? Math.max(0, layoutStageAt - lastReceiveAt)
+        : Math.max(0, loadEndMs - serverComputeMs - streamMs);
+    const { bytes, source } = await measurePeakHeap();
+    const metrics: BridgeVerdictMetrics = {
+      serverComputeMs,
+      streamMs,
+      decodeMs,
+      layoutReadyMs,
+      nodeCount: buffers.nodeCount,
+      edgeCount: buffers.edgeCount,
+      peakHeapBytes: bytes,
+      peakHeapSource: source,
+    };
+    renderBridgeVerdict(controlsMount, metrics);
   }
 }
 

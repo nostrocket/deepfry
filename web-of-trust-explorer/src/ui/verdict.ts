@@ -85,6 +85,47 @@ export function extrapolateVerdict(m: VerdictMetrics): VerdictExtrapolation {
   };
 }
 
+/**
+ * Bridge-path (binary-wire) feasibility verdict (D-09/D-10) — the recorded
+ * artifact that resolves the 01-03 JSON-wire FAIL.
+ *
+ * The JSON path's linear-extrapolate-to-30M / ≤30s gate above does NOT apply
+ * here: the Go bridge loads the real graph directly (no extrapolation), so the
+ * verdict is qualitative per the Claude's-discretion PASS bar — usable on the
+ * real dev DB, no swap, render holds 60fps after load — recorded alongside the
+ * measured server / stream / decode split, the real node+edge counts, and peak
+ * JS heap (D-08's co-equal ceiling metric, measured the same way as the JSON
+ * path via measurePeakHeap()).
+ */
+export interface BridgeVerdictMetrics {
+  /**
+   * ms the server-side fetch+remap+degree+community pass took, surfaced as
+   * fetch-issued → first-byte (the bridge holds the connection open while it
+   * reads Dgraph and computes, then starts streaming).
+   */
+  serverComputeMs: number;
+  /** ms first-byte → last-byte (the binary stream transfer itself). */
+  streamMs: number;
+  /** ms last-byte → buffers built (concat + view + buildGraphBuffers; no parse). */
+  decodeMs: number;
+  /** ms from load start to layout-ready (graph rendered + first settle). */
+  layoutReadyMs: number;
+  nodeCount: number;
+  edgeCount: number;
+  /** Peak JS heap in bytes (measureUserAgentSpecificMemory or usedJSHeapSize). */
+  peakHeapBytes: number;
+  /** Which API produced peakHeapBytes (for honesty in the recorded verdict). */
+  peakHeapSource: VerdictMetrics['peakHeapSource'];
+  /**
+   * The qualitative PASS judgement per the Claude's-discretion bar. Set by the
+   * operator at the human-verify checkpoint (usable / no swap / 60fps holds).
+   * Left undefined until a human records it — the panel shows PENDING then.
+   */
+  pass?: boolean;
+  /** Free-text note from the checkpoint (e.g. "no swap; 60fps held; Louvain undirected"). */
+  note?: string;
+}
+
 const PANEL_STYLE = `
   position: fixed; bottom: 12px; right: 12px; z-index: 25;
   background: #1b1b24ee; color: #e6e6f0;
@@ -137,6 +178,52 @@ export function renderVerdict(mount: HTMLElement, m: VerdictMetrics): HTMLElemen
     `→ 30M proj.  ${(ex.projectedLoadMsAt30M / 1000).toFixed(1)} s`,
     `VERDICT      ${ex.pass ? 'PASS (≤30s)' : 'FAIL → trigger PERF-01'}`,
   ].join('\n');
+
+  mount.append(panel);
+  return panel;
+}
+
+/**
+ * Render the BRIDGE (binary-wire) verdict on-screen AND `console.table` it
+ * (D-09/D-10). Unlike `renderVerdict`, there is NO 30M/30s extrapolation gate —
+ * the bridge loads the real graph directly, so the verdict is the measured split
+ * (server / stream / decode ms), the real counts, peak heap, and a qualitative
+ * PASS recorded by the operator (usable / no swap / 60fps holds). Until a human
+ * records `pass`, the verdict reads PENDING-HUMAN-VERIFY. Returns the panel.
+ */
+export function renderBridgeVerdict(mount: HTMLElement, m: BridgeVerdictMetrics): HTMLElement {
+  const verdictLabel =
+    m.pass === undefined ? 'PENDING-HUMAN-VERIFY' : m.pass ? 'PASS' : 'FAIL';
+
+  // Console.table for the recorded artifact.
+  console.table({
+    serverComputeMs: Math.round(m.serverComputeMs),
+    streamMs: Math.round(m.streamMs),
+    decodeMs: Math.round(m.decodeMs),
+    layoutReadyMs: Math.round(m.layoutReadyMs),
+    nodeCount: m.nodeCount,
+    edgeCount: m.edgeCount,
+    peakHeap: fmtBytes(m.peakHeapBytes),
+    peakHeapSource: m.peakHeapSource,
+    verdict: verdictLabel,
+    note: m.note ?? '',
+  });
+
+  const panel = document.createElement('div');
+  panel.setAttribute('style', PANEL_STYLE);
+  panel.textContent = [
+    'Bridge feasibility verdict (PERF-01)',
+    `server cmp.  ${Math.round(m.serverComputeMs)} ms`,
+    `stream       ${Math.round(m.streamMs)} ms`,
+    `decode       ${Math.round(m.decodeMs)} ms`,
+    `layout-ready ${Math.round(m.layoutReadyMs)} ms`,
+    `nodes/edges  ${m.nodeCount} / ${m.edgeCount}`,
+    `peak heap    ${fmtBytes(m.peakHeapBytes)} (${m.peakHeapSource})`,
+    `VERDICT      ${verdictLabel}`,
+    m.note ? `note         ${m.note}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   mount.append(panel);
   return panel;

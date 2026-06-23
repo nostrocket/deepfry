@@ -17,6 +17,13 @@ export type { GraphBuffers } from '../types';
 export interface LoadProgress {
   stage: 'fetch' | 'parse' | 'receive' | 'layout';
   edgesSoFar: number;
+  /**
+   * Raw bytes received off the stream so far (GoBridgeTransport `'receive'`
+   * stage only). Lets the loader show a bytes counter + a MB/s rate for the
+   * binary path; absent on the JSON-wire (`'parse'`) path which counts edges,
+   * not bytes (D-09).
+   */
+  bytesSoFar?: number;
 }
 
 /**
