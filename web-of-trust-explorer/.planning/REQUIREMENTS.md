@@ -9,9 +9,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Data
 
-- [ ] **DATA-01**: User opens the app and the entire follow-graph bulk-loads from Dgraph into the browser once, with a visible loading/progress state
+- [x] **DATA-01**: User opens the app and the entire follow-graph bulk-loads from Dgraph into the browser once, with a visible loading/progress state _(complete in 01-03: DgraphTransport read-only after-cursor DQL paging over `has(follows)`+`follows{uid}` via POST /query `application/dql`, chunked Worker parse + hex→uint32 remap, staged loader (Fetching→Parsing→Building) with live edge count; the bulk-load capability exists and ran against the real dev Dgraph. NOTE: at real scale browser-direct JSON load is too heavy to be usable — the load path is correct, the wire transport is the limiter → addressed by PERF-01)_
 - [ ] **DATA-02**: User can refresh to re-pull the current graph state from Dgraph on demand (explicit, not automatic)
-- [ ] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory _(foundation laid in 01-01: SoA typed buffers + hex→uint32 dense remap + Float32 2^24 precision guard; at-scale memory verdict is Plan 02/03)_
+- [ ] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory _(foundation laid in 01-01: SoA typed buffers + hex→uint32 dense remap + Float32 2^24 precision guard; 01-02: GPU half PASSED — 5M/30M renders without exhausting memory. **01-03 verdict: browser-direct JSON wire is NOT viable at real scale.** Chunked-parse + dense remap + drop-page-string memory discipline + Transferable were all implemented, but the single-shot memory-doubling JSON.parse of the real dev DB (365k follow-nodes / 1.5M profiles / ~tens of millions of edges) drove the machine into swap and was unusable. This is a recorded FAIL-by-design-trigger of the JSON wire, NOT a missing implementation → the at-scale memory/load requirement is **carried by PERF-01** (Go binary-streaming bridge, pulled forward from v2; drop-in GoBridgeTransport behind GraphTransport, zero browser JSON.parse))_
 
 ### Render
 
@@ -55,7 +55,7 @@ Deferred to future release. Tracked but not in current roadmap.
 
 ### Performance
 
-- **PERF-01**: Thin Go binary-streaming bridge between browser and Dgraph (escape hatch if v1 JSON load time is unacceptable)
+- **PERF-01**: Thin Go binary-streaming bridge between browser and Dgraph (escape hatch if v1 JSON load time is unacceptable) — **TRIGGERED & PULLED FORWARD by the 01-03 JSON-wire verdict (FAIL at real scale); now the next-phase priority, drop-in GoBridgeTransport behind GraphTransport (dgo gRPC → server-side hex→uint32 remap → streamed binary edge buffer → zero browser JSON.parse)**
 - **PERF-02**: Density / heatmap overlay for dense-vs-sparse terrain when the node-link hairball is unreadable
 
 ## Out of Scope
@@ -80,9 +80,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 1 | Pending |
+| DATA-01 | Phase 1 | Complete (01-03: DgraphTransport read-only after-cursor DQL paging + chunked parse + remap + staged loader; bulk-load capability built and ran. Wire too heavy at real scale → PERF-01) |
 | DATA-02 | Phase 3 | Pending |
-| DATA-03 | Phase 1 | Partial (01-01: SoA buffers + remap + precision guard; 01-02: GPU-half observed — 5M/30M renders without exhausting memory; full peak-heap / JSON-wire verdict Plan 03) |
+| DATA-03 | Phase 1 | Carried by PERF-01 (01-01: SoA buffers + remap + precision guard; 01-02: GPU half PASS — 5M/30M renders without exhausting memory; 01-03 verdict: browser-direct JSON wire NOT viable at real scale — FAIL-by-design-trigger, memory discipline implemented but transport is the limiter → Go binary-streaming bridge PERF-01 pulled forward) |
 | REND-01 | Phase 1 | Partial (01-01: small synthetic GPU render; 01-02: single global GPU map rendered at 5M-node scale) |
 | REND-02 | Phase 1 | Complete (01-02: live GPU layout auto-starts, Run/Pause, auto-freeze on settle) |
 | REND-03 | Phase 1 | Complete (01-02: pan/zoom/hover ~60fps at 5M/30M — recorded verdict PASS) |
@@ -102,4 +102,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-22*
-*Last updated: 2026-06-23 — Plan 01-02 (GPU ceiling spike): REND-02/REND-03/REND-04 Complete (5M/30M, 60fps verdict PASS); REND-01 at-scale single-map render proven (still Partial pending Dgraph bulk-load); DATA-03 GPU-half observed (full peak-heap / JSON-wire verdict pending Plan 03)*
+*Last updated: 2026-06-23 — Plan 01-03 (JSON-wire spike): DATA-01 Complete (DgraphTransport bulk-load built and ran); DATA-03 carried by PERF-01 — JSON-wire verdict FAIL at real scale (365k follow-nodes / 1.5M profiles), Go binary-streaming bridge PERF-01 pulled forward from v2. Phase 1 feasibility checkpoint resolved: GPU half PASS, JSON-wire half FAIL → PERF-01.*

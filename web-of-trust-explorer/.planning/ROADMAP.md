@@ -24,7 +24,7 @@ binary-streaming bridge (PERF-01, v2) must be pulled forward.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Interactive Graph On Screen (Data Spine + GPU Render)** - Bulk-load, dense-remap, GPU-lay-out, and pan/zoom/hover the full graph at 60fps, validated against synthetic full-scale data
+- [x] **Phase 1: Interactive Graph On Screen (Data Spine + GPU Render)** - Bulk-load, dense-remap, GPU-lay-out, and pan/zoom/hover the full graph at 60fps, validated against synthetic full-scale data (completed 2026-06-23)
 - [ ] **Phase 2: Terrain Overlays (Degree + Community)** - Size/color nodes by in/out degree and color by detected community via a one-shot Worker, mutating only style buffers
 - [ ] **Phase 3: Explore & Slice (Search, Detail, Time Filter, Refresh)** - Search hex/npub with fly-to + neighborhood highlight, inspect node detail, slice by activity time, and refresh from Dgraph
 
@@ -44,7 +44,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A single fit-to-screen / reset action returns the view to the whole map, and the app loads target-scale data without exhausting browser memory
   5. The data source sits behind a swappable transport interface, and the phase ends with a recorded feasibility verdict on browser-direct JSON load time (pass, or trigger the deferred Go bridge PERF-01)
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 Plans:
 **Wave 1**
 
@@ -56,7 +56,9 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — JSON wire + verdict: DgraphTransport after-cursor paging, chunked parse + remap, staged loader + verdict instrument, recorded feasibility verdict
+- [x] 01-03-PLAN.md — JSON wire + verdict: DgraphTransport after-cursor paging, chunked parse + remap, staged loader + verdict instrument, recorded feasibility verdict
+
+**Feasibility verdict (phase-closing):** GPU half PASS (01-02, 5M/30M ~60fps); JSON-wire half **FAIL → PERF-01 triggered**. Browser-direct JSON load against the real dev Dgraph (365k follow-nodes / 1.5M profiles / ~tens of millions of edges — D-04 small-DB assumption falsified) made the dev machine unusable (swap). **The deferred Go binary-streaming bridge (PERF-01) is pulled forward from v2 to the next phase** as a drop-in `GoBridgeTransport` behind the existing `GraphTransport` interface; cosmos.gl + SoA pipeline unchanged.
 
 **UI hint**: yes
 
@@ -100,6 +102,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Interactive Graph On Screen | 2/3 | In Progress|  |
+| 1. Interactive Graph On Screen | 3/3 | Complete   | 2026-06-23 |
 | 2. Terrain Overlays | 0/TBD | Not started | - |
 | 3. Explore & Slice | 0/TBD | Not started | - |
