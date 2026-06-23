@@ -16,9 +16,9 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Render
 
 - [ ] **REND-01**: User sees the whole graph as a single global node-link map rendered on the GPU _(partial in 01-01: proven on a small synthetic graph via @cosmos.gl/graph; single-map render at 5M-node scale is Plan 02)_
-- [ ] **REND-02**: Nodes settle into spatial structure via a live GPU force-directed layout; user can run, pause, and freeze the layout
-- [ ] **REND-03**: User can pan, zoom, and hover across the full graph at 60fps _(partial in 01-01: pan/zoom proven smooth on the small graph; hover and the 60fps-at-scale verdict are Plan 02)_
-- [ ] **REND-04**: User can fit-to-screen / reset the view to the whole map in one action
+- [x] **REND-02**: Nodes settle into spatial structure via a live GPU force-directed layout; user can run, pause, and freeze the layout _(complete in 01-02: layout auto-starts, Run/Pause toggle, auto-freeze on settle — confirmed at 5M/30M scale)_
+- [x] **REND-03**: User can pan, zoom, and hover across the full graph at 60fps _(complete in 01-02: pan/zoom/hover held ~60fps at 5M/30M on the M3 Pro — recorded verdict PASS; supersedes the 01-01 small-scale Partial)_
+- [x] **REND-04**: User can fit-to-screen / reset the view to the whole map in one action _(complete in 01-02: Fit/Reset button → fitView returns to whole map)_
 
 ### Overlay
 
@@ -82,11 +82,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | DATA-01 | Phase 1 | Pending |
 | DATA-02 | Phase 3 | Pending |
-| DATA-03 | Phase 1 | Partial (01-01: SoA buffers + remap + precision guard; at-scale verdict Plan 02/03) |
-| REND-01 | Phase 1 | Partial (01-01: small synthetic GPU render; at-scale Plan 02) |
-| REND-02 | Phase 1 | Pending |
-| REND-03 | Phase 1 | Partial (01-01: pan/zoom small; hover + 60fps-at-scale Plan 02) |
-| REND-04 | Phase 1 | Pending |
+| DATA-03 | Phase 1 | Partial (01-01: SoA buffers + remap + precision guard; 01-02: GPU-half observed — 5M/30M renders without exhausting memory; full peak-heap / JSON-wire verdict Plan 03) |
+| REND-01 | Phase 1 | Partial (01-01: small synthetic GPU render; 01-02: single global GPU map rendered at 5M-node scale) |
+| REND-02 | Phase 1 | Complete (01-02: live GPU layout auto-starts, Run/Pause, auto-freeze on settle) |
+| REND-03 | Phase 1 | Complete (01-02: pan/zoom/hover ~60fps at 5M/30M — recorded verdict PASS) |
+| REND-04 | Phase 1 | Complete (01-02: Fit/Reset returns to whole map) |
 | OVER-01 | Phase 2 | Pending |
 | OVER-02 | Phase 2 | Pending |
 | EXPL-01 | Phase 3 | Pending |
@@ -102,4 +102,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-22*
-*Last updated: 2026-06-23 — Plan 01-01 (walking skeleton): REND-01/REND-03 partial (small-scale), DATA-03 foundation laid; at-scale proofs deferred to Plan 02/03*
+*Last updated: 2026-06-23 — Plan 01-02 (GPU ceiling spike): REND-02/REND-03/REND-04 Complete (5M/30M, 60fps verdict PASS); REND-01 at-scale single-map render proven (still Partial pending Dgraph bulk-load); DATA-03 GPU-half observed (full peak-heap / JSON-wire verdict pending Plan 03)*

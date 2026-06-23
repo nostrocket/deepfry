@@ -44,7 +44,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A single fit-to-screen / reset action returns the view to the whole map, and the app loads target-scale data without exhausting browser memory
   5. The data source sits behind a swappable transport interface, and the phase ends with a recorded feasibility verdict on browser-direct JSON load time (pass, or trigger the deferred Go bridge PERF-01)
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 Plans:
 **Wave 1**
 
@@ -52,7 +52,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — GPU ceiling spike: 5M/30M BA generator, auto-freeze, Run/Pause + Fit + hover, recorded 60fps verdict
+- [x] 01-02-PLAN.md — GPU ceiling spike: 5M/30M BA generator, auto-freeze, Run/Pause + Fit + hover, recorded 60fps verdict
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -100,6 +100,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Interactive Graph On Screen | 1/3 | In Progress|  |
+| 1. Interactive Graph On Screen | 2/3 | In Progress|  |
 | 2. Terrain Overlays | 0/TBD | Not started | - |
 | 3. Explore & Slice | 0/TBD | Not started | - |

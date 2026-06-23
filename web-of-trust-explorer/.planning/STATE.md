@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 01
 current_phase_name: interactive-graph-on-screen-data-spine-gpu-render
 status: executing
-stopped_at: Completed 01-01-PLAN.md (walking skeleton)
-last_updated: "2026-06-23T04:08:32.027Z"
+stopped_at: Completed 01-02-PLAN.md (GPU ceiling spike — 60fps verdict PASS)
+last_updated: "2026-06-23T04:16:20.000Z"
 last_activity: 2026-06-23
-last_activity_desc: Plan 01-01 complete (walking skeleton render spine)
+last_activity_desc: Plan 01-02 complete (5M/30M GPU render, auto-freeze, 60fps PASS — Open Question 1 resolved)
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-06-22)
 ## Current Position
 
 Phase: 01 (interactive-graph-on-screen-data-spine-gpu-render) — EXECUTING
-Plan: 2 of 3
-Status: Plan 01-01 complete (walking skeleton); ready to execute Plan 02
-Last activity: 2026-06-23 — Plan 01-01 complete (Vite+TS spine, GraphTransport, cosmos.gl render + pan/zoom, vitest 21/21)
+Plan: 3 of 3
+Status: Plan 01-02 complete (GPU ceiling spike, 60fps verdict PASS); ready to execute Plan 03 (JSON wire + feasibility verdict)
+Last activity: 2026-06-23 — Plan 01-02 complete (5M/30M BA render, O(E) in-degree, auto-freeze, Run/Pause+Fit+tooltip, 60fps PASS, vitest 28/28)
 
-Progress: [███░░░░░░░] 33%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [███░░░░░░░] 33%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 18 | 5 tasks | 16 files |
+| Phase 01 P02 | 6 | 4 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase 1]: Pinned vite@^7.3.5 — Vite 8 Rolldown can't resolve cosmos.gl's CJS dep gl-bench; Vite 7 (Rollup+esbuild) handles the interop.
 - [Phase 1]: cosmos.gl 3.0.0 needs render() (not create()+start()) to start the draw loop and allocate the hover-picking FBO.
 - [Phase 1]: @cosmos.gl/graph@3.0.0 confirmed legitimate (pre-install human gate) and working in Chrome (render human gate).
+- [Phase 1 / 01-02]: **GPU-half feasibility verdict — 60fps PASS.** WebGL2/cosmos.gl held ~60fps under pan/zoom/hover at 5M nodes / ~30M edges on the reference machine (M3 Pro / Chrome, D-06/D-07); layout auto-settled + auto-froze without user action (D-11/D-12). **Resolves Open Question 1 in favor of WebGL2 — WebGPU compute-shader escalation (Phase-N) NOT triggered.** (Qualitative-but-confirmed headline PASS; no precise per-axis FPS numbers recorded.)
+- [Phase 1 / 01-02]: In-degree derived in one O(E) pass (src/graph/generator.ts computeInDegree → Uint32Array, sum === edgeCount) in the worker pre-Float32, transferred zero-copy; no followers query, no per-node objects (D-08).
 
 ### Pending Todos
 
@@ -83,7 +86,7 @@ None yet.
 [Issues that affect future work]
 
 - [Phase 1]: Dominant risk is browser-direct JSON pull of tens of millions of edges (no streaming, blocking JSON.parse). Phase 1 must validate against synthetic ~5M-node/~30M-edge data, not the dev DB, and record a load-time verdict.
-- [Phase 1]: cosmos.gl has a stated GPU simulation-space ceiling that may not fit several million nodes; validate in the feasibility spike and wire a sampling/precompute fallback to a measured threshold. Confirm exact npm name/version at install (recent rename).
+- [Phase 1]: ~~cosmos.gl has a stated GPU simulation-space ceiling that may not fit several million nodes~~ — RESOLVED in 01-02: WebGL2 held ~60fps at 5M/30M on the M3 Pro and auto-settled+froze; Open Question 1 closed in favor of WebGL2, no WebGPU escalation. (The JSON-wire / peak-heap memory verdict — DATA-03 full — is still pending Plan 03.)
 
 ## Deferred Items
 
@@ -95,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-23T04:08:32.024Z
-Stopped at: Completed 01-01-PLAN.md (walking skeleton)
+Last session: 2026-06-23T04:16:20.000Z
+Stopped at: Completed 01-02-PLAN.md (GPU ceiling spike — 60fps verdict PASS, Open Question 1 resolved)
 Resume file: None
