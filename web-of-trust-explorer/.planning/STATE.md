@@ -6,15 +6,15 @@ current_phase: 2
 current_phase_name: Degree + Community
 status: completed
 stopped_at: Completed 01-03-PLAN.md (JSON-wire spike — verdict FAIL → PERF-01 pulled forward; Phase 1 all 3 plans complete, feasibility checkpoint resolved)
-last_updated: "2026-06-23T06:00:48.181Z"
+last_updated: "2026-06-23T06:16:27.298Z"
 last_activity: 2026-06-23
 last_activity_desc: Phase 01 complete, transitioned to Phase 2
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 33
+  percent: 25
 ---
 
 # Project State
@@ -93,6 +93,10 @@ None yet.
 - [Phase 1]: ~~Dominant risk is browser-direct JSON pull of tens of millions of edges (no streaming, blocking JSON.parse)~~ — RESOLVED in 01-03 with a decisive verdict: browser-direct JSON wire FAILS at real scale (machine driven into swap, unusable) → PERF-01 (Go binary-streaming bridge) triggered and pulled forward from v2. The architecture's swappable GraphTransport seam exists precisely for this swap (drop-in GoBridgeTransport).
 - [Phase 1]: ~~cosmos.gl has a stated GPU simulation-space ceiling that may not fit several million nodes~~ — RESOLVED in 01-02: WebGL2 held ~60fps at 5M/30M on the M3 Pro and auto-settled+froze; Open Question 1 closed in favor of WebGL2, no WebGPU escalation.
 - [NEXT]: PERF-01 (Go binary-streaming bridge) is now the priority for the next phase — pulled forward from v2 by the 01-03 FAIL verdict. Implement GoBridgeTransport behind the existing GraphTransport interface; cosmos.gl + SoA pipeline unchanged.
+
+### Roadmap Evolution
+
+- Phase 01.1 inserted after Phase 1: Go binary-streaming bridge (PERF-01) pulled forward — browser-direct JSON wire FAILed Phase 1 feasibility verdict at real scale (URGENT)
 
 ## Deferred Items
 

@@ -62,6 +62,17 @@ Plans:
 
 **UI hint**: yes
 
+### Phase 01.1: Go Binary-Streaming Bridge (PERF-01) (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 1
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 01.1 to break down)
+
 ### Phase 2: Terrain Overlays (Degree + Community)
 
 **Goal**: On the working render, a developer can see where the hubs and regions are — nodes sized and colored by degree (in-degree/followers distinct from out-degree/follows) and colored by detected community — all computed once off the main thread and applied without re-running layout.
