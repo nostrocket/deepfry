@@ -195,7 +195,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. No `Access-Control-Allow-Credentials` header appears on any response — the API is unauthenticated and wildcard origin is incompatible with credentials
   4. The `RequestBodyLimitLayer` (body cap), the `OnceCell`-gated 503-until-ready schema gate, and the `bind_address` loopback default all behave identically to Phase 5 after adding the `CorsLayer`
 
-**Plans**: TBD
+**Plans**: 1 plan (1 wave)
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — Enable tower-http `cors` feature, add the outermost `CorsLayer` (wildcard origin, GET/POST/OPTIONS, Content-Type, no credentials) to `build_router`, update layer-ordering rustdoc, and add `tests/cors_test.rs` asserting CORS headers on 200/413/503 + preflight (CORS-01, CORS-02, CORS-03, CORS-04)
 
 ## Progress
 
@@ -209,4 +213,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
-| 6. CORS Support | 0/? | Not started | - |
+| 6. CORS Support | 0/1 | Not started | - |
