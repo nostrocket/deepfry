@@ -11,13 +11,13 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **DATA-01**: User opens the app and the entire follow-graph bulk-loads from Dgraph into the browser once, with a visible loading/progress state
 - [ ] **DATA-02**: User can refresh to re-pull the current graph state from Dgraph on demand (explicit, not automatic)
-- [ ] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory
+- [ ] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory _(foundation laid in 01-01: SoA typed buffers + hex→uint32 dense remap + Float32 2^24 precision guard; at-scale memory verdict is Plan 02/03)_
 
 ### Render
 
-- [ ] **REND-01**: User sees the whole graph as a single global node-link map rendered on the GPU
+- [ ] **REND-01**: User sees the whole graph as a single global node-link map rendered on the GPU _(partial in 01-01: proven on a small synthetic graph via @cosmos.gl/graph; single-map render at 5M-node scale is Plan 02)_
 - [ ] **REND-02**: Nodes settle into spatial structure via a live GPU force-directed layout; user can run, pause, and freeze the layout
-- [ ] **REND-03**: User can pan, zoom, and hover across the full graph at 60fps
+- [ ] **REND-03**: User can pan, zoom, and hover across the full graph at 60fps _(partial in 01-01: pan/zoom proven smooth on the small graph; hover and the 60fps-at-scale verdict are Plan 02)_
 - [ ] **REND-04**: User can fit-to-screen / reset the view to the whole map in one action
 
 ### Overlay
@@ -82,10 +82,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | DATA-01 | Phase 1 | Pending |
 | DATA-02 | Phase 3 | Pending |
-| DATA-03 | Phase 1 | Pending |
-| REND-01 | Phase 1 | Pending |
+| DATA-03 | Phase 1 | Partial (01-01: SoA buffers + remap + precision guard; at-scale verdict Plan 02/03) |
+| REND-01 | Phase 1 | Partial (01-01: small synthetic GPU render; at-scale Plan 02) |
 | REND-02 | Phase 1 | Pending |
-| REND-03 | Phase 1 | Pending |
+| REND-03 | Phase 1 | Partial (01-01: pan/zoom small; hover + 60fps-at-scale Plan 02) |
 | REND-04 | Phase 1 | Pending |
 | OVER-01 | Phase 2 | Pending |
 | OVER-02 | Phase 2 | Pending |
@@ -95,10 +95,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FILT-01 | Phase 3 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 13 total
 - Mapped to phases: 13 ✓
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-22*
-*Last updated: 2026-06-22 after roadmap creation (traceability mapped)*
+*Last updated: 2026-06-23 — Plan 01-01 (walking skeleton): REND-01/REND-03 partial (small-scale), DATA-03 foundation laid; at-scale proofs deferred to Plan 02/03*

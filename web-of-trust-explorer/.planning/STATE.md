@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Interactive Graph On Screen
+current_phase: 01
+current_phase_name: interactive-graph-on-screen-data-spine-gpu-render
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-06-23T03:31:28.752Z"
-last_activity: 2026-06-22
-last_activity_desc: Roadmap created (3 vertical MVP phases, 13/13 requirements mapped)
+stopped_at: Completed 01-01-PLAN.md (walking skeleton)
+last_updated: "2026-06-23T04:08:32.027Z"
+last_activity: 2026-06-23
+last_activity_desc: Plan 01-01 complete (walking skeleton render spine)
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 3
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-22)
 
 **Core value:** Smooth 60fps interaction with the whole follow-graph at once, so a developer can see its terrain — hubs, clusters, bridges, dense vs sparse regions.
-**Current focus:** Phase 1 — Interactive Graph On Screen (Data Spine + GPU Render)
+**Current focus:** Phase 01 — interactive-graph-on-screen-data-spine-gpu-render
 
 ## Current Position
 
-Phase: 1 of 3 (Interactive Graph On Screen)
-Plan: 0 of TBD in current phase
-Status: Ready to execute
-Last activity: 2026-06-22 — Roadmap created (3 vertical MVP phases, 13/13 requirements mapped)
+Phase: 01 (interactive-graph-on-screen-data-spine-gpu-render) — EXECUTING
+Plan: 2 of 3
+Status: Plan 01-01 complete (walking skeleton); ready to execute Plan 02
+Last activity: 2026-06-23 — Plan 01-01 complete (Vite+TS spine, GraphTransport, cosmos.gl render + pan/zoom, vitest 21/21)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01 P01 | 18 | 5 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Roadmap]: Remap hex pubkeys → dense uint32 at load; structure-of-arrays typed buffers; query only `follows` (derive followers/in-degree client-side to avoid `@hasInverse` double-count); DQL `after`-cursor paging (not offset).
 - [Roadmap]: Topology-static / style-dynamic — overlays rewrite only style buffers; filters hide/dim and NEVER re-layout; analytics run one-shot in a Web Worker.
 - [Roadmap]: Go binary-streaming bridge (PERF-01) deferred to v2; gated on the Phase 1 feasibility verdict against synthetic full-scale data.
+- [Phase 1]: Pinned vite@^7.3.5 — Vite 8 Rolldown can't resolve cosmos.gl's CJS dep gl-bench; Vite 7 (Rollup+esbuild) handles the interop.
+- [Phase 1]: cosmos.gl 3.0.0 needs render() (not create()+start()) to start the draw loop and allocate the hover-picking FBO.
+- [Phase 1]: @cosmos.gl/graph@3.0.0 confirmed legitimate (pre-install human gate) and working in Chrome (render human gate).
 
 ### Pending Todos
 
@@ -91,6 +95,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-22T09:30:26.560Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-interactive-graph-on-screen-data-spine-gpu-render/01-CONTEXT.md
+Last session: 2026-06-23T04:08:32.024Z
+Stopped at: Completed 01-01-PLAN.md (walking skeleton)
+Resume file: None
