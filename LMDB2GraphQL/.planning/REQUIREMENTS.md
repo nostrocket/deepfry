@@ -45,6 +45,17 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **OPS-03**: CI pins the **same strfry version/digest the parent DeepFry stack deploys** (per LMDB-10), generates a fixture `strfry-db` from it, and asserts LMDB2GraphQL (a) decodes both `0x00` and `0x01` payloads and (b) reproduces strfry's index scan order via the reimplemented comparators
 - [x] **OPS-04**: `stats` / startup output surfaces the expected (pinned) strfry version and the detected on-disk `dbVersion`, so operators can spot drift if the parent's `dockurr/strfry` image moves
 
+## Milestone v1.1 Requirements (CORS Support)
+
+Defined 2026-06-23. Enables a browser-based frontend served from a different host to query the GraphQL API cross-origin. Corpus is public Nostr relay data → wildcard origin, no credentials.
+
+### CORS
+
+- [ ] **CORS-01**: A browser frontend served from a different origin can issue `POST /graphql` (and `GET /graphql` for GraphiQL) and read the response — the server sends `Access-Control-Allow-Origin: *`
+- [ ] **CORS-02**: The server correctly answers CORS preflight `OPTIONS` requests for `/graphql`, allowing the methods (`GET`, `POST`, `OPTIONS`) and request headers (e.g. `Content-Type`) a GraphQL-over-HTTP client sends, so non-simple POSTs succeed
+- [ ] **CORS-03**: The server does **not** send `Access-Control-Allow-Credentials` (wildcard origin, no cookies/auth) — consistent with the unauthenticated read-only surface and compatible with `Allow-Origin: *`
+- [ ] **CORS-04**: The `CorsLayer` is added without weakening existing protections — the body-limit layer, the `503`-until-ready schema gate, and the `bind_address` loopback default all continue to behave as before (CORS relaxes only the browser same-origin policy, not network exposure)
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -107,13 +118,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-02 | Phase 5 | Complete |
 | OPS-03 | Phase 5 | Complete |
 | OPS-04 | Phase 5 | Complete |
+| CORS-01 | Phase 6 | Pending |
+| CORS-02 | Phase 6 | Pending |
+| CORS-03 | Phase 6 | Pending |
+| CORS-04 | Phase 6 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 25 total
-- Mapped to phases: 25
-- Unmapped: 0
+- v1.0 requirements: 25 total — mapped to Phases 1–5, all complete
+- v1.1 requirements: 4 total (CORS-01..04) — to be mapped by roadmap
+- Unmapped: 0 (v1.0); v1.1 mapping filled during roadmap creation
 
 ---
-*Requirements defined: 2026-06-10*
-*Last updated: 2026-06-10 after roadmap creation*
+*Requirements defined: 2026-06-10 (v1.0); 2026-06-23 (v1.1 CORS)*
+*Last updated: 2026-06-23 — milestone v1.1 requirements added*
