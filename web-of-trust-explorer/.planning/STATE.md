@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: Degree + Community
-status: completed
+current_phase: 01.1
+current_phase_name: go-binary-streaming-bridge-perf-01
+status: executing
 stopped_at: Phase 01.1 context gathered
-last_updated: "2026-06-23T06:29:50.080Z"
+last_updated: "2026-06-23T06:51:27.805Z"
 last_activity: 2026-06-23
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 01.1 execution started
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
+  total_plans: 6
   completed_plans: 3
   percent: 25
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-22)
 
 **Core value:** Smooth 60fps interaction with the whole follow-graph at once, so a developer can see its terrain — hubs, clusters, bridges, dense vs sparse regions.
-**Current focus:** Phase 01 — interactive-graph-on-screen-data-spine-gpu-render
+**Current focus:** Phase 01.1 — go-binary-streaming-bridge-perf-01
 
 ## Current Position
 
-Phase: 2 — Terrain Overlays (Degree + Community)
-Plan: Not started
-Status: Plan 01-03 complete (JSON-wire spike). Phase 1 feasibility checkpoint RESOLVED: GPU half PASS (01-02), JSON-wire half FAIL → trigger PERF-01 (Go binary-streaming bridge) pulled forward from v2 to next.
-Last activity: 2026-06-23 — Phase 01 complete, transitioned to Phase 2
+Phase: 01.1 (go-binary-streaming-bridge-perf-01) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 01.1
+Last activity: 2026-06-23 — Phase 01.1 execution started
 
 Progress: [██████████] 100%
 
@@ -92,6 +92,13 @@ None yet.
 
 - [Phase 1]: ~~Dominant risk is browser-direct JSON pull of tens of millions of edges (no streaming, blocking JSON.parse)~~ — RESOLVED in 01-03 with a decisive verdict: browser-direct JSON wire FAILS at real scale (machine driven into swap, unusable) → PERF-01 (Go binary-streaming bridge) triggered and pulled forward from v2. The architecture's swappable GraphTransport seam exists precisely for this swap (drop-in GoBridgeTransport).
 - [Phase 1]: ~~cosmos.gl has a stated GPU simulation-space ceiling that may not fit several million nodes~~ — RESOLVED in 01-02: WebGL2 held ~60fps at 5M/30M on the M3 Pro and auto-settled+froze; Open Question 1 closed in favor of WebGL2, no WebGPU escalation.
+
+- [Phase 01.1 — OPEN BLOCKER, 2026-06-23]: Bridge built and committed (Waves 1–3, through commit 8e0e51c). **Server/wire half = PASS** (live, real dev Dgraph): streamed 1,526,983 nodes / 26,328,822 edges as a 290 MB binary frame (magic WOTB v1), HTTP 200, fetch+compute+stream ≈ 126 s, client peak RSS 5 MB, no swap; server-side array Louvain ran to completion at full scale (1,239 communities — risk A2 resolved). Headless decode+buildGraphBuffers against the real frame PASS (all 26M link indices in-bounds, build 49 ms). **In-browser half = FAIL → user-reported measured browser heap ≈ 3 GB, which degrades the whole dev machine.** This is NOT the JSON-parse wall (that's gone) — it is excess in-browser memory the transport/middleware should not require.
+  - **User architectural verdict (2026-06-23):** "3 GB is far too high and not necessary if the middleware was correctly architected." User STOPPED autonomous mode here to own the memory architecture decision before any fix is implemented. Do NOT just patch the transport — revisit the architecture.
+  - **Known avoidable waste in current GoBridgeTransport (our code, not cosmos.gl):** (a) the full 290 MB frame stays pinned for the session because the small attribute arrays are returned as VIEWS into it; (b) links are duplicated — uint32 in the pinned frame + a separate 210 MB float32 copy; (c) eager hexByIndex builds ~1.5M strings upfront (≈150–200 MB + a multi-second main-thread freeze); (d) chunks[]+frame held simultaneously → ~580 MB transient receive peak. Together ≈ 700 MB+ of avoidable transport-side memory — but that alone does NOT explain 3 GB.
+  - **Likely dominant term = cosmos.gl's own internal edge structures at 26M edges** (force-layout adjacency, sorted both directions, degree textures) — engine-inherent, not fixed by the bridge. Open architectural question the user is deciding: whether "correctly architected middleware" means (i) eliminate the transport-side duplication above (~700 MB win, keeps live layout), and/or (ii) a deeper change — e.g. ship a reduced/LOD or server-pre-laid-out graph so the browser RENDERS rather than runs the force sim (cf. the deck.gl render-only "Alternatives Considered" path), trading the live-layout bet for a much smaller browser footprint. NOT YET DECIDED.
+  - **Env note:** DeepFry whitelist-server occupies :8081 (the bridge default). Live run used `bridge -listen 127.0.0.1:8082` + an UNCOMMITTED vite.config.ts edit pointing `server.proxy['/graph.bin']` → :8082. On resume: commit that port change, free 8081, or pass `-listen 127.0.0.1:8081` to match the committed config.
+  - **PERF-01 live verdict status: PENDING** — server/wire PASS recorded; in-browser PASS blocked on the memory-architecture decision above. 01.1-03-SUMMARY.md remains `pending-human-verification`.
 - [NEXT]: PERF-01 (Go binary-streaming bridge) is now the priority for the next phase — pulled forward from v2 by the 01-03 FAIL verdict. Implement GoBridgeTransport behind the existing GraphTransport interface; cosmos.gl + SoA pipeline unchanged.
 
 ### Roadmap Evolution

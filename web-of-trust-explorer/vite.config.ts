@@ -19,7 +19,9 @@ const crossOriginIsolationHeaders = {
 // cross-origin-isolation headers above stay intact for measureUserAgentSpecificMemory.
 // The bridge's own CRP+CORS headers remain the documented production-style
 // fallback but are not relied on here.
-const BRIDGE_ORIGIN = 'http://127.0.0.1:8081';
+// Default bridge port is 8081, but DeepFry's whitelist-server occupies :8081 on
+// this dev host — run the bridge with `-listen 127.0.0.1:8082` and proxy to match.
+const BRIDGE_ORIGIN = 'http://127.0.0.1:8082';
 
 export default defineConfig({
   server: {
