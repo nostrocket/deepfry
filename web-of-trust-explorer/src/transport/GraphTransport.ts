@@ -94,6 +94,16 @@ export function parseDqlEnvelope(envelope: DqlEnvelope, remap: HexRemap): Array<
 }
 
 /**
+ * Extract the server-side encode cost (`extensions.server_latency.encoding_ns`)
+ * from a DQL response page, defaulting to 0 when absent. Dgraph can take multiple
+ * seconds to encode a huge result; this is a first-class verdict metric (D-10),
+ * accumulated across pages (01-RESEARCH.md § response shape).
+ */
+export function extractEncodingNs(envelope: DqlEnvelope): number {
+  return envelope.extensions?.server_latency?.encoding_ns ?? 0;
+}
+
+/**
  * Build the GraphBuffers handed to cosmos.gl, enforcing the Float32 integer
  * ceiling. cosmos.gl requires the link buffer as a Float32Array; Float32 only
  * represents integers exactly below 2^24, so we assert

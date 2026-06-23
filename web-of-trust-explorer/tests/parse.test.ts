@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { createHexRemap, parseDqlEnvelope } from '../src/transport/GraphTransport';
+import {
+  createHexRemap,
+  parseDqlEnvelope,
+  extractEncodingNs,
+} from '../src/transport/GraphTransport';
 
 /**
  * DATA-01: the DQL-envelope parser turns the documented Dgraph response shape
@@ -67,5 +71,21 @@ describe('DQL envelope parser', () => {
     const remap = createHexRemap();
     const edges = parseDqlEnvelope({ data: { q: [] } }, remap);
     expect(edges).toEqual([]);
+  });
+
+  it('surfaces extensions.server_latency.encoding_ns (verdict metric, D-10)', () => {
+    const envelope = {
+      data: { q: [{ uid: '0x1', follows: [{ uid: '0x2' }] }] },
+      extensions: { server_latency: { encoding_ns: 1234567 } },
+    };
+    expect(extractEncodingNs(envelope)).toBe(1234567);
+  });
+
+  it('returns 0 encoding_ns when the extensions block is absent', () => {
+    expect(extractEncodingNs({ data: { q: [] } })).toBe(0);
+    expect(extractEncodingNs({ data: { q: [] }, extensions: {} })).toBe(0);
+    expect(
+      extractEncodingNs({ data: { q: [] }, extensions: { server_latency: {} } }),
+    ).toBe(0);
   });
 });
