@@ -31,7 +31,7 @@ but was disabled by `count_sample_interval` defaulting to `1`.
 
 - `go build ./...` — clean.
 - `go test ./pkg/config/ ./cmd/crawler/ -short` — pass.
-- Pending live verification: restart crawler on the strfry host; confirm
+- Pending live verification: restart the crawler on any host with access to the live Dgraph + public relays; confirm
   `batch_ms` drops to ~6–10s and `counts_cached:true` appears on non-sampling
   batches. Crawler reads the live yaml on next restart.
 

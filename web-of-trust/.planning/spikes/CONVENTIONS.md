@@ -15,7 +15,7 @@ This is a measurement-driven optimization effort. Each round:
 1. Change **one** variable (config or code) — see the backlog in `MANIFEST.md`.
 2. Tag the round: `WOT_ROUND=<name>` for a named experiment, else the git commit
    is used automatically.
-3. Run the crawler against live Dgraph + relays (strfry host).
+3. Run the crawler against the live Dgraph + public relays (on any host with access to them).
 4. Let it append a `runRecord` to `~/deepfry/crawler-metrics.jsonl` (Ctrl-C is fine
    — the record is written on graceful shutdown).
 5. Compare against the prior round's record (`jq` over the JSONL).

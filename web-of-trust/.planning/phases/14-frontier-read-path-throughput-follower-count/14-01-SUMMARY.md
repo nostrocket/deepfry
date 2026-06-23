@@ -140,9 +140,9 @@ _Task 3 was a TDD task; the pure delta seam (`followerCountDelta`) was added in 
 
 ## User Setup Required
 
-Task 6 is an operator-run live verification on the **strfry host** (TEST-03) — it CANNOT run in this environment (requires the live ~1.38M-node production Dgraph). It is **PENDING operator action**.
+Task 6 is an operator-run live verification against the **live Dgraph** (TEST-03) — it CANNOT run in this environment (requires the live ~1.38M-node production Dgraph). It is **PENDING operator action**.
 
-### Task 6 — operator procedure (run on the strfry host)
+### Task 6 — operator procedure (run on any host with access to the live Dgraph)
 
 > **Precondition (backfill-before-trust, WR-02/WR-03):** Run `backfill-follower-count` to completion BEFORE relying on `follower_count` ordering (the `GetStalePubkeys` frontier ordering). Pre-backfill nodes read 0; crawler writes during/after the backfill apply a +/-1 maintenance that self-heals once the overwrite lands — so it is safe to run the crawler concurrently, but the read-path ordering is only trustworthy once the backfill has finished.
 
@@ -159,8 +159,8 @@ Task 6 is an operator-run live verification on the **strfry host** (TEST-03) —
 
 ## Next Phase Readiness
 
-- Code is complete, builds clean, and passes all automatable gates. The phase cannot be marked fully complete until the operator runs the Task 6 live verification on the strfry host and records the before/after read-path latency evidence (TEST-03).
-- No blockers for the operator step beyond access to the live Dgraph + crawler on the strfry host.
+- Code is complete, builds clean, and passes all automatable gates. The phase cannot be marked fully complete until the operator runs the Task 6 live verification against the live Dgraph and records the before/after read-path latency evidence (TEST-03).
+- No blockers for the operator step beyond access to the live Dgraph + public relays (to run the crawler).
 
 ## Live-verification fixes
 

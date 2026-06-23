@@ -211,7 +211,7 @@
 
 ### Top Lessons (Verified Across Milestones)
 
-1. Live Dgraph + relay behavior is only provable on the strfry host — bake the manual verification step into every phase that touches the event loop.
+1. Live Dgraph + relay behavior is only provable on a host with access to the live Dgraph + public relays — bake the manual verification step into every phase that touches the event loop.
 2. Coarse phase granularity tied to real coupling clusters keeps plan counts minimal without losing dependency correctness.
 3. The auto code-review→fix loop repeatedly catches defects (regressions, flaky tests, concurrency hazards) that pass both the executor and the goal-backward verifier — it is the highest-leverage gate for refactors and concurrency work.
 4. For crawler batch liveness, preserving retry eligibility can be cleaner than retrying inline: omit transient-failed pubkeys from attempt stamping and let frontier selection retry later.

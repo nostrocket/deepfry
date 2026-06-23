@@ -338,7 +338,7 @@ go tool cover -html=cov.txt                 # View HTML report
 
 **E2E Tests:**
 - Not automated (manual verification required per `CLAUDE.md` §6)
-- Manual step: run crawler against live StrFry + relays on strfry host
+- Manual step: run crawler against the live Dgraph + public relays (on any host with access to them)
 - Verifies: crawling throughput, relay subscriptions, Dgraph writes, graceful shutdown
 
 ## Common Patterns

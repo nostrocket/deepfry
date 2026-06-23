@@ -54,7 +54,7 @@ make build-crawler          # -> bin/crawler, Commit injected via ldflags
 WOT_ROUND=batch-1000 ./bin/crawler
 ```
 
-Requires live Dgraph + relays (run on the strfry host, per project convention).
+Requires live Dgraph + relays (run on any host with access to them, per project convention).
 
 Compare rounds afterward:
 
@@ -130,7 +130,7 @@ tests. The instrumentation is wired end-to-end:
 — any prior attempt to read a build commit from the crawler would have gotten the
 empty/default string.
 
-**Remaining (needs the strfry host):** capture a real baseline round to confirm
+**Remaining (needs a host with access to the live Dgraph + public relays):** capture a real baseline round to confirm
 the live `BATCH_METRICS` stream and the first JSONL record, then start working the
 optimization backlog in MANIFEST.md one variable at a time.
 </content>

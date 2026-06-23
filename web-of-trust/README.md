@@ -281,9 +281,10 @@ This section is the resume point for a new engineer. Current state: milestone
 
 Spike 001 added the production metrics instrumentation described under
 [Crawler Metrics](#crawler-metrics). The instrumentation is built, unit-tested,
-and committed; the next concrete step is to **capture a baseline round on the
-strfry host** (live Dgraph + relays), then work the backlog below one variable
-at a time, comparing `~/deepfry/crawler-metrics.jsonl` records between rounds.
+and committed; the next concrete step is to **capture a baseline round on any
+host with access to the live Dgraph + public relays**, then work the backlog
+below one variable at a time, comparing `~/deepfry/crawler-metrics.jsonl`
+records between rounds.
 
 Full context and protocol: `.planning/spikes/MANIFEST.md` and
 `.planning/spikes/CONVENTIONS.md`.

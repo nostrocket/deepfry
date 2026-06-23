@@ -14,7 +14,7 @@ The `web-of-trust` Go module is a Nostr crawler that subscribes to kind-3 (conta
 - **Config**: Live config lives at `~/deepfry/web-of-trust.yaml` — never edit it for testing; use a temp `HOME` (per `8pc_crawled.md` §6).
 - **Data separation**: ID-only graph in Dgraph; no event payloads. StrFry unmodified.
 - **Testing**: Integration tests gate on a live Dgraph via `//go:build integration` / `make test-integration`. No unit-test suite exists yet.
-- **Verification**: requires running the crawler against live Dgraph + relays on the strfry host (manual step, per spec §6).
+- **Verification**: requires running the crawler on any host with access to the live Dgraph + public relays (manual step, per spec §6).
 
 <!-- GSD:project-end -->
 
