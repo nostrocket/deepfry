@@ -10,6 +10,18 @@ LMDB2GraphQL is a read-only adapter that exposes a [strfry](https://github.com/h
 
 Serve correct, rich queries over strfry's events by reading strfry's **live** on-disk state directly — never copying event data or indexes out of strfry (honoring the DeepFry stack's data-separation rule: *no event payloads outside StrFry*), while never writing to strfry's database.
 
+## Current Milestone: v1.1 CORS Support
+
+**Goal:** Allow a browser-based frontend served from a different host to query the GraphQL API cross-origin.
+
+**Target features:**
+- Permissive CORS on the HTTP surface — `Access-Control-Allow-Origin: *`, no credentials
+- Correct preflight (`OPTIONS`) handling for `POST /graphql`
+- Allowed methods/headers covering the GraphQL POST + GraphiQL GET surface
+- Integration via `tower-http`'s `CorsLayer` (enable the `cors` feature), layered into `build_router` in `src/server.rs`
+
+**Key context:** The corpus is public Nostr relay data, so wildcard CORS is acceptable; no `Allow-Credentials`. CORS is orthogonal to the existing `bind_address` loopback-default safety control (network exposure) and the body-limit/readiness layers — it only relaxes the browser same-origin policy. No new runtime dependency (tower-http already present; just the `cors` feature flag).
+
 ## Requirements
 
 ### Validated
@@ -20,14 +32,13 @@ Serve correct, rich queries over strfry's events by reading strfry's **live** on
 - [x] Comparator self-check at startup against a pinned fixture; **fail-closed** if our scan order disagrees with strfry's — *Validated in Phase 1 (forward-scan physical-order integrity + MDB_SET_RANGE comparator seek gate on adversarial pairs; CR-01 closed in plan 01-04)*
 - [x] Decode `EventPayload` (`0x00` raw + `0x01` zstd-dictionary) to return full event JSON — *Validated in Phase 2 (LMDB-07/08: `decode_event_payload` 0x00 path with exact retained raw bytes, `decode_event_payload_with_cache` 0x01 path via lazy Send+Sync `DictCache` with a 4 MiB decompression-bomb ceiling; malformed input skipped+warned+counted, never panics)*
 - [x] Bounded, reversible, resumable cursor scans over each `Event__*` index (DUPSORT-aware, short per-call txns) — *Validated in Phase 2 (LMDB-09: `scan_index_bounded`/`scan_index_windowed`; code-review BLOCKER CR-01 — silent levId drop at DUPSORT window boundaries — fixed via key-granular windowing with a non-vacuity regression proof)*
+- [x] Query engine that resolves filters by scanning strfry's `Event__*` indexes and hydrating JSON via `EventPayload[levId]` point-lookups, incl. `latestPerAuthor` and NIP-40 expiration filtering — *Validated in Phase 3 (QRY-01..05)*
+- [x] GraphQL API: `events()`, `latestPerAuthor()`, `stats`, with pagination and hard limit ceilings, read-only (no mutations) — *Validated in Phase 4 (API-01..06)*
+- [x] Operations & deployment: `/health` + `/ready` probes, Docker subsystem + docker-compose with read-only `strfry-db` mount, pinned-strfry-version surfacing — *Validated in Phase 5 (OPS-01..04)*
 
 ### Active
 
-- [ ] Query engine that resolves filters by scanning strfry's `Event__*` indexes (`Event__id`, `Event__pubkey`, `Event__kind`, `Event__pubkeyKind`, `Event__created_at`, `Event__tag`) and hydrating JSON via `EventPayload[levId]` point-lookups
-- [ ] `latestPerAuthor` via `Event__pubkeyKind` prefix scans (the query REQ cannot express)
-- [ ] NIP-40 expiration filtering at query time (expired-but-unswept events linger physically)
-- [ ] GraphQL API: `events()`, `latestPerAuthor()`, `stats`, with pagination and hard limit ceilings
-- [ ] Docker subsystem + docker-compose integration, co-located with strfry, read-only mount of `strfry-db`
+- [ ] Permissive CORS on the HTTP surface (`Access-Control-Allow-Origin: *`, no credentials) so a browser frontend on a different host can query `/graphql`, with correct preflight (`OPTIONS`) handling — via `tower-http` `CorsLayer` layered into `build_router`
 
 ### Out of Scope
 
@@ -78,6 +89,7 @@ Serve correct, rich queries over strfry's events by reading strfry's **live** on
 | Co-located, same arch (assert endianness) | Avoids byte-swap/cross-arch complexity; matches deployment reality | — Pending |
 | Language = Rust | Deliberate divergence from the Go DeepFry stack for this component | — Pending |
 | Packaged as Docker subsystem + compose, read-only `strfry-db` mount | Matches existing DeepFry infra conventions | — Pending |
+| v1.1: Wildcard CORS (`Allow-Origin: *`, no credentials) | Corpus is public Nostr relay data; same-origin was the only cross-origin barrier. Wildcard lets any browser frontend query it; no credentials means no allowlist needed and no conflict with `*`. Orthogonal to `bind_address` network-exposure control | — Pending |
 
 ## Evolution
 
@@ -97,4 +109,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-11 — Phase 2 (Payload Decoding & Index Scan Primitives) complete: 0x00 + 0x01 EventPayload decode (LMDB-07/08), bounded/reversible/resumable Event__* cursor scans (LMDB-09); code-review BLOCKER CR-01 (silent DUPSORT-boundary levId drop) found and fixed with a non-vacuity regression proof; 9/9 must-haves verified, 55 tests pass. Phase 1: golpe comparators proven byte-exact, fail-closed self-check, Approach B de-risked.*
+*Last updated: 2026-06-23 — Milestone v1.1 (CORS Support) started. v1.0 shipped (Phases 1–5, all 25 requirements validated): read-only LMDB access + byte-exact golpe comparators (Phase 1), payload decode + bounded scans (Phase 2), query engine over live indexes (Phase 3), GraphQL API (Phase 4), hardening + Docker packaging (Phase 5). v1.1 adds wildcard CORS so a cross-host browser frontend can query the GraphQL API.*
