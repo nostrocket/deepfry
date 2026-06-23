@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: CORS Support
-status: planning
-last_updated: "2026-06-23T13:21:19.213Z"
+status: roadmap_ready
+last_updated: "2026-06-23"
 last_activity: 2026-06-23
 progress:
-  total_phases: 0
+  total_phases: 1
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,21 +17,21 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-10)
+See: .planning/PROJECT.md (updated 2026-06-23)
 
 **Core value:** Serve correct, rich queries over strfry's events by reading strfry's live on-disk state directly — never copying event data or indexes out of strfry, never writing to strfry's database.
-**Current focus:** Phase 05 — hardening-docker-packaging
+**Current focus:** Phase 6 — CORS Support (v1.1)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-06-23 — Milestone v1.1 started
+Phase: Phase 6 — CORS Support
+Plan: Not started
+Status: Roadmap complete; ready to plan Phase 6
+Last activity: 2026-06-23 — v1.1 roadmap created; Phase 6 mapped (CORS-01..04)
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (v1.0 total):**
 
 - Total plans completed: 25
 - Average duration: ~40 min
@@ -106,6 +106,7 @@ Recent decisions affecting current work:
 - [Phase ?]: build_probe_router: probe-only startup surface (/health + /ready, no /graphql) served before gate chain so 503→200 transition is observable to real orchestrators (OPS-01 gap-closure)
 - [Phase ?]: NetListener alias for post-gate re-bind: preserves source-order awk acceptance criterion unambiguity (single TcpListener::bind before self-check)
 - [Phase 05-03 CR-01/CR-02 fix]: bind-once gated-router design — single TcpListener::bind before gate chain; one axum::serve for entire process lifetime; POST /graphql gated behind Arc<OnceCell<AppSchema>> (503 while empty, execute when populated); eliminates connection-refused gap (CR-01) and ephemeral-port re-bind bug (CR-02) from probe-shutdown approach; AppRouterState replaces separate schema+ready parameters; build_probe_router and Notify/re-bind removed
+- [v1.1 roadmap 2026-06-23]: Phase 6 (CORS Support) created. Implementation = add tower-http CorsLayer to build_router in src/server.rs (enable "cors" feature in Cargo.toml). Policy = permissive wildcard: Allow-Origin: *, allowed methods GET/POST/OPTIONS, allow Content-Type. No Allow-Credentials. No new config knob. CorsLayer must be layered outside RequestBodyLimitLayer (correct axum 0.8 ordering) so body cap and schema gate are unaffected.
 
 ### Pending Todos
 
@@ -136,7 +137,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-15T06:00:00.000Z
-Stopped at: Completed 05-03 code-review fix (CR-01/CR-02/WR-01-04/IN-01)
-Resume: None — phase 05 fully complete
+Last session: 2026-06-23
+Stopped at: v1.1 roadmap created (Phase 6 defined, CORS-01..04 mapped)
+Resume: Run `/gsd-plan-phase 6` to plan Phase 6
 Resume file: None

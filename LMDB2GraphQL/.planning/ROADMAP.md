@@ -4,6 +4,8 @@
 
 LMDB2GraphQL is built in five dependency-ordered horizontal layers. Phase 1 is a de-risking spike: the entire Approach B strategy rests on reimplementing strfry/golpe's custom LMDB comparators in Rust and registering them via `mdb_set_compare`. If `heed` cannot support custom comparators, or the reimplementation cannot be made byte-exact, the approach must be revisited before any other work begins. Phases 2-4 build upward: raw read primitives, then the query engine that composes them, then the GraphQL API that exposes the engine. Phase 5 adds the operational shell (health gates, Docker packaging, CI fixture assertions) that makes the service production-worthy inside the DeepFry stack.
 
+Phase 6 adds permissive wildcard CORS so a browser-based frontend served from any origin can query the GraphQL API. It is a single-phase milestone (v1.1): the four CORS requirements are tightly coupled (all resolved by adding one `CorsLayer` to `build_router`), and coarse granularity confirms there is no meaningful delivery boundary to split them across.
+
 ## Phases
 
 **Phase Numbering:**
@@ -18,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — 11 plans incl. gap-closures 03-05..03-11; final fat-group cursor-stranding + ts=0 non-termination blockers closed via debug fix (lev_id_floor in merge_windowed, commit f4ec868); verification PASSED 5/5 must-haves (completed 2026-06-13)
 - [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
 - [x] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap-closure plan 05-03 created) (completed 2026-06-15)
+- [ ] **Phase 6: CORS Support** - Enable browser frontends on any origin to query the GraphQL API via permissive wildcard CORS with correct preflight handling
 
 ## Phase Details
 
@@ -180,10 +183,24 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 05-03-PLAN.md — Bind the listener and serve a probe-only /health+/ready router BEFORE the gate chain; store(true) only after the comparator self-check passes; full GraphQL router on a re-bound listener after gates — makes the /ready 503→200 window observable to a real orchestrator (OPS-01) [code-review fix CR-01/CR-02: redesigned as bind-once gated router — single TcpListener::bind, one axum::serve for process lifetime, POST /graphql gated behind Arc<OnceCell<AppSchema>>, eliminates connection-refused window and ephemeral-port re-bind bug]
 
+### Phase 6: CORS Support
+
+**Goal**: A browser frontend served from any origin can query the GraphQL API cross-origin, with correct preflight handling and no weakening of existing protections
+**Depends on**: Phase 5
+**Requirements**: CORS-01, CORS-02, CORS-03, CORS-04
+**Success Criteria** (what must be TRUE):
+
+  1. A cross-origin browser `fetch` (or `XMLHttpRequest`) issuing `POST /graphql` receives the query result along with `Access-Control-Allow-Origin: *` in the response headers
+  2. A CORS preflight `OPTIONS /graphql` request receives a successful response (200 or 204) containing `Access-Control-Allow-Methods` (covering GET, POST, OPTIONS) and `Access-Control-Allow-Headers` (covering Content-Type and the headers a GraphQL HTTP client sends)
+  3. No `Access-Control-Allow-Credentials` header appears on any response — the API is unauthenticated and wildcard origin is incompatible with credentials
+  4. The `RequestBodyLimitLayer` (body cap), the `OnceCell`-gated 503-until-ready schema gate, and the `bind_address` loopback default all behave identically to Phase 5 after adding the `CorsLayer`
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -192,3 +209,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
+| 6. CORS Support | 0/? | Not started | - |

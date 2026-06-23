@@ -126,9 +126,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 
 - v1.0 requirements: 25 total — mapped to Phases 1–5, all complete
-- v1.1 requirements: 4 total (CORS-01..04) — to be mapped by roadmap
-- Unmapped: 0 (v1.0); v1.1 mapping filled during roadmap creation
+- v1.1 requirements: 4 total (CORS-01..04) — mapped to Phase 6 (roadmap created 2026-06-23)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-10 (v1.0); 2026-06-23 (v1.1 CORS)*
-*Last updated: 2026-06-23 — milestone v1.1 requirements added*
+*Last updated: 2026-06-23 — v1.1 CORS requirements mapped to Phase 6*
