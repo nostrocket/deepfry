@@ -40,7 +40,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Pan, zoom, and hover hold 60fps on a synthetic ~5M-node / ~30M-edge power-law graph, with hex pubkeys remapped to dense uint32 indices in structure-of-arrays typed buffers (no per-node heap objects)
   4. A single fit-to-screen / reset action returns the view to the whole map, and the app loads target-scale data without exhausting browser memory
   5. The data source sits behind a swappable transport interface, and the phase ends with a recorded feasibility verdict on browser-direct JSON load time (pass, or trigger the deferred Go bridge PERF-01)
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 01-01-PLAN.md — Walking Skeleton: scaffold Vite+TS, GraphTransport interface + SoA types, small synthetic render + pan/zoom, vitest CPU-pipeline scaffold
+- [ ] 01-02-PLAN.md — GPU ceiling spike: 5M/30M BA generator, auto-freeze, Run/Pause + Fit + hover, recorded 60fps verdict
+- [ ] 01-03-PLAN.md — JSON wire + verdict: DgraphTransport after-cursor paging, chunked parse + remap, staged loader + verdict instrument, recorded feasibility verdict
 **UI hint**: yes
 
 ### Phase 2: Terrain Overlays (Degree + Community)
@@ -77,6 +81,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Interactive Graph On Screen | 0/TBD | Not started | - |
+| 1. Interactive Graph On Screen | 0/3 | Not started | - |
 | 2. Terrain Overlays | 0/TBD | Not started | - |
 | 3. Explore & Slice | 0/TBD | Not started | - |
