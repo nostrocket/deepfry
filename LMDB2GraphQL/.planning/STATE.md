@@ -2,9 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: CORS Support
+current_phase: 6
+current_phase_name: CORS Support
 status: roadmap_ready
-last_updated: "2026-06-23"
+stopped_at: v1.1 roadmap created (Phase 6 defined, CORS-01..04 mapped)
+last_updated: "2026-06-23T14:01:02.112Z"
 last_activity: 2026-06-23
+last_activity_desc: v1.1 roadmap created; Phase 6 mapped (CORS-01..04)
 progress:
   total_phases: 1
   completed_phases: 0

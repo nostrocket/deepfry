@@ -314,16 +314,16 @@ tower-http = { version = "0.6", features = ["limit", "cors"] }
 
 **Most-impactful note:** CORS-04's layer-ordering requirement (CORS outermost) is the single decision a planner must lock. It is CITED from axum/tower-http semantics, not assumed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should GraphiQL (`GET /graphql`) need CORS at all?**
    - What we know: GraphiQL is served same-origin (the browser loads the HTML from this server, then issues same-origin fetches). Cross-origin browser clients are separate SPAs.
    - What's unclear: nothing blocking — `allow_methods` includes GET so GraphiQL fetches from a *different* origin also work. CORS-01 explicitly mentions `GET /graphql` for GraphiQL.
-   - Recommendation: include GET in `allow_methods` (already in the recommended config). No further action.
+   - **RESOLVED:** include GET in `allow_methods` (already in the recommended config). No further action.
 
 2. **Explicit `[CONTENT_TYPE]` vs `permissive()`?**
    - What we know: both satisfy CORS-01/02/03. Explicit is more auditable; `permissive()` is one line.
-   - Recommendation: explicit builder (recommended above). This is a "Claude's discretion"-style call since no CONTEXT.md exists — planner may surface it as a one-line decision but the requirements are met either way. Default to explicit.
+   - **RESOLVED:** use the explicit `[CONTENT_TYPE]` builder (recommended above; adopted by the plan in Task 1). This was a "Claude's discretion"-style call since no CONTEXT.md exists; the requirements are met either way and explicit was chosen for auditability.
 
 ## Environment Availability
 
