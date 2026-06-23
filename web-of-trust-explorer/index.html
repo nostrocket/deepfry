@@ -26,6 +26,10 @@
   </head>
   <body>
     <div id="graph"></div>
+    <!-- Thin control shell (Pattern 2): Run/Pause + Fit live here; the hover
+         tooltip is appended to #controls by src/ui/controls.ts. The shell never
+         re-renders the canvas. -->
+    <div id="controls"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
