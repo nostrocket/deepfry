@@ -18,6 +18,7 @@ binary-streaming bridge (PERF-01, v2) must be pulled forward.
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
@@ -30,47 +31,65 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Interactive Graph On Screen (Data Spine + GPU Render)
+
 **Goal**: A developer opens the app, the whole follow-graph bulk-loads from Dgraph into memory with a visible progress state, settles into spatial structure via live GPU force layout, and can be panned/zoomed/hovered as one global map at 60fps — proven against synthetic ~5M-node / ~30M-edge power-law data, not just the tiny dev DB.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: DATA-01, DATA-03, REND-01, REND-02, REND-03, REND-04
 **Success Criteria** (what must be TRUE):
+
   1. Opening the app bulk-loads the entire graph once from Dgraph with a visible loading/progress indicator, querying only `follows` (followers/in-degree derived client-side) via `after`-cursor paging
   2. The whole graph renders as a single global GPU node-link map and settles via a live force-directed layout the user can run, pause, and freeze
   3. Pan, zoom, and hover hold 60fps on a synthetic ~5M-node / ~30M-edge power-law graph, with hex pubkeys remapped to dense uint32 indices in structure-of-arrays typed buffers (no per-node heap objects)
   4. A single fit-to-screen / reset action returns the view to the whole map, and the app loads target-scale data without exhausting browser memory
   5. The data source sits behind a swappable transport interface, and the phase ends with a recorded feasibility verdict on browser-direct JSON load time (pass, or trigger the deferred Go bridge PERF-01)
+
 **Plans**: 3 plans
 Plans:
+**Wave 1**
+
 - [ ] 01-01-PLAN.md — Walking Skeleton: scaffold Vite+TS, GraphTransport interface + SoA types, small synthetic render + pan/zoom, vitest CPU-pipeline scaffold
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 01-02-PLAN.md — GPU ceiling spike: 5M/30M BA generator, auto-freeze, Run/Pause + Fit + hover, recorded 60fps verdict
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 01-03-PLAN.md — JSON wire + verdict: DgraphTransport after-cursor paging, chunked parse + remap, staged loader + verdict instrument, recorded feasibility verdict
+
 **UI hint**: yes
 
 ### Phase 2: Terrain Overlays (Degree + Community)
+
 **Goal**: On the working render, a developer can see where the hubs and regions are — nodes sized and colored by degree (in-degree/followers distinct from out-degree/follows) and colored by detected community — all computed once off the main thread and applied without re-running layout.
 **Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: OVER-01, OVER-02
 **Success Criteria** (what must be TRUE):
+
   1. Nodes are sized and colored by degree so hubs and influencers visibly stand out, with in-degree (followers) and out-degree (follows) tracked and encodable distinctly
   2. Nodes are colored by detected community (Louvain) so the graph's regions/clusters are visually distinct
   3. Degree and community are computed one-shot in a Web Worker so the analytics pass never blocks or stalls the 60fps render loop
   4. Switching or recomputing an overlay updates only style buffers (color/size typed arrays) and never re-runs the force layout or mutates topology
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 3: Explore & Slice (Search, Detail, Time Filter, Refresh)
+
 **Goal**: A developer can interrogate the map — find a specific pubkey and fly to it, see its neighborhood in context, read its graph-local details, slice the graph by activity/freshness over time, and pull a fresh copy from Dgraph — all without ever breaking the laid-out terrain or the 60fps interaction.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: EXPL-01, EXPL-02, EXPL-03, FILT-01, DATA-02
 **Success Criteria** (what must be TRUE):
+
   1. A developer searches a pubkey by hex or npub (NIP-19 decoded to the 32-byte hex `@id`) and the view flies to and highlights that node
   2. Selecting a node highlights its 1-hop neighborhood (follows and followers) and dims the rest of the graph
   3. Hovering or clicking a node shows its details — npub-formatted pubkey, in/out degree, community, and activity timestamps
   4. A time-range control filters by `kind3CreatedAt` and `last_db_update` applied as hide/dim (via alpha/visibility buffers), never re-running the layout
   5. An explicit Refresh re-pulls the current graph from Dgraph and recomputes degree/community, rebuilding the index space cleanly without leaking old buffers
+
 **Plans**: TBD
 **UI hint**: yes
 
