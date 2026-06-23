@@ -37,6 +37,37 @@ export interface GraphBuffers {
   edgeCount: number;
   /** In-degree (follower count) per node index, derived in one O(E) pass over `links`. length = nodeCount. */
   inDegree?: Uint32Array;
+  /**
+   * Out-degree (follows count) per node index. length = nodeCount.
+   *
+   * Provenance: the Go bridge computes this server-side in one O(E) pass and
+   * ships it in the binary frame (D-04). Optional/additive so SyntheticTransport
+   * and DgraphTransport — which do not provide it — keep compiling.
+   */
+  outDegree?: Uint32Array;
+  /**
+   * Louvain community id per node index, for cluster coloring (OVER-02).
+   * length = nodeCount.
+   *
+   * Provenance: computed server-side by the bridge's array Louvain pass and
+   * shipped in the frame (D-04). Optional/additive — other transports omit it.
+   */
+  community?: Uint32Array;
+  /**
+   * Per-node `created_at` of the kind-3 follow list, unix seconds as i32
+   * (Assumption A3; fits to 2038 for a dev tool). length = nodeCount.
+   *
+   * Provenance: bridge-prepared from Dgraph and shipped in the frame (D-04).
+   * Optional/additive — other transports omit it.
+   */
+  kind3CreatedAt?: Int32Array;
+  /**
+   * Per-node `last_db_update` timestamp, unix seconds as i32. length = nodeCount.
+   *
+   * Provenance: bridge-prepared from Dgraph and shipped in the frame (D-04).
+   * Optional/additive — other transports omit it.
+   */
+  lastDbUpdate?: Int32Array;
   /** Optional uint32-index → hex-pubkey map for the hover tooltip (D-14). Omitted for synthetic data. */
   hexByIndex?: string[];
 }

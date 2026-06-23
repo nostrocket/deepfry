@@ -6,9 +6,16 @@ export type { GraphBuffers } from '../types';
  * Staged load progress for the loader UI (D-09). `edgesSoFar` ticks the live
  * counter; there is deliberately no percentage (cursor paging has no honest
  * upfront total).
+ *
+ * Stages:
+ *  - `'fetch'`  — request issued, waiting on / receiving the response start.
+ *  - `'parse'`  — legacy DgraphTransport JSON-wire parse stage (kept for that path).
+ *  - `'receive'`— GoBridgeTransport binary bytes flowing in over the stream
+ *                 (no parse; the load-bearing PERF-01 win, D-08).
+ *  - `'layout'` — buffers built, handed to cosmos.gl for the force layout.
  */
 export interface LoadProgress {
-  stage: 'fetch' | 'parse' | 'layout';
+  stage: 'fetch' | 'parse' | 'receive' | 'layout';
   edgesSoFar: number;
 }
 

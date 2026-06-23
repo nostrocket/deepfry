@@ -14,6 +14,8 @@ import type { LoadProgress } from '../transport/GraphTransport';
 const STAGE_LABELS: Record<LoadProgress['stage'], string> = {
   fetch: 'Fetching from Dgraph…',
   parse: 'Parsing edges…',
+  // 'receive' is the GoBridgeTransport binary-stream stage (bytes flowing, no parse).
+  receive: 'Receiving binary frame…',
   layout: 'Building layout…',
 };
 
