@@ -64,14 +64,28 @@ Plans:
 
 ### Phase 01.1: Go Binary-Streaming Bridge (PERF-01) (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
+**Goal:** A standalone Go bridge reads the whole follow-graph from Dgraph over dgo gRPC (read-only), does the full server-side data-prep pass (hex→uint32 dense remap, in/out-degree, Louvain community IDs, activity timestamps), and streams a little-endian binary frame to the browser over HTTP chunked transfer — decoded straight into SoA typed buffers with ZERO `JSON.parse`. It drops in as `GoBridgeTransport` behind the unchanged `GraphTransport` seam, resolving the 01-03 JSON-wire FAIL while cosmos.gl + the SoA render/layout pipeline stay untouched.
+**Requirements**: PERF-01 (primary); DATA-01, DATA-03 (re-validated at scale here)
 **Depends on:** Phase 1
-**Plans:** 0 plans
+**Plans:** 3 plans
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 01.1 to break down)
+**Wave 1**
+
+- [ ] 01.1-01-PLAN.md — Go bridge: module + Makefile, read-only after:-cursor read-all + hex→uint32 remap, in/out-degree, array Louvain, little-endian binary frame encoder + chunked HTTP /graph.bin server
+
+**Wave 2** *(blocked on Wave 1 — decodes the wire format Plan 01 produces)*
+
+- [ ] 01.1-02-PLAN.md — Client GoBridgeTransport: fetch + ReadableStream binary decode (zero JSON.parse), additive GraphBuffers extension (out-degree/community/timestamps), Vite same-origin proxy, main.ts selection
+
+**Wave 3** *(blocked on Wave 2 — the transport must load for the verdict)*
+
+- [ ] 01.1-03-PLAN.md — Loader/verdict binary-path adaptation (Fetching → Receiving bytes → Building layout), recorded PERF-01 PASS re-verdict on the real dev DB, D-06 cross-phase ROADMAP/REQUIREMENTS propagation
+
+**Feasibility verdict (phase-closing):** recorded in Plan 03 against the real dev Dgraph — confirms PERF-01 PASS (usable, no swap, 60fps holds after load) vs the 01-03 JSON FAIL.
+
+**UI hint**: no (data/transport phase; loader/verdict instrument only)
 
 ### Phase 2: Terrain Overlays (Degree + Community)
 
@@ -114,5 +128,6 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Interactive Graph On Screen | 3/3 | Complete    | 2026-06-23 |
+| 01.1 Go Binary-Streaming Bridge | 0/3 | Not started | - |
 | 2. Terrain Overlays | 0/TBD | Not started | - |
 | 3. Explore & Slice | 0/TBD | Not started | - |
