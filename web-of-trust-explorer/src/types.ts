@@ -35,6 +35,8 @@ export interface GraphBuffers {
   nodeCount: number;
   /** Number of directed edges. */
   edgeCount: number;
+  /** In-degree (follower count) per node index, derived in one O(E) pass over `links`. length = nodeCount. */
+  inDegree?: Uint32Array;
   /** Optional uint32-index → hex-pubkey map for the hover tooltip (D-14). Omitted for synthetic data. */
   hexByIndex?: string[];
 }

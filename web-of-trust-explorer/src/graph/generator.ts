@@ -121,3 +121,31 @@ export function generateBA(nodeCount: number, m = 6, seed = 1): GeneratedGraph {
     edgeCount,
   };
 }
+
+/**
+ * In-degree (follower count) per node in ONE O(E) pass over the link buffer.
+ *
+ * cosmos.gl needs node-degree for sizing/coloring, and the WoT graph cares about
+ * followers (in-degree) as influence. We derive it directly from the edge buffer
+ * — a single loop incrementing `inDegree[tgt]` — rather than issuing a separate
+ * `followers` query or building per-node objects (D-08; 01-RESEARCH.md
+ * anti-patterns). At 5M nodes this is one Uint32Array (~20 MB) and one linear
+ * scan of the ~60M-entry link buffer.
+ *
+ * @param links     interleaved [src0,tgt0,src1,tgt1,…] edge buffer (length edgeCount*2)
+ * @param nodeCount number of nodes (length of the returned array)
+ * @param edgeCount number of directed edges
+ * @returns Uint32Array of length nodeCount; sum of all entries === edgeCount
+ */
+export function computeInDegree(
+  links: Uint32Array,
+  nodeCount: number,
+  edgeCount: number,
+): Uint32Array {
+  const inDegree = new Uint32Array(nodeCount);
+  for (let e = 0; e < edgeCount; e++) {
+    const tgt = links[e * 2 + 1]!;
+    inDegree[tgt]!++;
+  }
+  return inDegree;
+}
