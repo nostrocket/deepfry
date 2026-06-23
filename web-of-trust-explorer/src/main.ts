@@ -1,5 +1,6 @@
 import { SyntheticTransport } from './transport/SyntheticTransport';
 import { DgraphTransport } from './transport/DgraphTransport';
+import { GoBridgeTransport } from './transport/GoBridgeTransport';
 import type { GraphTransport, LoadProgress } from './transport/GraphTransport';
 import { renderGraph } from './graph/cosmos';
 import { createAutoFreezeSampler } from './graph/autofreeze';
@@ -18,6 +19,11 @@ import { measurePeakHeap, renderVerdict, type VerdictMetrics } from './ui/verdic
  *     from the dev Dgraph via read-only DQL after-cursor paging (JSON-wire
  *     feasibility verdict, Plan 03; D-08). Mounts the staged loader (D-09) and,
  *     on completion, renders the verdict readout (D-10).
+ *   - `?transport=bridge` → GoBridgeTransport: the real graph decoded from the Go
+ *     bridge's binary frame at /graph.bin (same-origin via the Vite proxy), with
+ *     zero JSON.parse — the PERF-01 drop-in swap (D-08). This task wires only
+ *     selection + render via the existing path; the bridge-specific loader stages
+ *     and PASS verdict are Plan 03.
  *
  * Either way main.ts reaches data ONLY through GraphTransport — it never fetches
  * or generates directly — so JSON-direct → Go-binary-stream is a one-file swap
@@ -28,6 +34,13 @@ function selectTransport(): { transport: GraphTransport; isDgraph: boolean } {
   const which = new URLSearchParams(location.search).get('transport');
   if (which === 'dgraph') {
     return { transport: new DgraphTransport(), isDgraph: true };
+  }
+  if (which === 'bridge') {
+    // The bridge path renders via the existing render pipeline. The full verdict
+    // wiring (loader stages + re-verdict over the binary path) is Plan 03, so we
+    // do NOT flag isDgraph here — that would cast the transport to DgraphTransport
+    // for the lastEncodingNs verdict readout, which the bridge does not provide.
+    return { transport: new GoBridgeTransport(), isDgraph: false };
   }
   return { transport: new SyntheticTransport(), isDgraph: false };
 }
