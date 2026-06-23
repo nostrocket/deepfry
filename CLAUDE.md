@@ -8,6 +8,16 @@ DeepFry is a modular backend stack for Humble Horse that surrounds a **stock (un
 
 **Data separation rule:** canonical events live only in StrFry's LMDB. Dgraph stores ID-only graphs (pubkey relationships). No event payloads outside StrFry.
 
+## Project Boundary Rule
+
+This repo is a monorepo of **independent projects**, each a self-contained subdirectory with its own module, build, and (where present) `.planning/` planning state — e.g. `web-of-trust`, `web-of-trust-explorer`, `event-forwarder`, `whitelist-plugin`, `quarantine-rescuer`, `LMDB2GraphQL`, `spam`, `spam-explorer`.
+
+**Do not cross between projects in the same request without explicit permission from the user.** When the user is working in one project, scope ALL work — edits, planning, progress reports, status, routing, commands — to that project only.
+
+- Determine the active project from the working directory the user invoked you in (and what they explicitly name). Treat each project's `.planning/` as authoritative ONLY for that project.
+- If a task appears to require touching or reporting on another project, STOP and ask for explicit permission first, naming the other project and why.
+- Recent git activity in a sibling project is NOT permission to act on or report it — confirm which project the user means.
+
 ## Architecture
 
 ```
