@@ -73,17 +73,17 @@ Plans:
 
 **Wave 1**
 
-- [ ] 01.1-01-PLAN.md — Go bridge: module + Makefile, read-only after:-cursor read-all + hex→uint32 remap, in/out-degree, array Louvain, little-endian binary frame encoder + chunked HTTP /graph.bin server
+- [x] 01.1-01-PLAN.md — Go bridge: module + Makefile, read-only after:-cursor read-all + hex→uint32 remap, in/out-degree, array Louvain, little-endian binary frame encoder + chunked HTTP /graph.bin server
 
 **Wave 2** *(blocked on Wave 1 — decodes the wire format Plan 01 produces)*
 
-- [ ] 01.1-02-PLAN.md — Client GoBridgeTransport: fetch + ReadableStream binary decode (zero JSON.parse), additive GraphBuffers extension (out-degree/community/timestamps), Vite same-origin proxy, main.ts selection
+- [x] 01.1-02-PLAN.md — Client GoBridgeTransport: fetch + ReadableStream binary decode (zero JSON.parse), additive GraphBuffers extension (out-degree/community/timestamps), Vite same-origin proxy, main.ts selection
 
 **Wave 3** *(blocked on Wave 2 — the transport must load for the verdict)*
 
-- [ ] 01.1-03-PLAN.md — Loader/verdict binary-path adaptation (Fetching → Receiving bytes → Building layout), recorded PERF-01 PASS re-verdict on the real dev DB, D-06 cross-phase ROADMAP/REQUIREMENTS propagation
+- [x] 01.1-03-PLAN.md — Loader/verdict binary-path adaptation (Fetching → Receiving bytes (MB/s) → Building layout, no JSON-parse stage), bridge verdict instrument (server/stream/decode ms + counts + peak heap), D-06 cross-phase ROADMAP/REQUIREMENTS propagation. **Live PERF-01 re-verdict run is PENDING-HUMAN-VERIFY** (see verdict line).
 
-**Feasibility verdict (phase-closing):** recorded in Plan 03 against the real dev Dgraph — confirms PERF-01 PASS (usable, no swap, 60fps holds after load) vs the 01-03 JSON FAIL.
+**Feasibility verdict (phase-closing):** **PENDING-HUMAN-VERIFY.** All bridge code (Plan 01 Go bridge, Plan 02 zero-JSON-parse decode, Plan 03 binary-path loader + bridge verdict instrument) is built and green; the Go bridge binary compiles and Dgraph gRPC :9080 is reachable. The live recorded verdict (server compute ms / stream ms / client decode ms / node+edge counts / peak JS heap, plus the qualitative PASS — usable / no swap / 60fps holds after load — vs the 01-03 JSON FAIL) requires an operator to (1) free TCP :8081 (the DeepFry whitelist-server container currently publishes it; the bridge defaults there) or run the bridge on an alternate port + update the Vite proxy, (2) `cd bridge && make run`, (3) open the app at `?transport=bridge` in Chrome on the D-07 reference machine, and (4) observe + record the bridge verdict panel. The verdict instrument renders PENDING-HUMAN-VERIFY until those numbers are recorded.
 
 **UI hint**: no (data/transport phase; loader/verdict instrument only)
 
@@ -93,11 +93,12 @@ Plans:
 **Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: OVER-01, OVER-02
+**Note (D-06):** degree and community are now computed **server-side by the Go bridge** (Phase 01.1) and arrive in `GraphBuffers` as ready arrays (`inDegree`, `outDegree`, `community`). Phase 2 is therefore **pure style-buffer encoding over bridge-provided arrays** — the client Louvain / in-degree Web Worker path designed in Phase 1/2 is **superseded**.
 **Success Criteria** (what must be TRUE):
 
-  1. Nodes are sized and colored by degree so hubs and influencers visibly stand out, with in-degree (followers) and out-degree (follows) tracked and encodable distinctly
-  2. Nodes are colored by detected community (Louvain) so the graph's regions/clusters are visually distinct
-  3. Degree and community are computed one-shot in a Web Worker so the analytics pass never blocks or stalls the 60fps render loop
+  1. Nodes are sized and colored by degree so hubs and influencers visibly stand out, with in-degree (followers) and out-degree (follows) — both **bridge-provided** — encodable distinctly
+  2. Nodes are colored by detected community (Louvain, **computed server-side by the bridge**) so the graph's regions/clusters are visually distinct
+  3. Encoding the bridge-provided degree/community arrays into style buffers is a one-shot pass that never blocks or stalls the 60fps render loop (no client-side analytics Worker required — D-06)
   4. Switching or recomputing an overlay updates only style buffers (color/size typed arrays) and never re-runs the force layout or mutates topology
 
 **Plans**: TBD
@@ -114,8 +115,8 @@ Plans:
   1. A developer searches a pubkey by hex or npub (NIP-19 decoded to the 32-byte hex `@id`) and the view flies to and highlights that node
   2. Selecting a node highlights its 1-hop neighborhood (follows and followers) and dims the rest of the graph
   3. Hovering or clicking a node shows its details — npub-formatted pubkey, in/out degree, community, and activity timestamps
-  4. A time-range control filters by `kind3CreatedAt` and `last_db_update` applied as hide/dim (via alpha/visibility buffers), never re-running the layout
-  5. An explicit Refresh re-pulls the current graph from Dgraph and recomputes degree/community, rebuilding the index space cleanly without leaking old buffers
+  4. A time-range control filters by `kind3CreatedAt` and `last_db_update` — **bridge-provided per-node timestamps** in `GraphBuffers` (D-06) — applied as hide/dim (via alpha/visibility buffers), never re-running the layout
+  5. An explicit Refresh re-pulls the current graph **from the Go bridge** (which re-reads Dgraph and recomputes degree/community/timestamps server-side), rebuilding the index space cleanly without leaking old buffers
 
 **Plans**: TBD
 **UI hint**: yes
@@ -128,6 +129,6 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Interactive Graph On Screen | 3/3 | Complete    | 2026-06-23 |
-| 01.1 Go Binary-Streaming Bridge | 0/3 | Not started | - |
+| 01.1 Go Binary-Streaming Bridge | 3/3 | Code complete — live PERF-01 verdict PENDING-HUMAN-VERIFY | - |
 | 2. Terrain Overlays | 0/TBD | Not started | - |
 | 3. Explore & Slice | 0/TBD | Not started | - |

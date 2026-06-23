@@ -9,9 +9,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Data
 
-- [x] **DATA-01**: User opens the app and the entire follow-graph bulk-loads from Dgraph into the browser once, with a visible loading/progress state _(complete in 01-03: DgraphTransport read-only after-cursor DQL paging over `has(follows)`+`follows{uid}` via POST /query `application/dql`, chunked Worker parse + hex→uint32 remap, staged loader (Fetching→Parsing→Building) with live edge count; the bulk-load capability exists and ran against the real dev Dgraph. NOTE: at real scale browser-direct JSON load is too heavy to be usable — the load path is correct, the wire transport is the limiter → addressed by PERF-01)_
+- [x] **DATA-01**: User opens the app and the entire follow-graph bulk-loads from Dgraph into the browser once, with a visible loading/progress state _(complete in 01-03: DgraphTransport read-only after-cursor DQL paging over `has(follows)`+`follows{uid}` via POST /query `application/dql`, chunked Worker parse + hex→uint32 remap, staged loader (Fetching→Parsing→Building) with live edge count; the bulk-load capability exists and ran against the real dev Dgraph. NOTE: at real scale browser-direct JSON load is too heavy to be usable — the load path is correct, the wire transport is the limiter → **resolved by PERF-01 in Phase 01.1**: `GoBridgeTransport` bulk-loads the whole graph from the Go bridge's binary frame with a binary-path staged loader (Fetching → Receiving bytes (MB/s) → Building layout, no JSON-parse stage) and zero `JSON.parse`. Re-validated in code; the at-scale live confirmation rides the Phase 01.1 PERF-01 verdict, currently PENDING-HUMAN-VERIFY)_
 - [ ] **DATA-02**: User can refresh to re-pull the current graph state from Dgraph on demand (explicit, not automatic)
-- [x] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory _(foundation laid in 01-01: SoA typed buffers + hex→uint32 dense remap + Float32 2^24 precision guard; 01-02: GPU half PASSED — 5M/30M renders without exhausting memory. **01-03 verdict: browser-direct JSON wire is NOT viable at real scale.** Chunked-parse + dense remap + drop-page-string memory discipline + Transferable were all implemented, but the single-shot memory-doubling JSON.parse of the real dev DB (365k follow-nodes / 1.5M profiles / ~tens of millions of edges) drove the machine into swap and was unusable. This is a recorded FAIL-by-design-trigger of the JSON wire, NOT a missing implementation → the at-scale memory/load requirement is **carried by PERF-01** (Go binary-streaming bridge, pulled forward from v2; drop-in GoBridgeTransport behind GraphTransport, zero browser JSON.parse))_
+- [x] **DATA-03**: The graph loads and renders at target scale (hundreds of thousands to millions of nodes, tens of millions of edges) without exhausting browser memory _(foundation laid in 01-01: SoA typed buffers + hex→uint32 dense remap + Float32 2^24 precision guard; 01-02: GPU half PASSED — 5M/30M renders without exhausting memory. **01-03 verdict: browser-direct JSON wire is NOT viable at real scale.** Chunked-parse + dense remap + drop-page-string memory discipline + Transferable were all implemented, but the single-shot memory-doubling JSON.parse of the real dev DB (365k follow-nodes / 1.5M profiles / ~tens of millions of edges) drove the machine into swap and was unusable. This was a recorded FAIL-by-design-trigger of the JSON wire, NOT a missing implementation → the at-scale memory/load requirement was **carried by PERF-01** and is now **delivered in Phase 01.1**: the Go bridge does the hex→uint32 remap + degree + community + timestamps server-side and streams a binary frame the browser decodes into SoA typed buffers with zero `JSON.parse` — removing the single-shot memory-doubling parse that drove the M3 Pro into swap. Re-validated in code (bridge builds, transport decodes, zero parse, MAX_NODE_INDEX 2^24 guard retained); the live no-swap confirmation rides the Phase 01.1 PERF-01 verdict, PENDING-HUMAN-VERIFY)_
 
 ### Render
 
@@ -22,8 +22,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Overlay
 
-- [ ] **OVER-01**: User sees nodes sized and colored by degree (distinguishing in-degree/followers from out-degree/follows) so hubs and influencers stand out
-- [ ] **OVER-02**: User sees nodes colored by detected community so the graph's regions/clusters are visually distinct
+- [ ] **OVER-01**: User sees nodes sized and colored by degree (distinguishing in-degree/followers from out-degree/follows) so hubs and influencers stand out _(D-06: in/out-degree are now **bridge-provided** server-side — `GraphBuffers.inDegree`/`outDegree` — so Phase 2 is pure style-buffer encoding over ready arrays, NOT a client-side degree Worker)_
+- [ ] **OVER-02**: User sees nodes colored by detected community so the graph's regions/clusters are visually distinct _(D-06: community IDs are now **computed server-side by the bridge** (array Louvain) and arrive in `GraphBuffers.community` — Phase 2 encodes them into a color buffer; the client-side Louvain Worker path is superseded)_
 
 ### Explore
 
@@ -33,7 +33,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Filter
 
-- [ ] **FILT-01**: User can filter/slice the graph by `kind3CreatedAt` and `last_db_update` via a time-range control, with filtering applied as hide/dim (never re-layout)
+- [ ] **FILT-01**: User can filter/slice the graph by `kind3CreatedAt` and `last_db_update` via a time-range control, with filtering applied as hide/dim (never re-layout) _(D-06: both per-node timestamps are now **bridge-provided** — `GraphBuffers.kind3CreatedAt`/`lastDbUpdate` — so the Phase 3 filter reads ready arrays rather than re-querying Dgraph)_
 
 ## v2 Requirements
 
@@ -55,7 +55,7 @@ Deferred to future release. Tracked but not in current roadmap.
 
 ### Performance
 
-- **PERF-01**: Thin Go binary-streaming bridge between browser and Dgraph (escape hatch if v1 JSON load time is unacceptable) — **TRIGGERED & PULLED FORWARD by the 01-03 JSON-wire verdict (FAIL at real scale); now the next-phase priority, drop-in GoBridgeTransport behind GraphTransport (dgo gRPC → server-side hex→uint32 remap → streamed binary edge buffer → zero browser JSON.parse)**
+- **PERF-01**: Thin Go binary-streaming bridge between browser and Dgraph — **PULLED FORWARD to Phase 01.1 and BUILT.** Resolves the 01-03 JSON-wire FAIL: a standalone Go bridge reads the whole follow-graph read-only over dgo/v210 gRPC, does the full server-side data-prep pass (hex→uint32 dense remap, in/out-degree, array Louvain community, activity timestamps), and streams a little-endian binary frame; the browser `GoBridgeTransport` decodes it into SoA typed buffers with **zero `JSON.parse`** behind the unchanged `GraphTransport` seam. Bridge + transport + binary-path loader/verdict are all built and green and the bridge binary compiles. **The live recorded PERF-01 PASS verdict (server/stream/decode ms + counts + peak heap; usable / no swap / 60fps holds vs the JSON FAIL) is PENDING-HUMAN-VERIFY** — it needs an operator to free TCP :8081 (the whitelist-server container holds it; the bridge defaults there), `make run` the bridge, load `?transport=bridge` in Chrome, and record the bridge verdict panel.
 - **PERF-02**: Density / heatmap overlay for dense-vs-sparse terrain when the node-link hairball is unreadable
 
 ## Out of Scope
@@ -80,19 +80,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 1 | Complete (01-03: DgraphTransport read-only after-cursor DQL paging + chunked parse + remap + staged loader; bulk-load capability built and ran. Wire too heavy at real scale → PERF-01) |
+| DATA-01 | Phase 1 → 01.1 | Complete (01-03 built the bulk-load; Phase 01.1 re-validated it at scale via GoBridgeTransport binary load + binary-path loader. Live confirmation rides the PERF-01 verdict, PENDING-HUMAN-VERIFY) |
 | DATA-02 | Phase 3 | Pending |
-| DATA-03 | Phase 1 | Carried by PERF-01 (01-01: SoA buffers + remap + precision guard; 01-02: GPU half PASS — 5M/30M renders without exhausting memory; 01-03 verdict: browser-direct JSON wire NOT viable at real scale — FAIL-by-design-trigger, memory discipline implemented but transport is the limiter → Go binary-streaming bridge PERF-01 pulled forward) |
+| DATA-03 | Phase 1 → 01.1 | Re-validated in Phase 01.1 (Go bridge server-side remap+prep → binary frame → zero-JSON-parse SoA decode removes the memory-doubling parse; 2^24 precision guard retained. Live no-swap confirmation rides the PERF-01 verdict, PENDING-HUMAN-VERIFY) |
 | REND-01 | Phase 1 | Partial (01-01: small synthetic GPU render; 01-02: single global GPU map rendered at 5M-node scale) |
 | REND-02 | Phase 1 | Complete (01-02: live GPU layout auto-starts, Run/Pause, auto-freeze on settle) |
 | REND-03 | Phase 1 | Complete (01-02: pan/zoom/hover ~60fps at 5M/30M — recorded verdict PASS) |
 | REND-04 | Phase 1 | Complete (01-02: Fit/Reset returns to whole map) |
-| OVER-01 | Phase 2 | Pending |
-| OVER-02 | Phase 2 | Pending |
+| OVER-01 | Phase 2 | Pending — input (in/out-degree) now bridge-provided server-side (D-06); Phase 2 = style-buffer encoding |
+| OVER-02 | Phase 2 | Pending — input (community) now bridge-provided server-side via array Louvain (D-06); Phase 2 = color-buffer encoding |
 | EXPL-01 | Phase 3 | Pending |
 | EXPL-02 | Phase 3 | Pending |
 | EXPL-03 | Phase 3 | Pending |
-| FILT-01 | Phase 3 | Pending |
+| FILT-01 | Phase 3 | Pending — inputs (kind3CreatedAt, last_db_update) now bridge-provided server-side (D-06); filter reads ready arrays |
+| PERF-01 | Phase 01.1 | Built & green; live PASS verdict PENDING-HUMAN-VERIFY (Go bridge → binary frame → zero-JSON-parse GoBridgeTransport; resolves the 01-03 JSON FAIL) |
 
 **Coverage:**
 
@@ -102,4 +103,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-22*
-*Last updated: 2026-06-23 — Plan 01-03 (JSON-wire spike): DATA-01 Complete (DgraphTransport bulk-load built and ran); DATA-03 carried by PERF-01 — JSON-wire verdict FAIL at real scale (365k follow-nodes / 1.5M profiles), Go binary-streaming bridge PERF-01 pulled forward from v2. Phase 1 feasibility checkpoint resolved: GPU half PASS, JSON-wire half FAIL → PERF-01.*
+*Last updated: 2026-06-23 — Phase 01.1 (Go binary-streaming bridge): PERF-01 built & green (Go bridge server-side remap+degree+community+timestamps → little-endian binary frame → zero-`JSON.parse` GoBridgeTransport → binary-path loader/verdict), resolving the 01-03 JSON-wire FAIL; live PASS verdict PENDING-HUMAN-VERIFY (operator must free TCP :8081, `make run` the bridge, load `?transport=bridge` in Chrome, record the bridge verdict). D-06 propagated: degree/community/timestamps now arrive server-side, so Phase 2 (OVER-01/OVER-02) is style-buffer encoding over bridge arrays and Phase 3 (FILT-01) reads bridge timestamps. DATA-01/DATA-03 re-validated at scale in code via the bridge.*
