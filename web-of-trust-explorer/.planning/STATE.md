@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01
-current_phase_name: interactive-graph-on-screen-data-spine-gpu-render
-status: executing
-stopped_at: Completed 01-03-PLAN.md (JSON-wire spike — verdict FAIL → trigger PERF-01, pulled forward)
-last_updated: "2026-06-23T06:00:00.000Z"
+current_phase: 2
+current_phase_name: Degree + Community
+status: completed
+stopped_at: Completed 01-03-PLAN.md (JSON-wire spike — verdict FAIL → PERF-01 pulled forward; Phase 1 all 3 plans complete, feasibility checkpoint resolved)
+last_updated: "2026-06-23T06:00:48.181Z"
 last_activity: 2026-06-23
-last_activity_desc: Plan 01-03 complete (DgraphTransport read-only after-cursor paging + verdict instrument; JSON-wire verdict FAIL → PERF-01 pulled forward; D-04 small-DB assumption falsified at 365k/1.5M)
+last_activity_desc: Phase 01 complete, transitioned to Phase 2
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 100
+  percent: 33
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-22)
 
 ## Current Position
 
-Phase: 01 (interactive-graph-on-screen-data-spine-gpu-render) — ALL 3 PLANS COMPLETE
-Plan: 3 of 3 (complete)
+Phase: 2 — Terrain Overlays (Degree + Community)
+Plan: Not started
 Status: Plan 01-03 complete (JSON-wire spike). Phase 1 feasibility checkpoint RESOLVED: GPU half PASS (01-02), JSON-wire half FAIL → trigger PERF-01 (Go binary-streaming bridge) pulled forward from v2 to next.
-Last activity: 2026-06-23 — Plan 01-03 complete (DgraphTransport read-only after-cursor paging + chunked parse + remap + staged loader + verdict instrument; verdict FAIL → PERF-01; D-04 falsified; vitest 33/33, tsc clean)
+Last activity: 2026-06-23 — Phase 01 complete, transitioned to Phase 2
 
 Progress: [██████████] 100%
 
@@ -39,7 +39,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 3
 - Average duration: - min
 - Total execution time: 0.0 hours
 
@@ -47,7 +47,7 @@ Progress: [██████████] 100%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 3 | - | - |
 
 **Recent Trend:**
 
