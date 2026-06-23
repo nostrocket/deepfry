@@ -43,7 +43,7 @@ Items acknowledged and deferred at v1.6 milestone close on 2026-06-20:
 Phase: Milestone v1.6 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-20 — Milestone v1.6 completed and archived
+Last activity: 2026-06-23 — Quick task 260623-op6: fixed incorrect "strfry host" terminology across docs
 
 ## Performance Metrics
 
@@ -125,6 +125,7 @@ None.
 | 260617-doc | Refresh README + STATE for resumability (config, clusterscan, metrics, optimization backlog) | 2026-06-17 | 9084927 | — |
 | 260620-srw | Raise count_sample_interval default 1→100 — amortize per-batch count queries (~58s→~0.6s), ~10x crawler throughput | 2026-06-20 | 52a3fe3 | [260620-srw-raise-count-sample-interval-from-1-to-10](./quick/260620-srw-raise-count-sample-interval-from-1-to-10/) |
 | 260620-t87 | Trim redundant per-batch crawler logging at interval=100 — frozen Count* durations + total-in-DB now logged only on sampled batches | 2026-06-20 | 2dbc561 | [260620-t87-clean-up-redundant-per-batch-crawler-log](./quick/260620-t87-clean-up-redundant-per-batch-crawler-log/) |
+| 260623-op6 | Fix incorrect "strfry host" terminology across web-of-trust docs — re-anchored on "live Dgraph + public relays" (22 occurrences, 13 files) | 2026-06-23 | a3c6b63 | [260623-op6-fix-incorrect-strfry-host-terminology-ac](./quick/260623-op6-fix-incorrect-strfry-host-terminology-ac/) |
 
 ## Session Continuity
 
