@@ -30,9 +30,9 @@ func sampleGraph() *dgraph.GraphData {
 // section at its byte offset, asserting 4-byte alignment for every u32 section.
 type decoded struct {
 	magic, version, nodeCount, edgeCount uint32
-	edges, inDeg, outDeg, community       []uint32
-	kind3, lastU                          []int32
-	pubkeys                               []byte
+	edges, inDeg, outDeg, community      []uint32
+	kind3, lastU                         []int32
+	pubkeys                              []byte
 }
 
 func decodeFrame(t *testing.T, buf []byte) decoded {
