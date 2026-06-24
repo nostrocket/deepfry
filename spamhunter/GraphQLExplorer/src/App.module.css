@@ -1,0 +1,73 @@
+/*
+ * App shell — hand-rolled CSS Module consuming src/styles/tokens.css only (no new
+ * tokens). The shell hosts the suspect-entry bar on every route; the routed view
+ * renders below it. Neutral chrome only — the entry-bar submit owns the sole accent.
+ */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shellHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-xl);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.entrySlot {
+  flex: 1 1 auto;
+  max-width: 880px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.routeOutlet {
+  flex: 1 1 auto;
+}
+
+/* ── Not-found block (neutral, muted) ─────────────────────────────────────── */
+.notFound {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-3xl) var(--space-xl);
+  text-align: center;
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+}
+
+.notFoundHeading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.notFoundButton {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.notFoundButton:hover {
+  border-color: var(--text-muted);
+}
+
+.notFoundButton:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}

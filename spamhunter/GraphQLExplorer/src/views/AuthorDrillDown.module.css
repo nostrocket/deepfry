@@ -1,0 +1,291 @@
+/*
+ * AuthorDrillDown — hand-rolled CSS Module consuming src/styles/tokens.css only
+ * (no new tokens). Mirrors the StatsDashboard module's structure + token usage.
+ *
+ * Color discipline: this view is entirely neutral chrome — Load more, rows, back, and
+ * copy are all neutral (--surface / --border / --text / --text-muted). The teal
+ * highlight token is reserved for the suspect-entry submit (UI-SPEC reservation #3) and
+ * never appears in this view. Semantic colors (recoverable amber / hard-fail red) are
+ * bound to state meaning and always paired with a dot (shape) so color is never alone.
+ */
+
+.view {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-xl);
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* ── Identity header (both forms) ─────────────────────────────────────────── */
+.identity {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.identityTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.idRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.idLabel {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  flex: none;
+  min-width: 40px;
+}
+
+.idValue {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  word-break: break-all;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+/* Neutral chrome buttons (back, copy, load more) — neutral surface + border only. */
+.backButton,
+.copyButton,
+.loadMore {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  flex: none;
+}
+
+.copyButton {
+  padding: 2px var(--space-sm);
+}
+
+.backButton:hover,
+.copyButton:hover,
+.loadMore:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.backButton:focus-visible,
+.copyButton:focus-visible,
+.loadMore:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+.loadMore:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* ── Timeline surface (indicator + list + load-more) ──────────────────────── */
+.timelineSurface {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.headerRow,
+.row {
+  display: grid;
+  grid-template-columns: 64px 280px 1fr;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  align-items: baseline;
+}
+
+.headerRow {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.row {
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: var(--surface);
+}
+
+.cellKind {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.cellTime {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+/* Content preview — sans prose, single-line, escaped + truncated with ellipsis. */
+.cellContent {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Header-row captions are labels — semibold muted. */
+.headerRow .cellKind,
+.headerRow .cellTime,
+.headerRow .cellContent {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* End-of-window caption — muted fact, never "all clean". */
+.endCaption {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* ── Zero-match empty state (NEUTRAL — not an error) ──────────────────────── */
+.emptyCaption {
+  padding: var(--space-md);
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.emptyCaptionHeading {
+  margin: 0 0 var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.emptyCaptionBody {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── State shells (error) + inline notes ──────────────────────────────────── */
+.stateShell {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-3xl);
+  text-align: center;
+  font-family: var(--font-sans);
+}
+
+.stateRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.stateHeading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.stateBody {
+  margin: 0;
+  max-width: 460px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+
+/* Semantic state colors (meaning-bound; never the teal highlight). */
+.recoverable {
+  color: var(--recoverable);
+}
+
+.hardFail {
+  color: var(--hard-fail);
+}
+
+.stateDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
