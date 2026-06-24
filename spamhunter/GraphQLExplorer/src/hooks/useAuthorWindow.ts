@@ -105,8 +105,20 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
 
       // MANDATORY throw-guard (WR-04): a rejected exchange promise must classify as
       // NETWORK, never kill the fetch silently.
+      //
+      // requestPolicy: 'network-only' (WR-03 / DRILL-05 honesty): the default
+      // document cacheExchange would replay a cached first page when an analyst
+      // re-drills into an author they visited earlier, silently serving a stale
+      // window against a corpus that is actively ingesting. The window-honesty
+      // contract requires the fetched set to reflect CURRENT corpus state, so the
+      // events window must always hit the network and re-derive its denominator.
+      // Scoped to this query only — the shared client default is left untouched.
       const result = await client
-        .query(EventsDocument, { filter: { authors: [hex] }, after: cursor, limit: PAGE_LIMIT })
+        .query(
+          EventsDocument,
+          { filter: { authors: [hex] }, after: cursor, limit: PAGE_LIMIT },
+          { requestPolicy: 'network-only' },
+        )
         .toPromise()
         .catch(() => 'THREW' as const)
 
