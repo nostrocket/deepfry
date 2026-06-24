@@ -29,7 +29,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each reachable account receives a level equal to its shortest follow-hop distance from the seed (seed = level 0, outward along `follows`)
   4. Each scored account's `valid_follower_count` counts only followers strictly shallower than it (`level(F) < level(T)`); same-level and deeper followers are excluded
   5. The output JSONL contains one `{pubkey, valid_follower_count}` object per line for every account scoring below `N`, with the seed and its first `k` shells excluded
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 01-01-PLAN.md — Scaffold the module + pure pipeline core (BFS leveling, valid-follower scoring, JSONL output) with offline tests
+- [ ] 01-02-PLAN.md — Read-only Dgraph wire tier (client, resolve, frontier) + main.go orchestration; live end-to-end smoke run
 
 ### Phase 2: Production-Scale Streaming
 **Goal**: Make the same pipeline run against the full production graph by reading it through paginated DQL queries, with deterministic, first-reached level assignment preserved at scale.
@@ -60,6 +62,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. End-to-End Scoring Slice | 0/TBD | Not started | - |
+| 1. End-to-End Scoring Slice | 0/2 | Not started | - |
 | 2. Production-Scale Streaming | 0/TBD | Not started | - |
 | 3. Operational Correctness | 0/TBD | Not started | - |
