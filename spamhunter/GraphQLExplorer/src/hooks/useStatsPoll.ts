@@ -94,8 +94,24 @@ export function useStatsPoll(intervalMs: number = POLL_INTERVAL_MS): UseStatsPol
       }
       setIsPaused(false)
 
-      const result = await client.query(StatsDocument, {}).toPromise()
+      // urql's toPromise() normally RESOLVES with a CombinedError on the result
+      // (classify() handles it), but a defect/throw in the exchange chain (or a
+      // custom exchange added in Phases 2–4) could REJECT the promise. Without a
+      // catch, the rejection skips schedule() below and the poll loop dies
+      // permanently (WR-04). Wrap so a throw still classifies + reschedules — the
+      // type is inferred from the typed StatsDocument, so data access stays typed.
+      const result = await client
+        .query(StatsDocument, {})
+        .toPromise()
+        .catch(() => 'THREW' as const)
       if (cancelled) return
+      if (result === 'THREW') {
+        // Genuine transport/exchange throw — treat as NETWORK and keep polling.
+        setError({ kind: 'NETWORK' })
+        setLoading(false)
+        schedule()
+        return
+      }
 
       const apiError = classify(result)
       if (apiError) {
