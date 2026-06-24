@@ -157,6 +157,35 @@ func TestWrite_EachLineHasExactlyTwoKeys(t *testing.T) {
 	}
 }
 
+func TestWrite_SkipsNodesWithoutPubkey(t *testing.T) {
+	// The web-of-trust graph contains follows-edges pointing to UIDs that have no
+	// pubkey predicate (uncrawled stub nodes). BFS still levels them, but they are
+	// not usable spam candidates — emitting {"pubkey":"",...} pollutes the JSONL
+	// with unidentifiable rows. Write must skip any node whose resolved pubkey is
+	// empty.
+	scored := map[string]int{"good": 1, "stub": 1}
+	levels := map[string]int{"good": 2, "stub": 2}
+	pubkeys := map[string]string{"good": "pk-good"} // "stub" has no pubkey entry -> ""
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.jsonl")
+	emitted, err := Write(path, scored, levels, pubkeys, 5, 1)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if emitted != 1 {
+		t.Fatalf("emitted = %d, want 1 (empty-pubkey stub skipped)", emitted)
+	}
+	got, _ := os.ReadFile(path)
+	want := `{"pubkey":"pk-good","valid_follower_count":1}` + "\n"
+	if string(got) != want {
+		t.Errorf("output = %q, want %q (no empty-pubkey line)", string(got), want)
+	}
+	if strings.Contains(string(got), `"pubkey":""`) {
+		t.Errorf("output contains an empty-pubkey record: %q", string(got))
+	}
+}
+
 func TestWrite_EmptyWhenAllFiltered(t *testing.T) {
 	// Everything is at level <= k or vfc >= threshold => empty file, emitted 0.
 	scored := map[string]int{"seed": 0, "a": 9}

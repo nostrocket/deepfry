@@ -25,11 +25,15 @@ type Record struct {
 
 // Write emits one JSONL Record per surviving node and returns the count emitted.
 //
-// A node survives when BOTH:
+// A node survives when ALL of:
 //   - levels[uid] > k  — excludes the seed (level 0) and the first k shells
 //     (levels 1..k), i.e. OUT-01.
 //   - scored[uid] < threshold — emits only valid_follower_count strictly below
 //     the threshold, i.e. OUT-02 (strict <, so vfc == threshold is excluded).
+//   - pubkeys[uid] != "" — the node has a resolved pubkey. The web-of-trust
+//     graph contains follows-edges pointing to uncrawled stub UIDs that carry no
+//     pubkey predicate; BFS still levels them, but an empty pubkey is not a usable
+//     spam candidate, so it is skipped rather than emitted as {"pubkey":"",...}.
 //
 // Records are collected, sorted by pubkey, then streamed through a buffered
 // json.Encoder (Encode appends a newline per object == JSONL). The output file
@@ -43,7 +47,11 @@ func Write(path string, scored, levels map[string]int, pubkeys map[string]string
 		if vfc >= threshold {
 			continue // OUT-02: emit only vfc < threshold (strict)
 		}
-		records = append(records, Record{Pubkey: pubkeys[uid], ValidFollowerCount: vfc})
+		pubkey := pubkeys[uid]
+		if pubkey == "" {
+			continue // uncrawled stub node (no pubkey predicate) — not a usable candidate
+		}
+		records = append(records, Record{Pubkey: pubkey, ValidFollowerCount: vfc})
 	}
 
 	// Byte-stable output (Open Question 2): sort by pubkey before writing.
