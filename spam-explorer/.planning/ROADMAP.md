@@ -13,7 +13,7 @@ A one-shot Go CLI that scores every pubkey in the web-of-trust Dgraph follow gra
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: End-to-End Scoring Slice** - Run the whole pipeline (CLI → Dgraph → BFS levels → valid-follower scoring → filtered JSONL) on a small reachable subgraph
+- [x] **Phase 1: End-to-End Scoring Slice** - Run the whole pipeline (CLI → Dgraph → BFS levels → valid-follower scoring → filtered JSONL) on a small reachable subgraph (completed 2026-06-24)
 - [ ] **Phase 2: Production-Scale Streaming** - Read the follow graph via paginated DQL so leveling and scoring run deterministically against the full ~1.54M-node graph
 - [ ] **Phase 3: Operational Correctness** - Input validation, unreachable-node error reporting, and secret-safe progress/summary logging
 
@@ -33,14 +33,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Each scored account's `valid_follower_count` counts only followers strictly shallower than it (`level(F) < level(T)`); same-level and deeper followers are excluded
   5. The output JSONL contains one `{pubkey, valid_follower_count}` object per line for every account scoring below `N`, with the seed and its first `k` shells excluded
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Scaffold the module + pure pipeline core (BFS leveling, valid-follower scoring, JSONL output) with offline tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Read-only Dgraph wire tier (client, resolve, frontier) + main.go orchestration; live end-to-end smoke run
+- [x] 01-02-PLAN.md — Read-only Dgraph wire tier (client, resolve, frontier) + main.go orchestration; live end-to-end smoke run
 
 ### Phase 2: Production-Scale Streaming
 
@@ -77,6 +77,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. End-to-End Scoring Slice | 1/2 | In Progress|  |
+| 1. End-to-End Scoring Slice | 2/2 | Complete   | 2026-06-24 |
 | 2. Production-Scale Streaming | 0/TBD | Not started | - |
 | 3. Operational Correctness | 0/TBD | Not started | - |
