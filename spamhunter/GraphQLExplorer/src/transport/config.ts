@@ -11,10 +11,23 @@
 // responses from, that origin. v1 is local-dev only (contract §10).
 const DEFAULT_GRAPHQL_URL = 'http://127.0.0.1:8080/graphql'
 
-export const GRAPHQL_URL: string =
-  import.meta.env.VITE_GRAPHQL_URL ?? DEFAULT_GRAPHQL_URL
+// Treat an explicitly-empty or whitespace-only VITE_GRAPHQL_URL as unset.
+// Vite injects `VITE_GRAPHQL_URL=` as `''` (not undefined), which is not nullish,
+// so a bare `??` would keep `''` and make `new URL('')` throw at module load —
+// a blank-screen crash before any error/connecting state can render (WR-01).
+const raw = import.meta.env.VITE_GRAPHQL_URL?.trim()
+export const GRAPHQL_URL: string = raw && raw.length > 0 ? raw : DEFAULT_GRAPHQL_URL
 
 // /ready and /health live on the same origin/base as /graphql.
-const base = new URL(GRAPHQL_URL)
+// Fail with a clear, actionable message on a genuinely malformed override.
+let base: URL
+try {
+  base = new URL(GRAPHQL_URL)
+} catch {
+  throw new Error(
+    `VITE_GRAPHQL_URL is not a valid absolute URL: "${GRAPHQL_URL}". ` +
+      `Expected e.g. http://127.0.0.1:8080/graphql`,
+  )
+}
 export const READY_URL: string = new URL('/ready', base).toString()
 export const HEALTH_URL: string = new URL('/health', base).toString()
