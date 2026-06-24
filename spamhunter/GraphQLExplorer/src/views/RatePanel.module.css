@@ -1,0 +1,113 @@
+/*
+ * RatePanel — hand-rolled CSS Module consuming src/styles/tokens.css only (no new
+ * tokens, no chart library). Mirrors the StatsDashboard module's structure + token use.
+ *
+ * Color discipline (load-bearing asymmetry): bars are NEUTRAL by default
+ * (--text-muted on a --border baseline). A detected burst tints the bars with the
+ * recoverable (amber) semantic — always paired with the "burst" text label + the spike
+ * shape, so color is never the sole signal. Only neutral + amber tokens appear here:
+ * no positive/exoneration color and no teal highlight token, which is reserved for the
+ * suspect-entry submit (UI-SPEC reservation #3). Quiet bars must never read as "clean".
+ */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* Burst marker — amber, meaning-bound, paired with a dot (shape) + the word "burst". */
+.burstBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--recoverable);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
+
+/* ── Hand-rolled bars ─────────────────────────────────────────────────────── */
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  height: 96px;
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border); /* the baseline / axis */
+  overflow-x: auto;
+}
+
+.barSlot {
+  display: flex;
+  align-items: flex-end;
+  flex: 1 0 6px;
+  min-width: 6px;
+  height: 100%;
+}
+
+/* Neutral bar fill — the default, quiet state. */
+.bar {
+  width: 100%;
+  background-color: var(--text-muted);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Burst state — the whole chart shifts to amber to draw the eye to a suspicious
+   pattern. Amber, not red: a burst is a signal-to-investigate, never a proven verdict. */
+.barsBurst .bar {
+  background-color: var(--recoverable);
+}
+
+/* ── Notes ────────────────────────────────────────────────────────────────── */
+.sparseNote,
+.rejectedNote,
+.caveat {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.sparseNote,
+.rejectedNote {
+  font-size: 13px;
+}
+
+/* Permanent epistemic disclaimer — muted body text, never an error tone. */
+.caveat {
+  font-size: 16px;
+}

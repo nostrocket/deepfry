@@ -2,9 +2,9 @@
 // non-removable window-size denominator (ID-02 / ID-03 / DRILL-05 / DRILL-06).
 //
 // Scope note (DRILL-01): the posting-rate / burst panel and the forgeable-createdAt
-// caveat are the NEXT slice (02-03). This plan ships the timeline + window indicator +
-// single-page pagination first. The window indicator already frames N as a denominator,
-// not a verdict.
+// caveat ship in 02-03 — mounted below the timeline in the loaded branch (>= 1 event)
+// so the analyzer re-derives live as Load more widens the window. The zero-match branch
+// has no events to analyze, so it carries only the timeline-surface window indicator.
 //
 // Source: UI-SPEC § Drill-down view + Copywriting Contract (strings VERBATIM);
 // 02-PATTERNS (analog: StatsDashboard — view anatomy, errorTreatment switch, connecting
@@ -29,6 +29,7 @@ import { useAuthorWindow, type WindowEvent } from '../hooks/useAuthorWindow'
 import type { ApiError } from '../transport/errors'
 import { ConnectingShell } from './ConnectingShell'
 import { WindowIndicator } from './WindowIndicator'
+import { RatePanel } from './RatePanel'
 import styles from './AuthorDrillDown.module.css'
 
 // Render an author-claimed epoch (seconds) as human UTC, trimmed to seconds + 'Z'.
@@ -235,6 +236,11 @@ export function AuthorDrillDown({ hex }: { hex: string }) {
           ) : (
             <p className={styles.endCaption}>End of available events — this is the full window.</p>
           )}
+
+          {/* DRILL-01 — posting-rate / burst panel; re-derives as the window widens.
+              Its own co-located window indicator + the persistent forgeable caveat live
+              inside the panel. Only on the loaded branch (>= 1 event to analyze). */}
+          <RatePanel events={events} windowMeta={windowMeta} />
         </section>
       )}
     </main>
