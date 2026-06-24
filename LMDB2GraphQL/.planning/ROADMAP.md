@@ -21,6 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
 - [x] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap-closure plan 05-03 created) (completed 2026-06-15)
 - [x] **Phase 6: CORS Support** - Enable browser frontends on any origin to query the GraphQL API via permissive wildcard CORS with correct preflight handling (completed 2026-06-24)
+- [ ] **Phase 7: Distinct Author Enumeration** - Expose the distinct pubkeys present in the database via a paginated `authors` GraphQL query, enumerated in O(distinct authors) with a seek-skip scan over the existing `Event__pubkey` index (v1.2)
 
 ## Phase Details
 
@@ -201,10 +202,25 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 06-01-PLAN.md — Enable tower-http `cors` feature, add the outermost `CorsLayer` (wildcard origin, GET/POST/OPTIONS, Content-Type, no credentials) to `build_router`, update layer-ordering rustdoc, and add `tests/cors_test.rs` asserting CORS headers on 200/413/503 + preflight (CORS-01, CORS-02, CORS-03, CORS-04)
 
+### Phase 7: Distinct Author Enumeration
+
+**Goal**: A consumer can paginate the complete set of distinct pubkeys that have authored at least one event, served directly from strfry's live `Event__pubkey` index in O(distinct authors) — without scanning every event and without a caller-supplied author list
+**Depends on**: Phase 6 (extends the read-only GraphQL surface; reuses the Phase 1 `Event__pubkey` index open + comparator, the Phase 4 resolver/clamp/error-mapping patterns, and the Phase 5 readiness gate)
+**Requirements**: QRY-06, API-07
+**Success Criteria** (what must be TRUE):
+
+  1. A GraphQL `authors(after, limit)` query returns a page of distinct hex pubkeys present in the DB, with `hasMore` and an opaque `endCursor`
+  2. Enumeration is O(distinct authors): each distinct pubkey costs one B-tree seek (seek-skip via `increment_be` of the 32-byte prefix), not a walk of every event
+  3. Pagination is correct and exhaustive — successive pages using `endCursor` cover every distinct pubkey exactly once within a snapshot, terminating cleanly at the `0xFF..` overflow
+  4. `limit` is clamped to the same hard ceiling as `events()`; a malformed `after` cursor fails closed with a client error that does not echo the offending bytes
+  5. Read-only invariants hold: short per-call read txns, no write txn, no `.create()`; the resolver runs via `spawn_blocking` like the existing resolvers
+
+**Plans**: TBD (planning in progress)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -214,3 +230,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
 | 6. CORS Support | 1/1 | Complete    | 2026-06-24 |
+| 7. Distinct Author Enumeration | 0/? | Planning    | — |

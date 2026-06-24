@@ -56,6 +56,15 @@ Defined 2026-06-23. Enables a browser-based frontend served from a different hos
 - [x] **CORS-03**: The server does **not** send `Access-Control-Allow-Credentials` (wildcard origin, no cookies/auth) — consistent with the unauthenticated read-only surface and compatible with `Allow-Origin: *`
 - [x] **CORS-04**: The `CorsLayer` is added without weakening existing protections — the body-limit layer, the `503`-until-ready schema gate, and the `bind_address` loopback default all continue to behave as before (CORS relaxes only the browser same-origin policy, not network exposure)
 
+## Milestone v1.2 Requirements (Distinct Author Enumeration)
+
+Defined 2026-06-24. Exposes the set of distinct pubkeys that have authored ≥1 event — a capability the existing API cannot serve (`latestPerAuthor` requires a caller-supplied author list; `events()` only yields pubkeys by paginating every event). Pubkeys-only output; counts are explicitly out of scope for this milestone (they would change the query from O(distinct authors) to O(total events) and reintroduce unbounded per-author fan-out).
+
+### Distinct Authors
+
+- [ ] **QRY-06**: LMDB2GraphQL enumerates the distinct pubkeys present in the `Event__pubkey` index in O(distinct authors) via a seek-skip scan — read one entry, take the 32-byte pubkey prefix, then re-seek with lower bound = `increment_be(prefix)` to jump to the next author — using short per-call read transactions and never opening a write txn
+- [ ] **API-07**: A consumer can query `authors(after, limit)` and receive a paginated `AuthorsPage { authors: [String!]!, hasMore, endCursor }` of distinct hex pubkeys, with `limit` clamped to the same hard ceiling as `events()` and an opaque `after` cursor (the last pubkey returned) decoded fail-closed
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -122,13 +131,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORS-02 | Phase 6 | Complete |
 | CORS-03 | Phase 6 | Complete |
 | CORS-04 | Phase 6 | Complete |
+| QRY-06 | Phase 7 | Pending |
+| API-07 | Phase 7 | Pending |
 
 **Coverage:**
 
 - v1.0 requirements: 25 total — mapped to Phases 1–5, all complete
 - v1.1 requirements: 4 total (CORS-01..04) — mapped to Phase 6 (roadmap created 2026-06-23)
+- v1.2 requirements: 2 total (QRY-06, API-07) — mapped to Phase 7 (roadmap created 2026-06-24)
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-06-10 (v1.0); 2026-06-23 (v1.1 CORS)*
-*Last updated: 2026-06-23 — v1.1 CORS requirements mapped to Phase 6*
+*Requirements defined: 2026-06-10 (v1.0); 2026-06-23 (v1.1 CORS); 2026-06-24 (v1.2 distinct authors)*
+*Last updated: 2026-06-24 — v1.2 distinct-author requirements mapped to Phase 7*

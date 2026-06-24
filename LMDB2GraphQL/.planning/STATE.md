@@ -1,19 +1,19 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: CORS Support
-current_phase: 06
-status: Phase 06 shipped to main (pushed to origin)
-stopped_at: v1.1 roadmap created (Phase 6 defined, CORS-01..04 mapped)
+milestone: v1.2
+milestone_name: Distinct Author Enumeration
+current_phase: 07
+status: Phase 07 planning (roadmap + requirements registered; CONTEXT captured)
+stopped_at: v1.2 roadmap created (Phase 7 defined, QRY-06/API-07 mapped)
 last_updated: "2026-06-24T02:29:39.835Z"
 last_activity: 2026-06-24
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 6
   total_plans: 24
   completed_plans: 24
-  percent: 100
-current_phase_name: cors-support
+  percent: 86
+current_phase_name: distinct-author-enumeration
 ---
 
 # Project State
@@ -23,13 +23,13 @@ current_phase_name: cors-support
 See: .planning/PROJECT.md (updated 2026-06-23)
 
 **Core value:** Serve correct, rich queries over strfry's events by reading strfry's live on-disk state directly — never copying event data or indexes out of strfry, never writing to strfry's database.
-**Current focus:** Phase 06 — cors-support
+**Current focus:** Phase 07 — distinct-author-enumeration
 
 ## Current Position
 
-Phase: 06
-Plan: Not started
-Status: Phase 06 shipped to main (pushed to origin)
+Phase: 07
+Plan: Planning in progress (CONTEXT.md captured; planner pending)
+Status: v1.2 roadmap created — Phase 7 (authors query) defined, QRY-06/API-07 mapped
 Last activity: 2026-06-24
 
 ## Performance Metrics
