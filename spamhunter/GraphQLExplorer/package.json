@@ -15,6 +15,7 @@
   "dependencies": {
     "@urql/core": "^6",
     "graphql": "16.14.2",
+    "nostr-tools": "2.23.8",
     "react": "^19",
     "react-dom": "^19",
     "urql": "^5"
