@@ -14,9 +14,11 @@ import type { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-
  * Learn more about it here: https://the-guild.dev/graphql/codegen/plugins/presets/preset-client#reducing-bundle-size
  */
 type Documents = {
+    "\n  query Events($filter: EventFilterInput, $after: String, $limit: Int) {\n    events(filter: $filter, after: $after, limit: $limit) {\n      events {\n        id\n        pubkey\n        kind\n        createdAt\n        content\n      }\n      endCursor\n      hasMore\n    }\n  }\n": typeof types.EventsDocument,
     "\n  query Stats {\n    stats {\n      eventCount\n      maxLevId\n      dbVersion\n      pinnedStrfryVersion\n    }\n  }\n": typeof types.StatsDocument,
 };
 const documents: Documents = {
+    "\n  query Events($filter: EventFilterInput, $after: String, $limit: Int) {\n    events(filter: $filter, after: $after, limit: $limit) {\n      events {\n        id\n        pubkey\n        kind\n        createdAt\n        content\n      }\n      endCursor\n      hasMore\n    }\n  }\n": types.EventsDocument,
     "\n  query Stats {\n    stats {\n      eventCount\n      maxLevId\n      dbVersion\n      pinnedStrfryVersion\n    }\n  }\n": types.StatsDocument,
 };
 
@@ -34,6 +36,10 @@ const documents: Documents = {
  */
 export function graphql(source: string): unknown;
 
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query Events($filter: EventFilterInput, $after: String, $limit: Int) {\n    events(filter: $filter, after: $after, limit: $limit) {\n      events {\n        id\n        pubkey\n        kind\n        createdAt\n        content\n      }\n      endCursor\n      hasMore\n    }\n  }\n"): (typeof documents)["\n  query Events($filter: EventFilterInput, $after: String, $limit: Int) {\n    events(filter: $filter, after: $after, limit: $limit) {\n      events {\n        id\n        pubkey\n        kind\n        createdAt\n        content\n      }\n      endCursor\n      hasMore\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
