@@ -51,10 +51,10 @@ Defined 2026-06-23. Enables a browser-based frontend served from a different hos
 
 ### CORS
 
-- [ ] **CORS-01**: A browser frontend served from a different origin can issue `POST /graphql` (and `GET /graphql` for GraphiQL) and read the response — the server sends `Access-Control-Allow-Origin: *`
-- [ ] **CORS-02**: The server correctly answers CORS preflight `OPTIONS` requests for `/graphql`, allowing the methods (`GET`, `POST`, `OPTIONS`) and request headers (e.g. `Content-Type`) a GraphQL-over-HTTP client sends, so non-simple POSTs succeed
-- [ ] **CORS-03**: The server does **not** send `Access-Control-Allow-Credentials` (wildcard origin, no cookies/auth) — consistent with the unauthenticated read-only surface and compatible with `Allow-Origin: *`
-- [ ] **CORS-04**: The `CorsLayer` is added without weakening existing protections — the body-limit layer, the `503`-until-ready schema gate, and the `bind_address` loopback default all continue to behave as before (CORS relaxes only the browser same-origin policy, not network exposure)
+- [x] **CORS-01**: A browser frontend served from a different origin can issue `POST /graphql` (and `GET /graphql` for GraphiQL) and read the response — the server sends `Access-Control-Allow-Origin: *`
+- [x] **CORS-02**: The server correctly answers CORS preflight `OPTIONS` requests for `/graphql`, allowing the methods (`GET`, `POST`, `OPTIONS`) and request headers (e.g. `Content-Type`) a GraphQL-over-HTTP client sends, so non-simple POSTs succeed
+- [x] **CORS-03**: The server does **not** send `Access-Control-Allow-Credentials` (wildcard origin, no cookies/auth) — consistent with the unauthenticated read-only surface and compatible with `Allow-Origin: *`
+- [x] **CORS-04**: The `CorsLayer` is added without weakening existing protections — the body-limit layer, the `503`-until-ready schema gate, and the `bind_address` loopback default all continue to behave as before (CORS relaxes only the browser same-origin policy, not network exposure)
 
 ## v2 Requirements
 
@@ -118,10 +118,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-02 | Phase 5 | Complete |
 | OPS-03 | Phase 5 | Complete |
 | OPS-04 | Phase 5 | Complete |
-| CORS-01 | Phase 6 | Pending |
-| CORS-02 | Phase 6 | Pending |
-| CORS-03 | Phase 6 | Pending |
-| CORS-04 | Phase 6 | Pending |
+| CORS-01 | Phase 6 | Complete |
+| CORS-02 | Phase 6 | Complete |
+| CORS-03 | Phase 6 | Complete |
+| CORS-04 | Phase 6 | Complete |
 
 **Coverage:**
 

@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Query Engine** - Compose scan primitives into full query semantics (filter routing, latestPerAuthor, NIP-40 expiration, cursor pagination) — 11 plans incl. gap-closures 03-05..03-11; final fat-group cursor-stranding + ts=0 non-termination blockers closed via debug fix (lev_id_floor in merge_windowed, commit f4ec868); verification PASSED 5/5 must-haves (completed 2026-06-13)
 - [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
 - [x] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap-closure plan 05-03 created) (completed 2026-06-15)
-- [ ] **Phase 6: CORS Support** - Enable browser frontends on any origin to query the GraphQL API via permissive wildcard CORS with correct preflight handling
+- [x] **Phase 6: CORS Support** - Enable browser frontends on any origin to query the GraphQL API via permissive wildcard CORS with correct preflight handling (completed 2026-06-24)
 
 ## Phase Details
 
@@ -195,11 +195,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. No `Access-Control-Allow-Credentials` header appears on any response — the API is unauthenticated and wildcard origin is incompatible with credentials
   4. The `RequestBodyLimitLayer` (body cap), the `OnceCell`-gated 503-until-ready schema gate, and the `bind_address` loopback default all behave identically to Phase 5 after adding the `CorsLayer`
 
-**Plans**: 1 plan (1 wave)
+**Plans**: 1/1 plans complete
 
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — Enable tower-http `cors` feature, add the outermost `CorsLayer` (wildcard origin, GET/POST/OPTIONS, Content-Type, no credentials) to `build_router`, update layer-ordering rustdoc, and add `tests/cors_test.rs` asserting CORS headers on 200/413/503 + preflight (CORS-01, CORS-02, CORS-03, CORS-04)
+- [x] 06-01-PLAN.md — Enable tower-http `cors` feature, add the outermost `CorsLayer` (wildcard origin, GET/POST/OPTIONS, Content-Type, no credentials) to `build_router`, update layer-ordering rustdoc, and add `tests/cors_test.rs` asserting CORS headers on 200/413/503 + preflight (CORS-01, CORS-02, CORS-03, CORS-04)
 
 ## Progress
 
@@ -213,4 +213,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Query Engine | 11/11 | Complete    | 2026-06-13 |
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
-| 6. CORS Support | 0/1 | Not started | - |
+| 6. CORS Support | 1/1 | Complete    | 2026-06-24 |
