@@ -15,9 +15,9 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Identifiers (suspect entry)
 
-- [ ] **ID-01**: User can paste a single pubkey as npub or 64-char hex and open that author's drill-down
-- [ ] **ID-02**: UI normalizes npub/note bech32 ↔ hex (nip19), queries the API in lowercase hex, and displays both forms
-- [ ] **ID-03**: UI visibly distinguishes "couldn't parse the identifier" from "valid identifier, zero matching events" (malformed hex silently never matches)
+- [x] **ID-01**: User can paste a single pubkey as npub or 64-char hex and open that author's drill-down
+- [x] **ID-02**: UI normalizes npub/note bech32 ↔ hex (nip19), queries the API in lowercase hex, and displays both forms
+- [x] **ID-03**: UI visibly distinguishes "couldn't parse the identifier" from "valid identifier, zero matching events" (malformed hex silently never matches)
 
 ### Author drill-down (spam signals)
 
@@ -83,9 +83,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | FND-01 | Phase 1 | Complete |
 | FND-02 | Phase 1 | Complete |
 | FND-03 | Phase 1 | Complete |
-| ID-01 | Phase 2 | Pending |
-| ID-02 | Phase 2 | Pending |
-| ID-03 | Phase 2 | Pending |
+| ID-01 | Phase 2 | Complete |
+| ID-02 | Phase 2 | Complete |
+| ID-03 | Phase 2 | Complete |
 | DRILL-01 | Phase 2 | Pending |
 | DRILL-02 | Phase 3 | Pending |
 | DRILL-03 | Phase 3 | Pending |

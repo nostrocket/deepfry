@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: Suspect Entry + Drill-Down Core
+current_phase: 02
+current_phase_name: suspect-entry-drill-down-core
 status: executing
 stopped_at: "Phase 1 complete + human-validated; Phase 2 prepped (CONTEXT + UI-SPEC approved). Next: research+plan+execute Phase 2."
-last_updated: "2026-06-24T14:00:37.894Z"
+last_updated: "2026-06-24T14:17:11.726Z"
 last_activity: 2026-06-24
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 6
+  completed_plans: 4
   percent: 25
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-24)
 
 **Core value:** An analyst can take a suspect pubkey and quickly judge whether the author is a spammer.
-**Current focus:** Phase 01 — foundation-stats-dashboard
+**Current focus:** Phase 02 — suspect-entry-drill-down-core
 
 ## Current Position
 
-Phase: 2 — Suspect Entry + Drill-Down Core
-Plan: Not started
+Phase: 02 (suspect-entry-drill-down-core) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-24 — Phase 01 complete, transitioned to Phase 2
+Last activity: 2026-06-24 — Phase 02 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 25m | 3 tasks | 23 files |
 | Phase 01 P02 | ~10m | 2 tasks | 7 files |
 | Phase 01 P03 | ~12m | 2 tasks | 5 files |
+| Phase 02 P01 | 12 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-02: @urql/core@6 surfaces HTTP status at result.error.response.status (sibling of networkError); classifier branches 503/413 off that path (A2 resolved)
 - [Phase ?]: useStatsPoll: setTimeout-reschedule + Page Visibility pause + maxLevId-diff nudge flag (never auto-refetch); POLL_INTERVAL_MS=5000 tunable
 - [Phase ?]: StatsDashboard renders the complete UI-SPEC distinct-state set off classify(); teal accent confined to corpus-changed nudge + live-poll dot
+- [Phase ?]: [02-01]: parseIdentifier is the single pure normalizer (nip19-only); ParseResult discriminated union — parse failure is the ONLY error (ID-03), zero-match decided downstream
+- [Phase ?]: [02-01]: note->NOT_RECOGNIZED (event id is not an author), nsec->REJECTED_NSEC (secret never normalized); nostr-tools pinned exact 2.23.8
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T13:28:05.273Z
+Last session: 2026-06-24T14:16:50.240Z
 Stopped at: Phase 1 complete + human-validated; Phase 2 prepped (CONTEXT + UI-SPEC approved). Next: research+plan+execute Phase 2.
 Resume file: .planning/phases/02-suspect-entry-drill-down-core/02-UI-SPEC.md

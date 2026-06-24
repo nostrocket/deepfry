@@ -76,14 +76,14 @@ signal — always reading their conclusion against an honest, non-removable wind
   4. Every signal surface shows a non-removable window-size indicator — "computed over N fetched events · hasMore · time range" — so a partial window is never read as exoneration
   5. User can load more events (cursor pagination with a constant filter, opaque cursor passed verbatim, `INVALID_CURSOR` restarts from page 1) to widen the analysis window, and analytics re-derive live
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 **UI hint**: yes
 
 Plans:
 
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Pure `identifier/` module (nip19 ↔ hex, nsec/note reject, parse-vs-zero distinction), TDD, behind a `nostr-tools` legitimacy human-verify gate (ID-01, ID-02, ID-03)
+- [x] 02-01-PLAN.md — Pure `identifier/` module (nip19 ↔ hex, nsec/note reject, parse-vs-zero distinction), TDD, behind a `nostr-tools` legitimacy human-verify gate (ID-01, ID-02, ID-03)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -148,6 +148,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
-| 2. Suspect Entry + Drill-Down Core | 0/3 | Planned | - |
+| 2. Suspect Entry + Drill-Down Core | 1/3 | In Progress|  |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |
