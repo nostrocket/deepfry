@@ -11,16 +11,25 @@
 # Prerequisites:
 #   1. deepfry-net external network must exist:
 #        docker network create deepfry-net
-#   2. Operator-supplied config at ./config/lmdb2graphql.yaml (see example at
-#      spam/config/lmdb2graphql.yaml.example). The config MUST set:
+#   2. A committed container-ready config is included at
+#      ./LMDB2GraphQL/config/lmdb2graphql.yaml and is mounted by default
+#      (see LMDB2GRAPHQL_CONFIG below). For non-default deployments, copy
+#      LMDB2GraphQL/config/lmdb2graphql.yaml.example and set LMDB2GRAPHQL_CONFIG.
+#      The config MUST set:
 #        bind_address: "0.0.0.0:8080"
 #      Inside the container the default 127.0.0.1 loopback address is unreachable
 #      from outside the container. See RESEARCH.md Pitfall 2.
+#   3. STRFRY_DB_PATH MUST be set to the same path used by docker-compose.strfry.yml
+#      so both services mount the same on-disk LMDB directory. Example (.env):
+#        STRFRY_DB_PATH=/Volumes/BACKUP/nostr/strfry_database
+#      lmdb2graphql mounts this path read-only (:ro) — strfry mounts it read-write.
+#      Leaving STRFRY_DB_PATH unset uses the same ./data/strfry-db fallback as
+#      docker-compose.strfry.yml, which is correct for local/dev deployments.
 
 services:
   lmdb2graphql:
     build:
-      context: spam/
+      context: LMDB2GraphQL/
       dockerfile: Dockerfile
     container_name: lmdb2graphql
     restart: unless-stopped
@@ -31,7 +40,8 @@ services:
       # :ro enforces kernel-level read-only even if a code bug attempted a write txn (T-05-05).
       - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db:ro
       # Operator-supplied config. MUST set bind_address: "0.0.0.0:8080" for in-container use.
-      - ${LMDB2GRAPHQL_CONFIG:-./config/lmdb2graphql.yaml}:/root/deepfry/lmdb2graphql.yaml:ro
+      # Default mounts the committed container-ready config from the repo.
+      - ${LMDB2GRAPHQL_CONFIG:-./LMDB2GraphQL/config/lmdb2graphql.yaml}:/root/deepfry/lmdb2graphql.yaml:ro
     ports:
       # Loopback-only publish (CR-01 / ASVS V4): GraphQL endpoint is NOT publicly reachable.
       # The in-container bind_address 0.0.0.0:8080 only binds inside the container namespace;
