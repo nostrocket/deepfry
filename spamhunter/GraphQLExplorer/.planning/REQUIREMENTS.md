@@ -25,8 +25,8 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 - [ ] **DRILL-02**: Content view highlights near-duplicate / repeated text via client-side detection (exact-hash then shingle/Jaccard ≈0.8)
 - [ ] **DRILL-03**: Tag/mention aggregation (p/e/t) surfaces mass-mention and hashtag-stuffing patterns
 - [ ] **DRILL-04**: Kind-distribution breakdown plus a raw-JSON inspector for any event (`raw` fetched lazily to avoid large payloads)
-- [ ] **DRILL-05**: Every signal shows a window-size honesty indicator — "computed over N fetched events" with `hasMore` awareness — so partial windows are never read as exoneration
-- [ ] **DRILL-06**: User can load more events (cursor pagination, constant filter) to widen the analysis window
+- [x] **DRILL-05**: Every signal shows a window-size honesty indicator — "computed over N fetched events" with `hasMore` awareness — so partial windows are never read as exoneration
+- [x] **DRILL-06**: User can load more events (cursor pagination, constant filter) to widen the analysis window
 
 ### Batch triage
 
@@ -90,8 +90,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DRILL-02 | Phase 3 | Pending |
 | DRILL-03 | Phase 3 | Pending |
 | DRILL-04 | Phase 3 | Pending |
-| DRILL-05 | Phase 2 | Pending |
-| DRILL-06 | Phase 2 | Pending |
+| DRILL-05 | Phase 2 | Complete |
+| DRILL-06 | Phase 2 | Complete |
 | BATCH-01 | Phase 4 | Pending |
 | BATCH-02 | Phase 4 | Pending |
 | BATCH-03 | Phase 4 | Pending |

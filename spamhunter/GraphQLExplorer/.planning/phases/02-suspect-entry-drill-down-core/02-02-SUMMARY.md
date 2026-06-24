@@ -2,7 +2,7 @@
 phase: 02-suspect-entry-drill-down-core
 plan: 02
 subsystem: GraphQLExplorer (frontend)
-status: awaiting-human-verify
+status: accepted-deferred-uat
 tags: [routing, drill-down, pagination, window-honesty, identifier]
 requires:
   - "02-01: parseIdentifier / isHexPubkey (src/identifier/identifier.ts)"
@@ -105,7 +105,7 @@ None. The rate/burst panel and the forgeable-createdAt caveat are explicitly the
 
 ## Remaining Work
 
-**Task 4 — human-verify checkpoint (NOT auto-approved).** The end-to-end slice must be verified by a human against the live lens (`npm run dev`): paste → route → both identity forms → newest-first timeline → indicator (incl. amber partial) → single-page Load more (no double-append) → end caption → parse-failure stays home → valid-but-zero-match neutral empty state with N=0 indicator → accent only on "Inspect author". See 02-02-PLAN.md Task 4 for the full verification script.
+**Task 4 — human-verify checkpoint: DEFERRED to phase-end verification (user decision, 2026-06-24).** The plan was accepted to continue WITHOUT performing the live `npm run dev` walkthrough now; the manual UI checks have NOT been performed/passed in this plan. The end-to-end slice (paste → route → both identity forms → newest-first timeline → indicator incl. amber partial → single-page Load more / no double-append → end caption → parse-failure stays home → valid-but-zero-match neutral empty state with N=0 → accent only on "Inspect author") remains to be confirmed against the live lens at phase-end verification. See 02-02-PLAN.md Task 4 for the full verification script.
 
 ## Self-Check: PASSED
 
