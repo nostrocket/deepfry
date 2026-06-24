@@ -43,10 +43,18 @@ services:
       # Default mounts the committed container-ready config from the repo.
       - ${LMDB2GRAPHQL_CONFIG:-./LMDB2GraphQL/config/lmdb2graphql.yaml}:/root/deepfry/lmdb2graphql.yaml:ro
     ports:
-      # Loopback-only publish (CR-01 / ASVS V4): GraphQL endpoint is NOT publicly reachable.
-      # The in-container bind_address 0.0.0.0:8080 only binds inside the container namespace;
-      # this publish rule is the actual host-level exposure control (T-05-06).
-      - "127.0.0.1:8080:8080"
+      # Host-level exposure control (CR-01 / ASVS V4 / T-05-06). The in-container
+      # bind_address 0.0.0.0:8080 only binds inside the container namespace; THIS publish
+      # rule decides what the host exposes.
+      #
+      # SECURE DEFAULT: 127.0.0.1 — the unauthenticated, full-introspection GraphQL endpoint
+      # is reachable only from the host's loopback. Do NOT change the default in the repo.
+      #
+      # To widen exposure for a specific deployment, set LMDB2GRAPHQL_PUBLISH_ADDR in that
+      # host's .env (NOT committed) — e.g. `LMDB2GRAPHQL_PUBLISH_ADDR=0.0.0.0` to reach it
+      # from the LAN. This exposes an unauthenticated API to every host that can route here;
+      # only do so on a trusted network or behind an authenticating reverse proxy.
+      - "${LMDB2GRAPHQL_PUBLISH_ADDR:-127.0.0.1}:8080:8080"
     healthcheck:
       # IMPORTANT: use /health (liveness), NOT /ready.
       # /ready returns 503 before the LMDB self-check completes; using it here would
