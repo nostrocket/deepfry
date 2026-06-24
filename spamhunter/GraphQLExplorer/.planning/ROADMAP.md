@@ -45,7 +45,7 @@ connecting directly, no proxy.
   4. On cold start the UI shows a distinct "connecting to relay…" state (gated on `/ready`, treating `503` as retry-with-backoff), not a generic error
   5. Every response is checked for `errors[]` on HTTP 200 before reading `data`; `extensions.code` (`INVALID_CURSOR` / `TOO_MANY_AUTHORS` / internal / validation) maps to distinct, non-blank states, and every query passes an explicit `limit`
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 **Wave 1**
@@ -54,7 +54,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Transport hardening — single `errors[]`-on-200 `classify()` boundary, `/ready` gating with 503 bounded backoff + connecting state, opaque-cursor accumulator scaffold (FND-03)
+- [x] 01-02-PLAN.md — Transport hardening — single `errors[]`-on-200 `classify()` boundary, `/ready` gating with 503 bounded backoff + connecting state, opaque-cursor accumulator scaffold (FND-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -139,7 +139,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Stats Dashboard | 1/3 | In Progress|  |
+| 1. Foundation + Stats Dashboard | 2/3 | In Progress|  |
 | 2. Suspect Entry + Drill-Down Core | 0/3 | Not started | - |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |

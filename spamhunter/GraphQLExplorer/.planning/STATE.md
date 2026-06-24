@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 01
 current_phase_name: foundation-stats-dashboard
 status: executing
-stopped_at: Phase 1 UI-SPEC approved
-last_updated: "2026-06-24T10:31:54.304Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-06-24T10:39:44.695Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-24)
 ## Current Position
 
 Phase: 01 (foundation-stats-dashboard) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-06-24 — Phase 01 execution started
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 25m | 3 tasks | 23 files |
+| Phase 01 P02 | ~10m | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,7 @@ Recent decisions affecting current work:
 - [Roadmap]: Foundation + Stats fused (Phase 1) so the simplest real query proves transport/proxy/codegen end-to-end
 - [Roadmap]: Window-honesty indicator ships WITH the first signal in Phase 2 (never retrofitted)
 - [Roadmap]: Pure analyzer core (identifier, rate, nearDup, tags, kinds) built/tested with zero transport dependency
+- [Phase ?]: 01-02: @urql/core@6 surfaces HTTP status at result.error.response.status (sibling of networkError); classifier branches 503/413 off that path (A2 resolved)
 
 ### Pending Todos
 
@@ -88,6 +90,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T10:31:49.038Z
-Stopped at: Phase 1 UI-SPEC approved
-Resume file: .planning/phases/01-foundation-stats-dashboard/01-UI-SPEC.md
+Last session: 2026-06-24T10:39:44.683Z
+Stopped at: Completed 01-02-PLAN.md
+Resume file: None
