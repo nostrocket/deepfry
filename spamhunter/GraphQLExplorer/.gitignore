@@ -2,6 +2,7 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
 
 # Local env — the real base URL lives here, never committed.
 # Commit .env.example instead.
