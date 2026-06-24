@@ -143,7 +143,7 @@ LMDB2GraphQL is a read-only adapter that exposes a [strfry](https://github.com/h
 | `rkv` crate | Higher-level wrapper on `lmdb-rkv`; abstracts away the low-level cursor access needed for `MDB_SET_RANGE` on integer keys; dormant | `heed` directly |
 | `sqlx` with SQLite feature | Async SQLite overhead without benefit; `MIN_RUST_VERSION = 1.94.0` is high; compile-time query checking requires a live DB at build time | `rusqlite` with `spawn_blocking` |
 | Setting `MDB_CREATE` when opening sub-DBs | Creates new sub-DBs in strfry's env — catastrophic if env opened without `READ_ONLY` | `open_database` (not `create_database`) in heed |
-| Opening any `Event__*` sub-DB | Custom golpe comparators not present in deepfry process; range scans silently wrong | Only open `EventPayload`, `Meta`, `CompressionDictionary`, `Event` |
+| Opening an `Event__*` sub-DB WITHOUT registering its comparator | Without the matching golpe comparator, heed/LMDB falls back to memcmp ordering and range scans are silently wrong; opening IS supported when the comparator is registered | Use the `open_index_*` helpers in `src/lmdb/indexes.rs` (e.g. `open_index_string_uint64`) — they register the correct comparator and call `open_database` (never `.create()`); the startup self-check gate validates correctness at runtime |
 | Long-lived `RoTxn` | Pins LMDB pages, prevents strfry reclaim, `data.mdb` grows unbounded | Short per-window transactions; `rtxn.abort()` after each batch |
 | `nostr` crate | Full protocol stack with crypto; no benefit since sigs already verified by strfry | `serde_json` + local struct |
 | `notify` 9.x RC | Pre-release; API may change | `notify` 8.2.0 stable |
