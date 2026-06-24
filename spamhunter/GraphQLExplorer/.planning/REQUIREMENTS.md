@@ -79,29 +79,35 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | TBD | Pending |
-| FND-02 | TBD | Pending |
-| FND-03 | TBD | Pending |
-| ID-01 | TBD | Pending |
-| ID-02 | TBD | Pending |
-| ID-03 | TBD | Pending |
-| DRILL-01 | TBD | Pending |
-| DRILL-02 | TBD | Pending |
-| DRILL-03 | TBD | Pending |
-| DRILL-04 | TBD | Pending |
-| DRILL-05 | TBD | Pending |
-| DRILL-06 | TBD | Pending |
-| BATCH-01 | TBD | Pending |
-| BATCH-02 | TBD | Pending |
-| BATCH-03 | TBD | Pending |
-| STATS-01 | TBD | Pending |
-| STATS-02 | TBD | Pending |
+| FND-01 | Phase 1 | Pending |
+| FND-02 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Pending |
+| ID-01 | Phase 2 | Pending |
+| ID-02 | Phase 2 | Pending |
+| ID-03 | Phase 2 | Pending |
+| DRILL-01 | Phase 2 | Pending |
+| DRILL-02 | Phase 3 | Pending |
+| DRILL-03 | Phase 3 | Pending |
+| DRILL-04 | Phase 3 | Pending |
+| DRILL-05 | Phase 2 | Pending |
+| DRILL-06 | Phase 2 | Pending |
+| BATCH-01 | Phase 4 | Pending |
+| BATCH-02 | Phase 4 | Pending |
+| BATCH-03 | Phase 4 | Pending |
+| STATS-01 | Phase 1 | Pending |
+| STATS-02 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 0 (filled by roadmap)
-- Unmapped: 17 ⚠️ (resolved at roadmap creation)
+- Mapped to phases: 17 ✓
+- Unmapped: 0 ✓
+
+**Per-phase mapping:**
+- Phase 1 (Foundation + Stats Dashboard): FND-01, FND-02, FND-03, STATS-01, STATS-02 (5)
+- Phase 2 (Suspect Entry + Drill-Down Core): ID-01, ID-02, ID-03, DRILL-01, DRILL-05, DRILL-06 (6)
+- Phase 3 (Remaining Spam Signals): DRILL-02, DRILL-03, DRILL-04 (3)
+- Phase 4 (Batch Triage): BATCH-01, BATCH-02, BATCH-03 (3)
 
 ---
 *Requirements defined: 2026-06-24*
-*Last updated: 2026-06-24 after initial definition*
+*Last updated: 2026-06-24 after roadmap creation (17/17 mapped)*
