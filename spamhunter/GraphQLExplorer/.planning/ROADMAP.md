@@ -70,7 +70,7 @@ signal — always reading their conclusion against an honest, non-removable wind
 **Requirements**: ID-01, ID-02, ID-03, DRILL-01, DRILL-05, DRILL-06
 **Success Criteria** (what must be TRUE):
 
-  1. User can paste a single pubkey as `npub`/`note`/`nprofile` bech32 or 64-char hex; the app normalizes to lowercase hex (queries in hex), displays both forms, and opens that author's drill-down
+  1. User can paste a single pubkey as `npub`/`nprofile` bech32 or 64-char hex; the app normalizes to lowercase hex (queries in hex), displays both forms, and opens that author's drill-down. A bare `note` (an event id, not an author) and an `nsec` are explicitly rejected as "not an author identifier" — a `note` is never silently queried as a pubkey, which would read as a false zero-match (resolved 2026-06-24: reject, do not resolve event→author)
   2. The UI visibly distinguishes "couldn't parse the identifier" from "valid identifier, zero matching events" — a typo never reads as a clean author
   3. Drill-down shows the author's event timeline newest-first across kinds with posting-rate / burst indicators interpreted asymmetrically: burst present = suspicious, burst absent ≠ clean, with a persistent "createdAt is author-claimed and forgeable" caveat beside the rate chart
   4. Every signal surface shows a non-removable window-size indicator — "computed over N fetched events · hasMore · time range" — so a partial window is never read as exoneration

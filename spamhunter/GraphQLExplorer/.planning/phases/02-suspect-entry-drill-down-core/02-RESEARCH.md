@@ -502,7 +502,12 @@ export const EventsDocument = graphql(`
 | A5 | `nostr-tools` tree-shakes so importing only `nip19` keeps the bundle reasonable | Stack / Alternatives | If bundle bloats, switch to `@scure/base` + hand-rolled TLV; lower priority for a local-dev tool. |
 | A6 | Exact version `2.23.8` is safe despite being a 1-day-old patch of an old package | Legitimacy audit | A brand-new patch *could* carry a regression; mitigated by human-verify checkpoint + option to pin a slightly older stable line. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three resolved 2026-06-24 during plan-phase; the plans implement these resolutions.
+> - **Q1 → RESOLVED: reject `note`** (option a). Adopted by 02-01. ROADMAP/CONTEXT wording reconciled to match. User-confirmed.
+> - **Q2 → RESOLVED: single-step page fetch** per click (matches UI-SPEC). Adopted by 02-02.
+> - **Q3 → RESOLVED: house thresholds in `thresholds.ts`**, corpus-validation deferred to Phase 3. Adopted by 02-03.
 
 1. **What does pasting a `note` (event-id bech32) do?**
    - What we know: `note` decodes to a 32-byte event id, not a pubkey. The success criteria list `note` as an accepted entry form, but the tool is author-centric (entry is "a single pubkey").

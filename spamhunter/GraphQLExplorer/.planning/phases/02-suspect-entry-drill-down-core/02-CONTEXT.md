@@ -43,9 +43,13 @@ raw-JSON inspector (Phase 3, DRILL-02/03/04); batch list triage (Phase 4). Build
   heuristic/UX research). The window-honesty denominator is shown regardless of threshold choice.
 
 ### Locked by success criteria (carried into plan — not relitigated)
-- Accept `npub` / `note` / `nprofile` bech32 AND 64-char hex; normalize to **lowercase hex**;
+- Accept `npub` / `nprofile` bech32 AND 64-char hex; normalize to **lowercase hex**;
   **query the API in hex**; **display both forms** (human-friendly + hex). Use `nostr-tools`
   (nip19) — install in this phase (was deferred from Phase 1).
+- **`note` and `nsec` are rejected** as "not an author identifier" (resolved 2026-06-24).
+  A `note` is an event id, not a pubkey — resolving it to an author is deferred (would add a
+  query + error path); silently querying it as a pubkey would produce a false zero-match.
+  `nsec` is a secret key and must never be queried or echoed.
 - **ID-03 distinction:** the UI visibly separates "couldn't parse the identifier" (malformed →
   inline validation error, e.g. red "not a valid npub/hex") from "valid identifier, zero matching
   events" (neutral, distinct empty state). A typo must NEVER read as a clean author.
