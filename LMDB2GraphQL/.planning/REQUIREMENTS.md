@@ -63,7 +63,7 @@ Defined 2026-06-24. Exposes the set of distinct pubkeys that have authored ≥1 
 ### Distinct Authors
 
 - [x] **QRY-06**: LMDB2GraphQL enumerates the distinct pubkeys present in the `Event__pubkey` index in O(distinct authors) via a seek-skip scan — read one entry, take the 32-byte pubkey prefix, then re-seek with lower bound = `increment_be(prefix)` to jump to the next author — using short per-call read transactions and never opening a write txn
-- [ ] **API-07**: A consumer can query `authors(after, limit)` and receive a paginated `AuthorsPage { authors: [String!]!, hasMore, endCursor }` of distinct hex pubkeys, with `limit` clamped to the same hard ceiling as `events()` and an opaque `after` cursor (the last pubkey returned) decoded fail-closed
+- [x] **API-07**: A consumer can query `authors(after, limit)` and receive a paginated `AuthorsPage { authors: [String!]!, hasMore, endCursor }` of distinct hex pubkeys, with `limit` clamped to the same hard ceiling as `events()` and an opaque `after` cursor (the last pubkey returned) decoded fail-closed
 
 ## v2 Requirements
 
@@ -132,7 +132,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORS-03 | Phase 6 | Complete |
 | CORS-04 | Phase 6 | Complete |
 | QRY-06 | Phase 7 | Complete |
-| API-07 | Phase 7 | Pending |
+| API-07 | Phase 7 | Complete |
 
 **Coverage:**
 

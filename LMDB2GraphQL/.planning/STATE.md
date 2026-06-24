@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Distinct Author Enumeration
 current_phase: 07
 current_phase_name: distinct-author-enumeration
-status: executing
+status: verifying
 stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-06-24T03:28:52.050Z"
+last_updated: "2026-06-24T03:38:41.535Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 26
-  completed_plans: 25
-  percent: 86
+  completed_plans: 26
+  percent: 100
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-06-23)
 
 Phase: 07 (distinct-author-enumeration) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-24 — Phase 07 execution started
 
 ## Performance Metrics
@@ -73,6 +73,7 @@ Last activity: 2026-06-24 — Phase 07 execution started
 | Phase 05-hardening P01 | 6 min | 2 tasks | 7 files |
 | Phase 05 P03 | 1227 | 2 tasks | 4 files |
 | Phase 07 P01 | 18 | 2 tasks | 2 files |
+| Phase 07 P02 | 5 | - tasks | - files |
 
 ## Accumulated Context
 
@@ -115,6 +116,9 @@ Recent decisions affecting current work:
 - [v1.1 roadmap 2026-06-23]: Phase 6 (CORS Support) created. Implementation = add tower-http CorsLayer to build_router in src/server.rs (enable "cors" feature in Cargo.toml). Policy = permissive wildcard: Allow-Origin: *, allowed methods GET/POST/OPTIONS, allow Content-Type. No Allow-Credentials. No new config knob. CorsLayer must be layered outside RequestBodyLimitLayer (correct axum 0.8 ordering) so body cap and schema gate are unaffected.
 - [Phase ?]: Seek keys must be 40 bytes (pubkey||created_at) not 32: StringUint64Cmp strips last 8 bytes as uint64 suffix
 - [Phase ?]: AuthorsPage type alias used for clippy::type_complexity compliance on distinct_authors return type
+- [Phase ?]: Two-step cursor decode for authors: decode_hex (odd-length/non-hex gate) then try_into:<[u8;32]> (exact 32-byte gate) — fail-closed T-07-CUR without byte echo
+- [Phase ?]: hex_encode_lowercase added inline to resolvers.rs (no hex crate dep — consistent with project decode_hex inline policy)
+- [Phase ?]: CLAUDE.md corrected: blanket ban on Event__* opens replaced with accurate guidance (comparator-less opens are the footgun; opens via open_index_* helpers are supported)
 
 ### Pending Todos
 
@@ -145,7 +149,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-06-24T03:28:52.042Z
+Last session: 2026-06-24T03:38:13.920Z
 Stopped at: Completed 07-01-PLAN.md
 Resume: Run `/gsd-plan-phase 6` to plan Phase 6
 Resume file: None

@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: GraphQL API** - Expose the query engine as a read-only GraphQL endpoint with hard limit ceilings (completed 2026-06-13)
 - [x] **Phase 5: Hardening & Docker Packaging** - Add health/ready gates, CI fixture assertions, and docker-compose integration for DeepFry deployment (2 plans executed 2026-06-15; verification gaps_found 6/7 — OPS-01 /ready 503 branch unreachable in production; gap-closure plan 05-03 created) (completed 2026-06-15)
 - [x] **Phase 6: CORS Support** - Enable browser frontends on any origin to query the GraphQL API via permissive wildcard CORS with correct preflight handling (completed 2026-06-24)
-- [ ] **Phase 7: Distinct Author Enumeration** - Expose the distinct pubkeys present in the database via a paginated `authors` GraphQL query, enumerated in O(distinct authors) with a seek-skip scan over the existing `Event__pubkey` index (v1.2)
+- [x] **Phase 7: Distinct Author Enumeration** - Expose the distinct pubkeys present in the database via a paginated `authors` GraphQL query, enumerated in O(distinct authors) with a seek-skip scan over the existing `Event__pubkey` index (v1.2) (completed 2026-06-24)
 
 ## Phase Details
 
@@ -215,7 +215,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `limit` is clamped to the same hard ceiling as `events()`; a malformed `after` cursor fails closed with a client error that does not echo the offending bytes
   5. Read-only invariants hold: short per-call read txns, no write txn, no `.create()`; the resolver runs via `spawn_blocking` like the existing resolvers
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 **Wave 1**
 
@@ -223,7 +223,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1: resolver consumes `distinct_authors`)*
 
-- [ ] 07-02-PLAN.md — GraphQL layer: `AuthorsPage` type + `authors(after, limit)` resolver (limit clamp ≤500, fail-closed hex cursor, spawn_blocking) + fixture integration tests + stale `CLAUDE.md` "What NOT to Use" fix (API-07)
+- [x] 07-02-PLAN.md — GraphQL layer: `AuthorsPage` type + `authors(after, limit)` resolver (limit clamp ≤500, fail-closed hex cursor, spawn_blocking) + fixture integration tests + stale `CLAUDE.md` "What NOT to Use" fix (API-07)
 
 ## Progress
 
@@ -238,4 +238,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
 | 6. CORS Support | 1/1 | Complete    | 2026-06-24 |
-| 7. Distinct Author Enumeration | 1/2 | In Progress|  |
+| 7. Distinct Author Enumeration | 2/2 | Complete   | 2026-06-24 |
