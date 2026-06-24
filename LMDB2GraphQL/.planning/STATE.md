@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-06-23)
 Phase: 07
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-06-24 — Phase 07 complete
+Last activity: 2026-06-24 — Completed quick task 260624-ogw: fix lmdb2graphql docker-compose service (in-container co-location)
 
 ## Performance Metrics
 
@@ -141,6 +141,7 @@ Recent decisions affecting current work:
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260615-1e6 | Fixture-free comparator self-check (ran against live DB → fail-closed + 243MB log dump; now Phase A monotonicity + Phase B seek round-trip, no fixture/golden vectors at runtime) | 2026-06-15 | 08af6ee | [260615-1e6-fixture-free-self-check](./quick/260615-1e6-fixture-free-self-check/) |
+| 260624-ogw | Fix lmdb2graphql docker-compose service to run in-container co-located with strfry (build.context spam/→LMDB2GraphQL/, committed container config, STRFRY_DB_PATH docs) — resolves MDB_BAD_RSLOT from native macOS binary vs Linux/Docker-held lock.mdb | 2026-06-24 | 24b87f6 | [260624-ogw-add-a-docker-compose-service-for-lmdb2gr](./quick/260624-ogw-add-a-docker-compose-service-for-lmdb2gr/) |
 
 ## Deferred Items
 
