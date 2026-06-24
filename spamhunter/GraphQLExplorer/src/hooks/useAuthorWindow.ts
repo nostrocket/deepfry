@@ -91,9 +91,21 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
   const after = useRef<string | null>(null)
   // In-flight guard so loadMore() can't append twice on a rapid double-click (Pitfall 4).
   const inFlight = useRef(false)
+  // Ref mirror of `hasMore` (WR-02): loadMore's gate must read always-current values,
+  // not values captured in a stale closure. The state drives rendering; the ref is the
+  // single source of truth for the guard. Kept in sync at every setHasMore call site.
+  const hasMoreRef = useRef(false)
   // Cancellation token for the active author — bumped on hex change / unmount so a
   // late-resolving fetch for a previous author can never write stale state.
   const runId = useRef(0)
+  // Bounded INVALID_CURSOR retry guard (WR-01). The recovery for an expired/rejected
+  // cursor is to drop it and restart page 1 — but if page 1 ITSELF returns
+  // INVALID_CURSOR (a looping lens, or a server rejecting even a null cursor), the
+  // naive recovery self-recurses forever with cursor === null and the user sees a
+  // permanent spinner. We allow exactly one cursor-drop retry; a second consecutive
+  // INVALID_CURSOR — or any INVALID_CURSOR on an already-null cursor — surfaces the
+  // error instead of recursing. Reset to 0 on every successful page fetch.
+  const cursorRetry = useRef(0)
 
   // The filter is CONSTANT across every page of one author (contract §6.4 — a cursor
   // is only valid against the identical filter it was issued for).
@@ -141,9 +153,22 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
         // INVALID_CURSOR: the opaque cursor expired/was rejected. Drop it, clear the
         // window, and restart from page 1 — NEVER hand-build a replacement cursor.
         if (apiError.kind === 'INVALID_CURSOR') {
+          // WR-01: if page 1 itself was rejected (cursor === null) or we already
+          // retried once, the restart cannot help — surface the error rather than
+          // recurse forever into a permanent spinner.
+          if (cursor === null || cursorRetry.current >= 1) {
+            setError(apiError)
+            setHasMore(false)
+            hasMoreRef.current = false
+            setLoading(false)
+            inFlight.current = false
+            return
+          }
+          cursorRetry.current += 1
           after.current = null
           setEvents([])
           setHasMore(false)
+          hasMoreRef.current = false
           inFlight.current = false
           // Restart page 1 under the same run token.
           void fetchPage(null, myRun)
@@ -162,6 +187,8 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
         setEvents((prev) => (cursor === null ? rows : [...prev, ...rows]))
         after.current = page.endCursor ?? null // opaque — stored verbatim
         setHasMore(page.hasMore)
+        hasMoreRef.current = page.hasMore
+        cursorRetry.current = 0 // WR-01: a clean page resets the INVALID_CURSOR budget.
         setError(null)
       }
       setLoading(false)
@@ -177,8 +204,10 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
     const myRun = runId.current
     after.current = null
     inFlight.current = false
+    cursorRetry.current = 0 // WR-01: fresh author starts with a full retry budget.
     setEvents([])
     setHasMore(false)
+    hasMoreRef.current = false
     setError(null)
     setLoading(true)
     void fetchPage(null, myRun)
@@ -188,12 +217,15 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
     }
   }, [hex, fetchPage])
 
-  // DRILL-06: exactly ONE next page per click. Gated on loading / in-flight so a
-  // double-click cannot append the same page twice; no-op when exhausted.
+  // DRILL-06: exactly ONE next page per click. Gated SOLELY on refs (WR-02) so the
+  // guard always reads current values — `inFlight.current` is the single source of
+  // truth for the in-flight check, `hasMoreRef.current` for exhaustion. The previous
+  // `loading` term was a stale closure capture (redundant with inFlight) and forced
+  // loadMore's identity to churn on every load/idle transition; both are dropped.
   const loadMore = useCallback(() => {
-    if (loading || inFlight.current || !hasMore) return
+    if (inFlight.current || !hasMoreRef.current) return
     void fetchPage(after.current, runId.current)
-  }, [loading, hasMore, fetchPage])
+  }, [fetchPage])
 
   return {
     events,
