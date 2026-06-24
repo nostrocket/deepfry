@@ -23,7 +23,7 @@ analyzer core is built and unit-tested alongside its transport, never depending 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard (completed 2026-06-24)
-- [ ] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator
+- [x] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator (completed 2026-06-24)
 - [ ] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector
 - [ ] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table
 
@@ -76,7 +76,7 @@ signal — always reading their conclusion against an honest, non-removable wind
   4. Every signal surface shows a non-removable window-size indicator — "computed over N fetched events · hasMore · time range" — so a partial window is never read as exoneration
   5. User can load more events (cursor pagination with a constant filter, opaque cursor passed verbatim, `INVALID_CURSOR` restarts from page 1) to widen the analysis window, and analytics re-derive live
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **UI hint**: yes
 
 Plans:
@@ -91,7 +91,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 02-03-PLAN.md — Pure asymmetric rate/burst analyzer (bounds-checked forgeable timestamps), TDD + `RatePanel` (CSS/SVG bars, persistent forgeable caveat, co-located window indicator) (DRILL-01, DRILL-05)
+- [x] 02-03-PLAN.md — Pure asymmetric rate/burst analyzer (bounds-checked forgeable timestamps), TDD + `RatePanel` (CSS/SVG bars, persistent forgeable caveat, co-located window indicator) (DRILL-01, DRILL-05)
 
 ### Phase 3: Remaining Spam Signals
 
@@ -148,6 +148,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
-| 2. Suspect Entry + Drill-Down Core | 2/3 | In Progress|  |
+| 2. Suspect Entry + Drill-Down Core | 3/3 | Complete   | 2026-06-24 |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |

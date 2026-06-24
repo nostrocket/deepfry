@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_phase_name: suspect-entry-drill-down-core
-status: executing
-stopped_at: Plan 02-02 finalized (accepted; live UI walkthrough deferred to phase-end verification per user decision 2026-06-24). Advanced to Plan 3 of 3 (rate/burst panel, 02-03).
-last_updated: "2026-06-24T14:33:22.332Z"
+status: verifying
+stopped_at: Completed 02-03 (accepted-deferred-uat; live UI walkthrough deferred to phase-end verification, NOT performed). Phase 02 ready for verification.
+last_updated: "2026-06-24T14:48:34.884Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 25
+  completed_plans: 6
+  percent: 50
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-06-24)
 
 Phase: 02 (suspect-entry-drill-down-core) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-24 — Phase 02 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P03 | ~12m | 2 tasks | 5 files |
 | Phase 02 P01 | 12 | 3 tasks | 4 files |
 | Phase 02 P02 | 22 | 3 tasks | 13 files |
+| Phase 02 P03 | 7min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,9 @@ Recent decisions affecting current work:
 - [Phase 02]: [02-02]: loadMore = single page per click, gated on loading + in-flight ref (DRILL-06); not accumulatePages load-all
 - [Phase 02]: [02-02]: hash router accepts lowercase-64hex ONLY (#/a/<hex>); navigation sets hash only after parseIdentifier normalizes; non-match -> notfound
 - [Phase 02]: [02-02]: display npub derived via parseIdentifier(hex).npub (single identifier module), not a second nip19 call site
+- [Phase 02]: [02-03]: analyzeRate asymmetric + bounds-checked — RateResult has no clean/ok/safe field; isSaneTs filters forged 64-bit createdAt into rejectedCount; sort-ascending so tightestIntervalSec never negative
+- [Phase 02]: [02-03]: BURST defaults (windowSec 60 / minEvents 5 / binSec 3600) literature-grounded; corpus-validation deferred to Phase 3; honesty posture holds regardless of thresholds
+- [Phase 02]: [02-03]: RatePanel mounted in loaded timeline branch only; amber burst tint paired with 'burst' label + spike shape; no positive/teal color; persistent forgeable caveat + co-located WindowIndicator (DRILL-05)
 
 ### Pending Todos
 
@@ -100,6 +104,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T14:33:22.323Z
-Stopped at: Plan 02-02 finalized (accepted; live UI walkthrough deferred to phase-end verification per user decision 2026-06-24). Advanced to Plan 3 of 3 (rate/burst panel, 02-03).
+Last session: 2026-06-24T14:48:34.875Z
+Stopped at: Completed 02-03 (accepted-deferred-uat; live UI walkthrough deferred to phase-end verification, NOT performed). Phase 02 ready for verification.
 Resume file: None
