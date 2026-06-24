@@ -41,12 +41,12 @@ connecting directly, no proxy.
   3. Stats poll `maxLevId` on a seconds-scale interval, pause when the tab is hidden, and surface a non-intrusive "corpus changed" nudge without aggressively auto-refetching
   4. On cold start the UI shows a distinct "connecting to relay…" state (gated on `/ready`, treating `503` as retry-with-backoff), not a generic error
   5. Every response is checked for `errors[]` on HTTP 200 before reading `data`; `extensions.code` (`INVALID_CURSOR` / `TOO_MANY_AUTHORS` / internal / validation) maps to distinct, non-blank states, and every query passes an explicit `limit`
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Scaffold (React 19 + Vite + TS) with exact-pinned `graphql@16.14.2`, codegen `client-preset` wiring, and the urql client pointed at a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`) — direct connection over wildcard CORS, no proxy
-- [ ] 01-02: Transport hardening — `errors[]`-on-200 classifier (`extensions.code`), `/ready` gating with 503 backoff, opaque-cursor accumulator scaffold, `413`/clamp awareness
-- [ ] 01-03: Stats dashboard view + `useStatsPoll` (interval, hidden-tab pause, `maxLevId`-diff nudge)
+- [ ] 01-01-PLAN.md — Scaffold in-place (React 19 + Vite 7 + TS) with exact-pinned `graphql@16.14.2` + guard, codegen `client-preset`, configurable direct-connection urql client, and a live `stats` read rendered end-to-end (FND-01, FND-02)
+- [ ] 01-02-PLAN.md — Transport hardening — single `errors[]`-on-200 `classify()` boundary, `/ready` gating with 503 bounded backoff + connecting state, opaque-cursor accumulator scaffold (FND-03)
+- [ ] 01-03-PLAN.md — Stats dashboard view + `useStatsPoll` (seconds-scale, hidden-tab pause, `maxLevId`-diff nudge, no auto-refetch) with the complete distinct-state UI (STATS-01, STATS-02)
 
 ### Phase 2: Suspect Entry + Drill-Down Core
 **Goal**: An analyst can paste a single suspect (npub or hex), land on that author's drill-down,
