@@ -76,14 +76,22 @@ signal — always reading their conclusion against an honest, non-removable wind
   4. Every signal surface shows a non-removable window-size indicator — "computed over N fetched events · hasMore · time range" — so a partial window is never read as exoneration
   5. User can load more events (cursor pagination with a constant filter, opaque cursor passed verbatim, `INVALID_CURSOR` restarts from page 1) to widen the analysis window, and analytics re-derive live
 
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
 
 Plans:
 
-- [ ] 02-01: Pure `identifier/` module (nip19 ↔ hex, validation, parse-vs-zero-match distinction) — unit-tested, no UI
-- [ ] 02-02: `useAuthorWindow` (paginate, accumulate, windowMeta, loadMore) + drill-down shell + window-size indicator
-- [ ] 02-03: Rate/burst analyzer (pure, asymmetric, bounds-checked timestamps) + timeline/burst panel with provenance caveat
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Pure `identifier/` module (nip19 ↔ hex, nsec/note reject, parse-vs-zero distinction), TDD, behind a `nostr-tools` legitimacy human-verify gate (ID-01, ID-02, ID-03)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 02-02-PLAN.md — Thin end-to-end slice: `EventsDocument` + `useAuthorWindow` (opaque cursor, single-page loadMore, INVALID_CURSOR restart) + hash router + entry bar + drill-down shell + non-removable window indicator (ID-01, ID-02, ID-03, DRILL-05, DRILL-06)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 02-03-PLAN.md — Pure asymmetric rate/burst analyzer (bounds-checked forgeable timestamps), TDD + `RatePanel` (CSS/SVG bars, persistent forgeable caveat, co-located window indicator) (DRILL-01, DRILL-05)
 
 ### Phase 3: Remaining Spam Signals
 
@@ -140,6 +148,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
-| 2. Suspect Entry + Drill-Down Core | 0/3 | Not started | - |
+| 2. Suspect Entry + Drill-Down Core | 0/3 | Planned | - |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |
