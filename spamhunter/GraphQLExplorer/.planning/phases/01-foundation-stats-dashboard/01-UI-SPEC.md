@@ -135,7 +135,7 @@ Each state is **distinct and non-blank** — no blank panel, no `TypeError`-on-n
 | **`413` payload too large** | Amber note: "Request too large — trimming and retrying." (Scaffolded; Phases 2/4.) | Recoverable (amber) |
 | **Validation error (code-less message)** | Amber note showing the server's validation message verbatim (it is safe, user-facing). | Recoverable (amber) |
 | **Internal error (code-less "internal error")** | Red hard-failure state: "Something went wrong reading the corpus. Retrying shortly." Generic — **never echo raw server internals.** | Hard failure (red) |
-| **Network / proxy down** | Red hard-failure state with a setup hint: "Can't reach the relay. Is the dev proxy running (`vite dev`) and the relay up on 127.0.0.1:8080?" | Hard failure (red) |
+| **Network / relay unreachable** | Red hard-failure state with a setup hint: "Can't reach the relay. Is the relay up on 127.0.0.1:8080 (and VITE_GRAPHQL_URL pointing at it)?" | Hard failure (red) |
 
 ---
 
@@ -163,7 +163,7 @@ Voice: **honest, terse, forensic.** Plain present-tense, no marketing adjectives
 | Error — 413 payload too large | Request too large — trimming and retrying. |
 | Error — validation | (server message, shown verbatim) |
 | Error — internal | Something went wrong reading the corpus. Retrying shortly. |
-| Error — network/proxy | Can't reach the relay. Is the dev proxy running (`vite dev`) and the relay up on 127.0.0.1:8080? |
+| Error — network/relay unreachable | Can't reach the relay. Is the relay up on 127.0.0.1:8080 (and VITE_GRAPHQL_URL pointing at it)? |
 | Destructive confirmation | not applicable — no destructive actions in this phase (read-only tool) |
 
 ---

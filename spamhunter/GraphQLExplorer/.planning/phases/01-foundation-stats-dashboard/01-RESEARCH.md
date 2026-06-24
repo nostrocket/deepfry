@@ -458,14 +458,14 @@ export function useStatsPoll(intervalMs = 5000) {
 
 **Note:** The version pins (graphql 16.14.2, urql 5/@urql/core 6, codegen cli 7/client-preset 6, vite 8/7, plugin-react 6/5, react 19.2.7, ts 5.9, parcel watcher 2.5.6) are `[VERIFIED: npm registry]` (prior session) — not assumptions. The wildcard-CORS / direct-connection facts are `[CITED: contract.md §3 v1.2]` — not assumptions.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Vite 7 vs Vite 8 pin**
+1. **Vite 7 vs Vite 8 pin** — RESOLVED: Vite 7 + @vitejs/plugin-react@5 per CONTEXT.md locked decision.
    - What we know: Both build a React+TS SPA identically; with direct connection there is no proxy feature to differ on. Vite 8.1 is one day old (2026-06-23), Vite 7 is the conservative daily-driver.
    - What's unclear: team appetite for early-adopter risk on a local-dev tool.
    - Recommendation: **Vite 7 + `@vitejs/plugin-react@5`** for stability; Vite 8 acceptable (low blast radius). A one-line decision for the planner — not a blocker.
 
-2. **urql `networkError` status access path (see Assumption A2)**
+2. **urql `networkError` status access path (see Assumption A2)** — RESOLVED: deferred to implementation (01-02 Task 1) — verify the response-status access path against @urql/core@6; the contract-fixed taxonomy is what matters, not the extraction detail.
    - What we know: urql surfaces transport failures via `result.error.networkError`; the contract defines the 503/413 statuses to branch on, and wildcard CORS guarantees those statuses reach the browser un-masked.
    - What's unclear: exact property path to the HTTP status on `@urql/core@6`.
    - Recommendation: confirm during 01-02 implementation against the installed version; the classifier taxonomy is fixed, only the extraction detail is open.
