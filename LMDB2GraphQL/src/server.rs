@@ -35,11 +35,29 @@
 /// The router has no write routes. No Mutation type in the schema (T-04-WRITE/API-06).
 /// GraphiQL and introspection are enabled — this is a read-only adapter; no credentials are at risk.
 ///
-/// ## Layer ordering note (WR-02-LAYER)
+/// ## Layer ordering note (WR-02-LAYER / CORS-04)
 ///
-/// `.layer(RequestBodyLimitLayer::new(...))` must be the OUTERMOST layer (applied after
-/// `.with_state()`). In axum 0.8, layers wrap the entire service stack in definition order;
-/// placing the body-limit layer last (outermost) ensures it fires before any handler sees the body.
+/// Layer ordering (outermost → innermost), last `.layer(...)` call = outermost:
+///   1. `CorsLayer` — OUTERMOST. Attaches `Access-Control-Allow-Origin: *` (and related
+///      CORS headers) to every response on the way out, including 413 and 503, and
+///      short-circuits OPTIONS preflight before any inner layer or handler runs.
+///      This is why 413/503 responses carry CORS headers (CORS-04) and why preflight
+///      is answered correctly even when the schema gate would return 503.
+///   2. `RequestBodyLimitLayer` — second-outermost. Enforces the 256 KiB body cap;
+///      returns 413 before the body is buffered. Still fires on every non-OPTIONS POST
+///      because CorsLayer only short-circuits OPTIONS; other methods pass through.
+///
+/// In axum 0.8, `.layer(X)` wraps the service built so far. Chaining `.layer(A).layer(B)`
+/// makes B the outer wrapper of A. CorsLayer is the last `.layer(...)` call, so it is
+/// the outermost — every response (200, 413, 503) travels out through CorsLayer last.
+///
+/// NOTE: the CORS policy for this endpoint is wildcard-without-credentials by design.
+/// The adapter serves public, unauthenticated, read-only Nostr corpus data. No
+/// session cookies or tokens are ever set. The CORS layer deliberately never makes the
+/// credentials-permitting builder call — omitting it means the browser-restricted
+/// credentials header is never emitted (CORS-03), and tower-http additionally panics at
+/// construction if that header were combined with a wildcard origin, providing
+/// defense-in-depth.
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -49,12 +67,13 @@ use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{header::CONTENT_TYPE, Method, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
 use tokio::sync::OnceCell;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::graphql::schema::AppSchema;
@@ -99,13 +118,31 @@ pub struct AppRouterState {
 /// `main.rs` populates the cell and THEN flips `state.ready` to `true`, so a 200 on `/ready`
 /// always implies the schema is present and `/graphql` is queryable.
 ///
-/// ## Layer ordering (WR-02-LAYER)
+/// ## Layer ordering (WR-02-LAYER / CORS-04)
 ///
 /// `.with_state(state)` injects `AppRouterState` into the router state.
-/// `.layer(RequestBodyLimitLayer::new(...))` is applied AFTER `.with_state()` so it is the
-/// outermost layer — enforces the body cap at the Content-Length/body-stream level regardless
-/// of extractor, returning 413 Payload Too Large before the body is buffered.
+///
+/// Layer chain (innermost first in source order, outermost last):
+///
+/// 1. `.layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))` — enforces the 256 KiB
+///    body cap at the Content-Length/body-stream level regardless of extractor, returning
+///    413 Payload Too Large before the body is buffered. This is the second-outermost layer.
+///
+/// 2. `.layer(cors)` — OUTERMOST layer (applied last). The `CorsLayer` attaches CORS headers
+///    to every outgoing response, including the 413 produced by RequestBodyLimitLayer and the
+///    503 produced by the schema gate, because it wraps the entire stack below it. OPTIONS
+///    preflight is short-circuited here before descending to any inner layer or handler,
+///    so preflight is answered correctly even when the schema cell is empty (503 state).
 pub fn build_router(state: AppRouterState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)                                            // CORS-01: Access-Control-Allow-Origin: *
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])  // CORS-02: allowed methods
+        .allow_headers([CONTENT_TYPE]);                               // CORS-02: Content-Type (GraphQL-over-HTTP)
+        // NOTE: the credentials-permitting builder call is never made — its omission means
+        // the browser-restricted credentials header is never emitted (CORS-03). tower-http
+        // additionally panics at construction if that header were combined with Any,
+        // providing defense-in-depth (T-06-01).
+
     Router::new()
         .route(
             "/graphql",
@@ -121,6 +158,10 @@ pub fn build_router(state: AppRouterState) -> Router {
         // enforces at the Content-Length / body-stream level regardless of extractor, returning
         // 413 Payload Too Large before the body is buffered.
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
+        // CORS-04: CorsLayer is the outermost layer so CORS headers appear on 413 (body-cap)
+        // and 503 (schema-gate not-ready) responses, and OPTIONS preflight short-circuits
+        // before reaching body-limit or the handler.
+        .layer(cors)
 }
 
 /// GraphiQL playground handler — returns the GraphiQL v2 HTML page (GET /graphql).
