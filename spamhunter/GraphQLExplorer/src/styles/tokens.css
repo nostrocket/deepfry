@@ -1,0 +1,47 @@
+/*
+ * Design tokens (UI-SPEC) — dark single theme, 8-pt spacing scale.
+ * Slice 3 (plan 01-03) consumes these to build the full StatsDashboard;
+ * declared now so the visual foundation is in place from the skeleton.
+ */
+:root {
+  /* Color palette */
+  --bg: #0e1116;
+  --surface: #1a1f29;
+  --accent: #3dd6c0; /* reserved: "corpus changed" nudge + live-poll active dot ONLY */
+  --text: #e6e9ef;
+  --text-muted: #9aa4b2;
+  --border: #2a313d;
+
+  /* Semantic state colors (always paired with label/shape — color never the sole signal) */
+  --connecting: #5aa9e6; /* blue  — readiness / connecting */
+  --recoverable: #e0a24e; /* amber — recoverable error */
+  --hard-fail: #e5534b; /* red   — hard failure */
+
+  /* Spacing scale (8-pt based) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+#root {
+  min-height: 100vh;
+}
