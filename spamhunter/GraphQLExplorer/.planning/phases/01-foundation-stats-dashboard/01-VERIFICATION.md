@@ -1,9 +1,11 @@
 ---
 phase: 01-foundation-stats-dashboard
 verified: 2026-06-24T19:00:00Z
-status: human_needed
-score: 9/11 must-haves verified
-behavior_unverified: 2
+status: passed
+score: 11/11 must-haves verified (9 automated + 2 human-confirmed 2026-06-24)
+behavior_unverified: 0
+human_validation: "passed 2026-06-24 — user confirmed the dashboard renders live data in-browser; UAT items 1 & 2 passed"
+post_uat_fix: "commit 63e389d — urql preferGetMethod:false (GET was hitting the GraphiQL IDE, not the API); end-to-end transport now verified browser→lens"
 overrides_applied: 0
 behavior_unverified_items:
   - truth: "Stats poll on a seconds-scale interval, pause when the tab is hidden, and surface a non-intrusive 'corpus changed' nudge on maxLevId increase without auto-refetching"
