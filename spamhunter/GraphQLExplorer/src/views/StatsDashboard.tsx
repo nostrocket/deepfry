@@ -18,6 +18,7 @@
 // internals (T-01-08).
 import type { ApiError } from '../transport/errors'
 import { useStatsPoll, type Stats } from '../hooks/useStatsPoll'
+import { ConnectingShell } from './ConnectingShell'
 import styles from './StatsDashboard.module.css'
 
 // Large integers use locale grouping so they stay legible in the mono Display slot.
@@ -178,18 +179,11 @@ export function StatsDashboard() {
   const { stats, error, loading, hasNewData, isPaused, refresh } = useStatsPoll()
 
   // Initial load, no data and no error yet → connecting/info shell (distinct, non-blank).
+  // Covers the post-ready transient gap (a 200 on /ready does not strictly guarantee the
+  // very next POST /graphql resolves before this first tick). Uses the SHARED ConnectingShell
+  // so the copy/markup is owned in one place and cannot drift from App's gate (WR-03 / IN-02).
   if (loading && !stats && !error) {
-    return (
-      <main className={styles.stateShell} role="status" aria-live="polite">
-        <div className={`${styles.stateRow} ${styles.connecting}`}>
-          <span aria-hidden="true" className={`${styles.stateDot} ${styles.connectingDot}`} />
-          <h1 className={styles.stateHeading}>Connecting to relay…</h1>
-        </div>
-        <p className={styles.stateBody}>
-          Waiting for the relay to report ready. This can take a moment on cold start.
-        </p>
-      </main>
-    )
+    return <ConnectingShell />
   }
 
   // Error before any successful load → full error shell (no cards to keep on screen).
