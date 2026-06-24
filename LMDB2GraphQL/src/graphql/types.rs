@@ -91,6 +91,41 @@ pub struct EventsPage {
     pub has_more: bool,
 }
 
+/// Page object returned by `authors(after, limit)` (API-07).
+///
+/// Returns a paginated list of distinct pubkeys present in the database — every
+/// pubkey that has authored at least one event, in byte-ascending order.
+///
+/// Maps 1:1 to the engine's `(Vec<[u8;32]>, Option<[u8;32]>)` return from `distinct_authors`:
+///   - `authors`    = 64-char lowercase hex pubkeys for this page
+///   - `end_cursor` = `Some(last_pubkey_hex)` when a full page was returned; `None` at end
+///   - `has_more`   = `end_cursor.is_some()`
+///
+/// async-graphql auto-renames:
+///   `end_cursor` → `endCursor`
+///   `has_more`   → `hasMore`
+///
+/// Consumer passes `endCursor` back as the `after: String` arg to fetch the next page.
+/// The cursor is the last pubkey in hex (NOT a `PageCursor` — different domain).
+/// Fail-closed: a malformed `after` returns a client-facing error without echoing the bytes
+/// (T-07-CUR).
+///
+/// Per-author event counts are NOT included — see CONTEXT Output-shape decision. Adding
+/// counts would change the query from O(distinct authors) to O(total events), reintroducing
+/// the unbounded fan-out this implementation deliberately avoids.
+#[derive(SimpleObject)]
+pub struct AuthorsPage {
+    /// Distinct pubkeys on this page, as 64-char lowercase hex strings (byte-ascending).
+    pub authors: Vec<String>,
+
+    /// Opaque pagination cursor (last pubkey hex). `None` = no further pages.
+    /// Renamed to `endCursor` by async-graphql.
+    pub end_cursor: Option<String>,
+
+    /// `true` if a next page exists. Renamed to `hasMore` by async-graphql.
+    pub has_more: bool,
+}
+
 /// One author's events from a `latestPerAuthor()` query (D-07, API-03).
 ///
 /// `latestPerAuthor` surfaces the engine's `HashMap<String, Vec<DecodedEvent>>` as a list

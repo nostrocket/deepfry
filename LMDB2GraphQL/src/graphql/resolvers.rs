@@ -26,9 +26,10 @@ use async_graphql::{Context, ErrorExtensions, Object, Result as GqlResult};
 
 use crate::graphql::schema::AppState;
 use crate::graphql::types::{
-    AuthorGroup, Event, EventFilterInput, EventsPage, StatsResult, TagFilterInput,
+    AuthorGroup, AuthorsPage, Event, EventFilterInput, EventsPage, StatsResult, TagFilterInput,
 };
 use crate::lmdb::payload::EVENT_PAYLOAD_DB_NAME;
+use crate::query::authors::distinct_authors;
 use crate::query::engine::{execute_query, latest_per_author};
 use crate::query::filter::{NostrFilter, PageCursor, QueryError, TagFilter};
 
@@ -173,6 +174,92 @@ impl Query {
             .collect();
 
         Ok(result)
+    }
+
+    /// authors(after, limit) — paginated distinct pubkey enumeration (API-07).
+    ///
+    /// Returns the set of every distinct pubkey that has authored at least one event,
+    /// in byte-ascending order. Each page is O(distinct authors on this page), not O(total events).
+    ///
+    /// ## Arguments
+    ///
+    /// - `after`: opaque cursor from a previous page's `endCursor` (the last pubkey as 64-char
+    ///   lowercase hex). Fail-closed — any malformed cursor (non-hex, wrong length) returns
+    ///   a client-facing error WITHOUT echoing the offending bytes (T-07-CUR).
+    /// - `limit`: max pubkeys per page. Clamped to [1, 500]; default 100 (D-04/D-05/T-07-DOS).
+    ///
+    /// ## Cursor domain
+    ///
+    /// The cursor is the last pubkey returned (hex), NOT a `PageCursor`. The two domains
+    /// are different; do NOT reuse `PageCursor` here (CONTEXT cursor decision).
+    ///
+    /// ## Read-only invariants (T-07-RDONLY)
+    ///
+    /// `distinct_authors` opens one short `RoTxn` inside the `spawn_blocking` closure.
+    /// `env` is cloned BEFORE the closure (Pitfall 1 — `RoTxn` is `!Send`).
+    async fn authors(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Opaque pagination cursor from the previous page's endCursor (last pubkey hex)")]
+        after: Option<String>,
+        #[graphql(desc = "Maximum pubkeys per page (1–500, default 100; silently clamped if over 500)")]
+        limit: Option<i32>,
+    ) -> GqlResult<AuthorsPage> {
+        let state = ctx.data_unchecked::<AppState>();
+
+        // D-04/D-05: clamp at API layer before calling engine. Default 100, ceiling 500.
+        // NEVER pass 0 — engine treats 0 as "use DEFAULT_WINDOW_SIZE", not 100.
+        let effective_limit = limit
+            .map(|l| (l.max(1) as usize).min(500))
+            .unwrap_or(100);
+
+        // T-07-CUR: decode the `after` cursor fail-closed.
+        //
+        // Validation requires TWO steps:
+        //   1. Hex-decode rejects non-hex chars and odd-length strings.
+        //   2. `try_into::<[u8; 32]>()` rejects any byte length != 32 (e.g. a 30-char hex
+        //      string decodes to 15 bytes and must be rejected here — `decode_hex` alone
+        //      would accept it).
+        //
+        // NEVER echo the offending bytes in the error message (T-07-CUR / T-04-HEX).
+        let after_bytes: Option<[u8; 32]> = match after {
+            None => None,
+            Some(ref s) => {
+                // Step 1: hex-decode (rejects non-hex and odd-length).
+                // We discard the error string from `decode_hex` (it contains the bad byte
+                // position but NOT the offending input bytes — still T-07-CUR safe, but
+                // we use a generic message for consistency with other cursor errors).
+                let bytes = crate::query::router::decode_hex(s).map_err(|_| {
+                    async_graphql::Error::new("invalid cursor: malformed hex")
+                        .extend_with(|_, ext| ext.set("code", "INVALID_CURSOR"))
+                })?;
+                // Step 2: length gate — must be exactly 32 bytes (64-char hex).
+                let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                    async_graphql::Error::new("invalid cursor: expected 64-character hex pubkey")
+                        .extend_with(|_, ext| ext.set("code", "INVALID_CURSOR"))
+                })?;
+                Some(arr)
+            }
+        };
+
+        // Clone env BEFORE the closure (Pitfall 1 — RoTxn is !Send).
+        let env = state.env.clone();
+
+        let (pubkeys, next_cursor) =
+            tokio::task::spawn_blocking(move || {
+                distinct_authors(&env, after_bytes.as_ref(), effective_limit)
+            })
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("task error: {e}")))?
+            .map_err(map_query_error)?;
+
+        // Map engine result to AuthorsPage.
+        // end_cursor is Some(last_pubkey_hex) iff next_cursor is Some — proves hasMore.
+        Ok(AuthorsPage {
+            authors: pubkeys.iter().map(hex_encode_lowercase).collect(),
+            has_more: next_cursor.is_some(),
+            end_cursor: next_cursor.as_ref().map(hex_encode_lowercase),
+        })
     }
 
     /// stats — event count, max levId, dbVersion, pinnedStrfryVersion (API-04/D-09/OPS-04).
@@ -386,6 +473,29 @@ fn read_stats(env: &heed::Env, db_version: u32, pinned_strfry_version: String) -
         // OPS-04: thread the configured pinned version into the response.
         pinned_strfry_version,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Helper: hex_encode_lowercase — [u8; 32] → 64-char lowercase hex String
+// ---------------------------------------------------------------------------
+
+/// Encode a 32-byte pubkey as a 64-character lowercase hex string.
+///
+/// There is no hex-encoder dep in this codebase (only `decode_hex` in router.rs).
+/// This function provides the encode direction used by the `authors` resolver for
+/// both the `authors` list entries and `endCursor`.
+///
+/// ## Implementation
+///
+/// Allocates a `String::with_capacity(64)` and pushes each byte formatted as
+/// `"{:02x}"` — always exactly 2 lowercase hex digits per byte.
+fn hex_encode_lowercase(pk: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in pk {
+        write!(s, "{:02x}", b).expect("write to String is infallible");
+    }
+    s
 }
 
 // ---------------------------------------------------------------------------
