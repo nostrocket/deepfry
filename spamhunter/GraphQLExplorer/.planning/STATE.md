@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: suspect-entry-drill-down-core
 status: executing
-stopped_at: "Phase 1 complete + human-validated; Phase 2 prepped (CONTEXT + UI-SPEC approved). Next: research+plan+execute Phase 2."
-last_updated: "2026-06-24T14:17:11.726Z"
+stopped_at: Plan 02-02 implementation complete (3/4 tasks committed); paused at Task 4 human-verify checkpoint — verify end-to-end suspect entry + honest window on live lens
+last_updated: "2026-06-24T14:28:56.136Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 5
   percent: 25
 ---
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P02 | ~10m | 2 tasks | 7 files |
 | Phase 01 P03 | ~12m | 2 tasks | 5 files |
 | Phase 02 P01 | 12 | 3 tasks | 4 files |
+| Phase 02 P02 | 22 | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ Recent decisions affecting current work:
 - [Phase ?]: StatsDashboard renders the complete UI-SPEC distinct-state set off classify(); teal accent confined to corpus-changed nudge + live-poll dot
 - [Phase ?]: [02-01]: parseIdentifier is the single pure normalizer (nip19-only); ParseResult discriminated union — parse failure is the ONLY error (ID-03), zero-match decided downstream
 - [Phase ?]: [02-01]: note->NOT_RECOGNIZED (event id is not an author), nsec->REJECTED_NSEC (secret never normalized); nostr-tools pinned exact 2.23.8
+- [Phase 02]: [02-02]: loadMore = single page per click, gated on loading + in-flight ref (DRILL-06); not accumulatePages load-all
+- [Phase 02]: [02-02]: hash router accepts lowercase-64hex ONLY (#/a/<hex>); navigation sets hash only after parseIdentifier normalizes; non-match -> notfound
+- [Phase 02]: [02-02]: display npub derived via parseIdentifier(hex).npub (single identifier module), not a second nip19 call site
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T14:16:50.240Z
-Stopped at: Phase 1 complete + human-validated; Phase 2 prepped (CONTEXT + UI-SPEC approved). Next: research+plan+execute Phase 2.
-Resume file: .planning/phases/02-suspect-entry-drill-down-core/02-UI-SPEC.md
+Last session: 2026-06-24T14:28:31.446Z
+Stopped at: Plan 02-02 implementation complete (3/4 tasks committed); paused at Task 4 human-verify checkpoint — verify end-to-end suspect entry + honest window on live lens
+Resume file: .planning/phases/02-suspect-entry-drill-down-core/02-02-PLAN.md

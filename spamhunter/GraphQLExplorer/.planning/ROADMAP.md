@@ -76,7 +76,7 @@ signal — always reading their conclusion against an honest, non-removable wind
   4. Every signal surface shows a non-removable window-size indicator — "computed over N fetched events · hasMore · time range" — so a partial window is never read as exoneration
   5. User can load more events (cursor pagination with a constant filter, opaque cursor passed verbatim, `INVALID_CURSOR` restarts from page 1) to widen the analysis window, and analytics re-derive live
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 **UI hint**: yes
 
 Plans:
@@ -87,7 +87,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 02-02-PLAN.md — Thin end-to-end slice: `EventsDocument` + `useAuthorWindow` (opaque cursor, single-page loadMore, INVALID_CURSOR restart) + hash router + entry bar + drill-down shell + non-removable window indicator (ID-01, ID-02, ID-03, DRILL-05, DRILL-06)
+- [x] 02-02-PLAN.md — Thin end-to-end slice: `EventsDocument` + `useAuthorWindow` (opaque cursor, single-page loadMore, INVALID_CURSOR restart) + hash router + entry bar + drill-down shell + non-removable window indicator (ID-01, ID-02, ID-03, DRILL-05, DRILL-06)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -148,6 +148,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
-| 2. Suspect Entry + Drill-Down Core | 1/3 | In Progress|  |
+| 2. Suspect Entry + Drill-Down Core | 2/3 | In Progress|  |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |
