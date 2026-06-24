@@ -238,4 +238,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
 | 6. CORS Support | 1/1 | Complete    | 2026-06-24 |
-| 7. Distinct Author Enumeration | 2/2 | Complete   | 2026-06-24 |
+| 7. Distinct Author Enumeration | 2/2 | Complete    | 2026-06-24 |
