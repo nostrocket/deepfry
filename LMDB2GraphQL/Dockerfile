@@ -8,7 +8,7 @@
 # IMPORTANT: verify static linkage after any dependency change:
 #   docker build --target builder -t lmdb2graphql-builder LMDB2GraphQL/
 #   docker run --rm lmdb2graphql-builder \
-#       ldd /src/target/release/lmdb2graphql
+#       ldd /lmdb2graphql
 # If "liblmdb.so.0" appears, add "ENV LMDB_STATIC=1" to the builder stage
 # (RESEARCH.md Pitfall 3 / Open Question 1).
 
@@ -41,14 +41,23 @@ RUN rm -f rust-toolchain.toml
 # so the runtime Alpine image needs no libc.so. The cc-compiled golpe_comparators.cpp
 # shim (build.rs) also respects this flag.
 #
-# Build for the image's NATIVE host target rather than a hardcoded triple. rust:alpine
-# is itself musl-based, so the default host target is already a musl triple
-# (x86_64-unknown-linux-musl on amd64, aarch64-unknown-linux-musl on arm64). Hardcoding
-# x86_64 broke arm64 hosts: the arm64 rust:alpine only ships the aarch64 target, so
-# `--target x86_64-unknown-linux-musl` failed with "can't find crate for core". Letting
-# cargo use the default host target keeps the build correct on both amd64 and arm64.
+# Build for the image's NATIVE host target, detected at build time, rather than a
+# hardcoded triple. rust:alpine is itself musl-based, so the host target is already a
+# musl triple (x86_64-unknown-linux-musl on amd64, aarch64-unknown-linux-musl on arm64).
+# Two constraints force this exact shape:
+#   1. Hardcoding x86_64 broke arm64 hosts — the arm64 rust:alpine ships only the
+#      aarch64 target, so `--target x86_64-unknown-linux-musl` failed with
+#      "can't find crate for core".
+#   2. An explicit `--target` is REQUIRED (even when it equals the host) so that
+#      RUSTFLAGS="+crt-static" applies only to the final target artifacts. Without
+#      `--target`, the static-CRT flag also hits proc-macro crates (async-graphql-derive),
+#      which must be dynamic libraries — failing with "does not support these crate types".
+# Copy the binary to a fixed path so the runtime COPY below is arch-agnostic.
 ENV RUSTFLAGS="-C target-feature=+crt-static"
-RUN cargo build --release
+RUN TARGET="$(rustc -vV | sed -n 's/^host: //p')" \
+    && rustup target add "$TARGET" \
+    && cargo build --release --target "$TARGET" \
+    && cp "target/$TARGET/release/lmdb2graphql" /lmdb2graphql
 
 # ── Stage 2: minimal runtime ─────────────────────────────────────────────────
 FROM alpine:3.21
@@ -59,7 +68,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
-COPY --from=builder /src/target/release/lmdb2graphql /app/lmdb2graphql
+COPY --from=builder /lmdb2graphql /app/lmdb2graphql
 
 EXPOSE 8080
 
