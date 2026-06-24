@@ -17,7 +17,7 @@ An analyst launches the tool via `vite dev` and watches live corpus stats (`even
 | Typed operations | `@graphql-codegen/cli@7` + `@graphql-codegen/client-preset@6` → `TypedDocumentNode` | Drift-free types from live introspection (Node, CORS-free). urql consumes `TypedDocumentNode` natively. NOT the legacy `typescript-urql` hooks plugin. |
 | `graphql` runtime dep | **exact-pin `16.14.2`** + automated guard | `client-preset@6` peer caps `graphql` at `^16`; `graphql@17` silently breaks codegen. `scripts/check-graphql-pin.cjs` (postinstall) fails if resolved major ≥ 17; lockfile verified to resolve 16.x. |
 | Connection model | **Direct, cross-origin, no proxy** | Lens serves wildcard CORS (`Allow-Origin: *`, contract § 3). A browser calls it directly; a Vite `server.proxy` is intentionally absent. |
-| Base URL config | One module `src/transport/config.ts`: `import.meta.env.VITE_GRAPHQL_URL ?? 'http://127.0.0.1:8080/graphql'` | FND-02 invariant: never inline-hardcoded, never relative `/graphql`. `READY_URL`/`HEALTH_URL` derive from the same base. |
+| Base URL config | One module `src/transport/config.ts`: required `import.meta.env.VITE_GRAPHQL_URL` (no hardcoded default — throws if unset/blank) | FND-02 invariant: never inline-hardcoded, never relative `/graphql`. `READY_URL`/`HEALTH_URL` derive from the same base. |
 | Error handling | Single `classify(result)` boundary in `transport/errors.ts` → 7-kind discriminated union | GraphQL errors arrive on HTTP 200 (contract § 7); views never read `errors[]`. INTERNAL never leaks server internals. |
 | Readiness | `transport/readiness.ts` `waitForReady()` polling `/ready`, 500ms→5s bounded backoff | `POST /graphql` returns 503 until startup gates pass (contract § 2); distinct "connecting…" state, never a generic error. |
 | Pagination | `transport/paginate.ts` opaque-cursor accumulator — **scaffold only** | First exercised Phase 2 (`events`); reused Phase 4 (`authors`). Cursors opaque; `INVALID_CURSOR` restarts page 1. |
@@ -57,7 +57,7 @@ GraphQLExplorer/                 # repo root = the project (in-place)
 - [x] Routing — single view, no router (deliberate; Phase 2 adds the second view)
 - [x] Real backend read — the live `stats` query over direct cross-origin urql
 - [x] UI wired to the API — StatsDashboard renders live scalars + Refresh CTA + nudge
-- [x] Deployment — documented local full-stack run: `npm run dev` against the lens on `127.0.0.1:8080`
+- [x] Deployment — documented local full-stack run: `npm run dev` against the lens at the `VITE_GRAPHQL_URL` set in `.env`
 
 ## Out of Scope (Deferred to Later Slices)
 

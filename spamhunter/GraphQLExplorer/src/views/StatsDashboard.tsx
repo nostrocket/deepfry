@@ -17,6 +17,7 @@
 // used (T-01-07). The INTERNAL state shows the generic UI-SPEC copy, never raw server
 // internals (T-01-08).
 import type { ApiError } from '../transport/errors'
+import { GRAPHQL_URL } from '../transport/config'
 import { useStatsPoll, type Stats } from '../hooks/useStatsPoll'
 import { ConnectingShell } from './ConnectingShell'
 import styles from './StatsDashboard.module.css'
@@ -165,12 +166,11 @@ function errorTreatment(error: ApiError): {
         message: 'Something went wrong reading the corpus. Retrying shortly.',
       }
     case 'NETWORK':
-      // Direct-connection wording (CONTEXT.md / contract v1.2): asks whether the
-      // relay is up on 127.0.0.1:8080 and VITE_GRAPHQL_URL points at it. No proxy mention.
+      // Direct connection (no proxy): the browser calls the lens at the configured
+      // VITE_GRAPHQL_URL. Surface the ACTUAL target so a misconfiguration is obvious.
       return {
         tone: 'hardFail',
-        message:
-          "Can't reach the relay. Is the relay up on 127.0.0.1:8080 (and VITE_GRAPHQL_URL pointing at it)?",
+        message: `Can't reach the relay at ${GRAPHQL_URL}. Is it running and is VITE_GRAPHQL_URL pointing at it?`,
       }
   }
 }

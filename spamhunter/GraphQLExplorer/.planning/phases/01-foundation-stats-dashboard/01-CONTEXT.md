@@ -9,8 +9,8 @@
 The **walking skeleton**: the thinnest end-to-end working slice proving typed GraphQL
 transport works browser→lens. Scaffold React 19 + Vite + TypeScript, generate a typed
 urql client from the live `/graphql` introspection (GraphQL Codegen client-preset),
-connect the client **directly** to the lens at a configurable base URL (env var, default
-`http://127.0.0.1:8080/graphql`) over wildcard CORS (no proxy), build the
+connect the client **directly** to the lens at a base URL from the required env var
+`VITE_GRAPHQL_URL` (no hardcoded default) over wildcard CORS (no proxy), build the
 error-classifying / readiness-gating transport layer, and render one real read — the
 corpus `stats` query — polled with a hidden-tab-aware interval and a `maxLevId`-diff
 "corpus changed" nudge.
@@ -38,10 +38,11 @@ inherit the classifier, readiness gate, and cursor-accumulator loop without rewo
 - Stack pins: `react`/`react-dom@19`, `urql@5`, `@urql/core@6`, **`graphql@16.14.2` (exact)**,
   `@graphql-codegen/cli@7`, `@graphql-codegen/client-preset@6`, `typescript@5.9`,
   `@types/react@19` / `@types/react-dom@19`.
-- **Direct connection, configurable base URL.** urql `url` resolves from
-  `import.meta.env.VITE_GRAPHQL_URL ?? 'http://127.0.0.1:8080/graphql'` in exactly one module
-  (`transport/config.ts`). Never hardcode the base URL inline; never use a relative `/graphql`
-  path; never re-introduce a Vite `server.proxy`. `READY_URL`/`HEALTH_URL` derive from the same base.
+- **Direct connection, required env-var base URL.** urql `url` resolves from the **required**
+  `import.meta.env.VITE_GRAPHQL_URL` in exactly one module (`transport/config.ts`) — there is
+  **no hardcoded default URL**; a missing/blank value throws at startup. Never hardcode the base
+  URL inline; never use a relative `/graphql` path; never re-introduce a Vite `server.proxy`.
+  `READY_URL`/`HEALTH_URL` derive from the same base.
 - **No credentials** on requests (API unauthenticated; wildcard CORS won't honor them).
 - **Error classifier as a single transport boundary** (`transport/errors.ts`): one
   `classify(result)` → discriminated union (`INVALID_CURSOR`, `TOO_MANY_AUTHORS`, `VALIDATION`,
@@ -95,8 +96,8 @@ inherit the classifier, readiness gate, and cursor-accumulator loop without rewo
 - None yet — Phase 1 establishes the foundational `transport/` patterns the whole app inherits.
 
 ### Integration Points
-- Backend: LMDB2GraphQL lens at `127.0.0.1:8080` — `POST /graphql` (data + introspection),
-  `GET /ready`, `GET /health`. Must be reachable to prove the walking skeleton and at codegen time.
+- Backend: LMDB2GraphQL lens at the `VITE_GRAPHQL_URL` configured in `.env` — `POST /graphql`
+  (data + introspection), `GET /ready`, `GET /health`. Must be reachable to prove the walking skeleton.
 
 </code_context>
 

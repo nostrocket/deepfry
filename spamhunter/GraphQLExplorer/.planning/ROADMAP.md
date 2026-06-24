@@ -39,7 +39,7 @@ connecting directly, no proxy.
 **Requirements**: FND-01, FND-02, FND-03, STATS-01, STATS-02
 **Success Criteria** (what must be TRUE):
 
-  1. App runs via `vite dev`; the urql client connects directly to a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`, never hardcoded inline) — the lens's wildcard CORS (`Access-Control-Allow-Origin: *`) means a cross-origin browser query succeeds with no proxy and no CORS error
+  1. App runs via `vite dev`; the urql client connects directly to a base URL from the required env var `VITE_GRAPHQL_URL` (no hardcoded default, never hardcoded inline) — the lens's wildcard CORS (`Access-Control-Allow-Origin: *`) means a cross-origin browser query succeeds with no proxy and no CORS error
   2. The stats dashboard shows live `eventCount`, `maxLevId`, `dbVersion`, and `pinnedStrfryVersion`, rendered from codegen-typed data (`package-lock.json` resolves `graphql` to 16.x and codegen produces typed output — never 17)
   3. Stats poll `maxLevId` on a seconds-scale interval, pause when the tab is hidden, and surface a non-intrusive "corpus changed" nudge without aggressively auto-refetching
   4. On cold start the UI shows a distinct "connecting to relay…" state (gated on `/ready`, treating `503` as retry-with-backoff), not a generic error
