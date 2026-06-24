@@ -39,7 +39,7 @@
     "plan_bounce_passes": 2,
     "auto_prune_state": false,
     "post_planning_gaps": true,
-    "security_enforcement": true,
+    "security_enforcement": false,
     "security_asvs_level": 1,
     "security_block_on": "high",
     "_auto_chain_active": false
