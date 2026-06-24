@@ -215,11 +215,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `limit` is clamped to the same hard ceiling as `events()`; a malformed `after` cursor fails closed with a client error that does not echo the offending bytes
   5. Read-only invariants hold: short per-call read txns, no write txn, no `.create()`; the resolver runs via `spawn_blocking` like the existing resolvers
 
-**Plans**: 2 plans (2 waves)
+**Plans**: 1/2 plans executed
 
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Engine layer: `increment_be` big-endian successor + `distinct_authors` seek-skip enumeration over `Event__pubkey` (O(distinct authors), short RoTxn, no write txn) + unit tests (QRY-06)
+- [x] 07-01-PLAN.md — Engine layer: `increment_be` big-endian successor + `distinct_authors` seek-skip enumeration over `Event__pubkey` (O(distinct authors), short RoTxn, no write txn) + unit tests (QRY-06)
 
 **Wave 2** *(blocked on Wave 1: resolver consumes `distinct_authors`)*
 
@@ -238,4 +238,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. GraphQL API | 2/2 | Complete    | 2026-06-13 |
 | 5. Hardening & Docker Packaging | 3/3 | Complete    | 2026-06-15 |
 | 6. CORS Support | 1/1 | Complete    | 2026-06-24 |
-| 7. Distinct Author Enumeration | 0/2 | Planning    | — |
+| 7. Distinct Author Enumeration | 1/2 | In Progress|  |
