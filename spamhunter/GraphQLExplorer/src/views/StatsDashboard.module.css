@@ -1,0 +1,322 @@
+/*
+ * StatsDashboard — hand-rolled CSS Module consuming the UI-SPEC tokens declared in
+ * src/styles/tokens.css (01-01). No component library (shadcn declined). Dark single
+ * theme, 8-pt spacing scale, mono-for-data / sans-for-chrome, weights 400/600 only.
+ *
+ * Color discipline (UI-SPEC §Color): the teal accent (--accent) appears in EXACTLY
+ * two places — the .nudge (corpus-changed badge) and the .dotLive (live-poll active
+ * dot). Nowhere else. Stat cards, headings and chrome stay neutral. Every state
+ * pairs its color with a text label and/or shape so color is never the sole signal.
+ */
+
+.dashboard {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-xl);
+  font-family: var(--font-sans);
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-lg);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Live-poll status: dot + caption. Dot is the ONLY other accent use besides .nudge. */
+.pollStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+
+/* Accent use #2: the live-poll active dot (polling + tab visible). */
+.dotLive {
+  background-color: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent);
+  animation: pulse 1.8s ease-out infinite;
+}
+
+/* Poll paused (tab hidden): neutral/dimmed, no animation, no accent. */
+.dotPaused {
+  background-color: var(--text-muted);
+  opacity: 0.5;
+  animation: none;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(61, 214, 192, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(61, 214, 192, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(61, 214, 192, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dotLive {
+    animation: none;
+  }
+}
+
+/* Refresh CTA — neutral chrome, never accent. */
+.refreshButton {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.refreshButton:hover {
+  border-color: var(--text-muted);
+}
+
+.refreshButton:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+/* ── Corpus-changed nudge (accent use #1) ─────────────────────────────── */
+.nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 6px;
+  background: rgba(61, 214, 192, 0.1); /* accent-tinted surface */
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nudgeText {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.nudgeDismiss {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px var(--space-sm);
+  cursor: pointer;
+}
+
+.nudgeDismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Stat-card grid ───────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr; /* single column by default */
+  gap: var(--space-lg);
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr 1fr; /* 2×2 at ≥ md width */
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cardLabel {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.cardValue {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* ── Empty-corpus caption (NEUTRAL — not an error) ────────────────────── */
+.emptyCaption {
+  margin-top: var(--space-lg);
+  padding: var(--space-md);
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.emptyCaptionHeading {
+  margin: 0 0 var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.emptyCaptionBody {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── State shells (connecting / error) ────────────────────────────────── */
+.stateShell {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-3xl);
+  text-align: center;
+  font-family: var(--font-sans);
+}
+
+.stateRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.stateHeading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.stateBody {
+  margin: 0;
+  max-width: 460px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Inline note (recoverable/amber, hard-fail/red) shown above the cards while
+ * the last good data is still on screen. Each pairs color with a dot + label. */
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+
+/* Semantic state colors (meaning-bound; NEVER the teal accent). */
+.connecting {
+  color: var(--connecting);
+}
+
+.recoverable {
+  color: var(--recoverable);
+}
+
+.hardFail {
+  color: var(--hard-fail);
+}
+
+/* A solid dot tinted by the parent state color (inherits currentColor). */
+.stateDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
+
+.connectingDot {
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connectingDot {
+    animation: none;
+  }
+}

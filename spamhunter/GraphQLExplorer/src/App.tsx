@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from 'urql'
-import { StatsDocument } from './queries/stats.graphql'
 import { waitForReady } from './transport/readiness'
+import { StatsDashboard } from './views/StatsDashboard'
 
-// Slice 2: gate the first query on the readiness probe (FND-03). Before mounting
-// the stats view we await waitForReady() (poll GET /ready with 503 bounded backoff)
+// Gate the first query on the readiness probe (FND-03). Before mounting the
+// dashboard we await waitForReady() (poll GET /ready with 503 bounded backoff)
 // and render a DISTINCT "connecting to relay…" state — info-blue, never an error
-// (Pitfall 8 / UI-SPEC State Treatments). Once /ready returns 200 we render the raw
-// stats proof from slice 1; plan 01-03 replaces that with the full StatsDashboard
-// (state treatments, empty-corpus copy, polling, nudge).
+// (Pitfall 8 / UI-SPEC State Treatments). Once /ready returns 200 we mount the full
+// StatsDashboard (slice 3) — the four scalars, the complete distinct-state set,
+// seconds-scale polling, hidden-tab pause, and the corpus-changed nudge.
 
 function ConnectingState() {
   // UI-SPEC "Connecting (cold start)": centered shell, info-blue indicator PAIRED
@@ -73,37 +72,5 @@ export function App() {
   }, [])
 
   if (!ready) return <ConnectingState />
-  return <Stats />
-}
-
-// Raw end-to-end proof (slice 1), now gated behind readiness. GraphQL errors arrive
-// on HTTP 200 (contract §7) — inspect error/fetching before reading data. The full
-// classifier (transport/errors.ts) is wired into the dashboard in plan 01-03.
-function Stats() {
-  const [result] = useQuery({ query: StatsDocument })
-  const { data, fetching, error } = result
-
-  if (fetching) return <p>Loading stats…</p>
-  if (error) return <p>Query failed: {error.message}</p>
-  if (!data) return <p>No data.</p>
-
-  const { eventCount, maxLevId, dbVersion, pinnedStrfryVersion } = data.stats
-
-  // pinnedStrfryVersion is a backend String! — rendered as escaped plaintext via
-  // normal JSX interpolation (React escapes by default). Never dangerouslySetInnerHTML (T-01-01).
-  return (
-    <main style={{ padding: 'var(--space-lg)', fontFamily: 'var(--font-mono)' }}>
-      <h1 style={{ fontFamily: 'var(--font-sans)' }}>Corpus stats</h1>
-      <dl>
-        <dt>eventCount</dt>
-        <dd>{eventCount}</dd>
-        <dt>maxLevId</dt>
-        <dd>{maxLevId}</dd>
-        <dt>dbVersion</dt>
-        <dd>{dbVersion}</dd>
-        <dt>pinnedStrfryVersion</dt>
-        <dd>{pinnedStrfryVersion}</dd>
-      </dl>
-    </main>
-  )
+  return <StatsDashboard />
 }
