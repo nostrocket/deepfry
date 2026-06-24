@@ -9,8 +9,8 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Foundation (transport & scaffold)
 
-- [ ] **FND-01**: App is scaffolded (React 19 + Vite + TypeScript) with `graphql` pinned to v16 and a typed client generated from the live `/graphql` introspection (GraphQL Codegen + urql)
-- [ ] **FND-02**: The urql client connects directly to the lens at a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`) — the lens serves wildcard CORS (`Access-Control-Allow-Origin: *`, contract v1.1), so a browser calls it cross-origin with no proxy; the base URL is never hardcoded inline in client code
+- [x] **FND-01**: App is scaffolded (React 19 + Vite + TypeScript) with `graphql` pinned to v16 and a typed client generated from the live `/graphql` introspection (GraphQL Codegen + urql)
+- [x] **FND-02**: The urql client connects directly to the lens at a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`) — the lens serves wildcard CORS (`Access-Control-Allow-Origin: *`, contract v1.1), so a browser calls it cross-origin with no proxy; the base URL is never hardcoded inline in client code
 - [ ] **FND-03**: Transport is robust — `errors[]` is inspected on every HTTP 200, queries are gated on `/ready` with retry/backoff on `503`, every query passes an explicit `limit`, cursors are treated as opaque, and an `INVALID_CURSOR` restarts pagination from page 1
 
 ### Identifiers (suspect entry)
@@ -80,8 +80,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | Phase 1 | Pending |
-| FND-02 | Phase 1 | Pending |
+| FND-01 | Phase 1 | Complete |
+| FND-02 | Phase 1 | Complete |
 | FND-03 | Phase 1 | Pending |
 | ID-01 | Phase 2 | Pending |
 | ID-02 | Phase 2 | Pending |
@@ -100,11 +100,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | STATS-02 | Phase 1 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 18 total
 - Mapped to phases: 18 ✓
 - Unmapped: 0 ✓
 
 **Per-phase mapping:**
+
 - Phase 1 (Foundation + Stats Dashboard): FND-01, FND-02, FND-03, STATS-01, STATS-02 (5)
 - Phase 2 (Suspect Entry + Drill-Down Core): ID-01, ID-02, ID-03, DRILL-01, DRILL-05, DRILL-06 (6)
 - Phase 3 (Remaining Spam Signals): DRILL-02, DRILL-03, DRILL-04 (3)
