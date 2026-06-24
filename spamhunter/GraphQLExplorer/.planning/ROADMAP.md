@@ -22,7 +22,7 @@ analyzer core is built and unit-tested alongside its transport, never depending 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard
+- [x] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard (completed 2026-06-24)
 - [ ] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator
 - [ ] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector
 - [ ] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table
@@ -45,7 +45,7 @@ connecting directly, no proxy.
   4. On cold start the UI shows a distinct "connecting to relay…" state (gated on `/ready`, treating `503` as retry-with-backoff), not a generic error
   5. Every response is checked for `errors[]` on HTTP 200 before reading `data`; `extensions.code` (`INVALID_CURSOR` / `TOO_MANY_AUTHORS` / internal / validation) maps to distinct, non-blank states, and every query passes an explicit `limit`
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -58,7 +58,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Stats dashboard view + `useStatsPoll` (seconds-scale, hidden-tab pause, `maxLevId`-diff nudge, no auto-refetch) with the complete distinct-state UI (STATS-01, STATS-02)
+- [x] 01-03-PLAN.md — Stats dashboard view + `useStatsPoll` (seconds-scale, hidden-tab pause, `maxLevId`-diff nudge, no auto-refetch) with the complete distinct-state UI (STATS-01, STATS-02)
 
 ### Phase 2: Suspect Entry + Drill-Down Core
 
@@ -139,7 +139,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Stats Dashboard | 2/3 | In Progress|  |
+| 1. Foundation + Stats Dashboard | 3/3 | Complete   | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 0/3 | Not started | - |
 | 3. Remaining Spam Signals | 0/2 | Not started | - |
 | 4. Batch Triage | 0/2 | Not started | - |

@@ -37,8 +37,8 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Stats dashboard
 
-- [ ] **STATS-01**: Dashboard shows corpus stats — `eventCount`, `maxLevId`, `dbVersion`, `pinnedStrfryVersion` (the last for relay-version drift)
-- [ ] **STATS-02**: Dashboard polls `maxLevId` on a sensible interval (seconds, pause on hidden tab) and signals when the corpus changed — no aggressive auto-refetch
+- [x] **STATS-01**: Dashboard shows corpus stats — `eventCount`, `maxLevId`, `dbVersion`, `pinnedStrfryVersion` (the last for relay-version drift)
+- [x] **STATS-02**: Dashboard polls `maxLevId` on a sensible interval (seconds, pause on hidden tab) and signals when the corpus changed — no aggressive auto-refetch
 
 ## v2 Requirements
 
@@ -96,8 +96,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 | BATCH-02 | Phase 4 | Pending |
 | BATCH-03 | Phase 4 | Pending |
 | BATCH-04 | Phase 4 | Pending |
-| STATS-01 | Phase 1 | Pending |
-| STATS-02 | Phase 1 | Pending |
+| STATS-01 | Phase 1 | Complete |
+| STATS-02 | Phase 1 | Complete |
 
 **Coverage:**
 
