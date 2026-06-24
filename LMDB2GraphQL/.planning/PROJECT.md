@@ -10,17 +10,16 @@ LMDB2GraphQL is a read-only adapter that exposes a [strfry](https://github.com/h
 
 Serve correct, rich queries over strfry's events by reading strfry's **live** on-disk state directly — never copying event data or indexes out of strfry (honoring the DeepFry stack's data-separation rule: *no event payloads outside StrFry*), while never writing to strfry's database.
 
-## Current Milestone: v1.1 CORS Support
+## Current Milestone: v1.2 Distinct Author Enumeration
 
-**Goal:** Allow a browser-based frontend served from a different host to query the GraphQL API cross-origin.
+**Goal:** Let a consumer paginate the complete set of distinct pubkeys that have authored at least one event, served directly from strfry's live `Event__pubkey` index in O(distinct authors).
 
-**Target features:**
-- Permissive CORS on the HTTP surface — `Access-Control-Allow-Origin: *`, no credentials
-- Correct preflight (`OPTIONS`) handling for `POST /graphql`
-- Allowed methods/headers covering the GraphQL POST + GraphiQL GET surface
-- Integration via `tower-http`'s `CorsLayer` (enable the `cors` feature), layered into `build_router` in `src/server.rs`
+**Delivered (Phase 7, completed 2026-06-24):**
+- Engine-layer `distinct_authors` seek-skip enumeration over `Event__pubkey` — one B-tree seek per distinct pubkey via `increment_be` of the 40-byte composite key (`pubkey(32)‖created_at(8)`), not a per-event walk
+- Read-only GraphQL `authors(after, limit)` query returning a paginated `AuthorsPage` of distinct hex pubkeys with `hasMore` and an opaque `endCursor`
+- `limit` clamped to the same hard ceiling as `events()`; malformed `after` cursor fails closed without echoing offending bytes; resolver runs via `spawn_blocking`
 
-**Key context:** The corpus is public Nostr relay data, so wildcard CORS is acceptable; no `Allow-Credentials`. CORS is orthogonal to the existing `bind_address` loopback-default safety control (network exposure) and the body-limit/readiness layers — it only relaxes the browser same-origin policy. No new runtime dependency (tower-http already present; just the `cors` feature flag).
+**Prior milestone — v1.1 CORS Support (Phase 6, completed 2026-06-24):** wildcard CORS (`Access-Control-Allow-Origin: *`, no credentials) with correct preflight handling, layered into `build_router` via `tower-http`'s `CorsLayer`, so a cross-host browser frontend can query `/graphql`.
 
 ## Requirements
 
@@ -35,10 +34,12 @@ Serve correct, rich queries over strfry's events by reading strfry's **live** on
 - [x] Query engine that resolves filters by scanning strfry's `Event__*` indexes and hydrating JSON via `EventPayload[levId]` point-lookups, incl. `latestPerAuthor` and NIP-40 expiration filtering — *Validated in Phase 3 (QRY-01..05)*
 - [x] GraphQL API: `events()`, `latestPerAuthor()`, `stats`, with pagination and hard limit ceilings, read-only (no mutations) — *Validated in Phase 4 (API-01..06)*
 - [x] Operations & deployment: `/health` + `/ready` probes, Docker subsystem + docker-compose with read-only `strfry-db` mount, pinned-strfry-version surfacing — *Validated in Phase 5 (OPS-01..04)*
+- [x] Permissive CORS on the HTTP surface (`Access-Control-Allow-Origin: *`, no credentials) with correct preflight (`OPTIONS`) handling, via `tower-http` `CorsLayer` layered into `build_router` — *Validated in Phase 6: CORS Support*
+- [x] Distinct-author enumeration: a paginated read-only GraphQL `authors(after, limit)` query over the live `Event__pubkey` index, O(distinct authors) via seek-skip, fail-closed cursor, `events()`-equivalent limit ceiling — *Validated in Phase 7: Distinct Author Enumeration (QRY-06, API-07)*
 
 ### Active
 
-- [ ] Permissive CORS on the HTTP surface (`Access-Control-Allow-Origin: *`, no credentials) so a browser frontend on a different host can query `/graphql`, with correct preflight (`OPTIONS`) handling — via `tower-http` `CorsLayer` layered into `build_router`
+- _None — all v1.2 requirements validated._
 
 ### Out of Scope
 
@@ -89,7 +90,8 @@ Serve correct, rich queries over strfry's events by reading strfry's **live** on
 | Co-located, same arch (assert endianness) | Avoids byte-swap/cross-arch complexity; matches deployment reality | — Pending |
 | Language = Rust | Deliberate divergence from the Go DeepFry stack for this component | — Pending |
 | Packaged as Docker subsystem + compose, read-only `strfry-db` mount | Matches existing DeepFry infra conventions | — Pending |
-| v1.1: Wildcard CORS (`Allow-Origin: *`, no credentials) | Corpus is public Nostr relay data; same-origin was the only cross-origin barrier. Wildcard lets any browser frontend query it; no credentials means no allowlist needed and no conflict with `*`. Orthogonal to `bind_address` network-exposure control | — Pending |
+| v1.1: Wildcard CORS (`Allow-Origin: *`, no credentials) | Corpus is public Nostr relay data; same-origin was the only cross-origin barrier. Wildcard lets any browser frontend query it; no credentials means no allowlist needed and no conflict with `*`. Orthogonal to `bind_address` network-exposure control | ✓ Shipped (Phase 6) |
+| v1.2: 40-byte composite seek key for distinct-author seek-skip | `StringUint64Cmp` strips the last 8 bytes as the uint64 suffix before comparing the string prefix; a 32-byte seek key would present only a 24-byte string prefix and mis-position. The seek key must be `increment_be(pubkey)‖0x00*8` (40 bytes) to jump cleanly to the next distinct pubkey in O(1) seeks | ✓ Shipped (Phase 7) |
 
 ## Evolution
 
@@ -109,4 +111,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-23 — Milestone v1.1 (CORS Support) started. v1.0 shipped (Phases 1–5, all 25 requirements validated): read-only LMDB access + byte-exact golpe comparators (Phase 1), payload decode + bounded scans (Phase 2), query engine over live indexes (Phase 3), GraphQL API (Phase 4), hardening + Docker packaging (Phase 5). v1.1 adds wildcard CORS so a cross-host browser frontend can query the GraphQL API.*
+*Last updated: 2026-06-24 — Phase 7 (Distinct Author Enumeration, QRY-06/API-07) complete; verification PASSED 5/5. v1.2 milestone delivered: a paginated read-only GraphQL `authors` query over the live `Event__pubkey` index, O(distinct authors) via seek-skip. v1.1 shipped wildcard CORS (Phase 6). v1.0 shipped Phases 1–5 (all 25 requirements): read-only LMDB + byte-exact golpe comparators (P1), payload decode + bounded scans (P2), query engine over live indexes (P3), GraphQL API (P4), hardening + Docker packaging (P5).*
