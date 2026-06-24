@@ -1,0 +1,42 @@
+/*
+ * WindowIndicator — hand-rolled CSS Module consuming src/styles/tokens.css only
+ * (no new tokens). The denominator line is muted neutral; the partial-window segment
+ * reuses the recoverable (amber) semantic treatment from StatsDashboard so a partial
+ * window reads as "incomplete", never as exoneration.
+ *
+ * Color discipline: this component uses ONLY neutral + recoverable tokens; the teal
+ * highlight token is reserved for the suspect-entry submit (UI-SPEC reservation #3)
+ * and never appears here. Amber is paired with a dot (shape) so color is never the
+ * sole signal.
+ */
+
+.indicator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Recoverable/amber emphasis for the partial-window segment (meaning-bound). */
+.recoverable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--recoverable);
+  font-weight: 600;
+}
+
+/* A solid dot tinted by the parent state color — color never the sole signal. */
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}

@@ -1,0 +1,102 @@
+/*
+ * SuspectEntryBar — hand-rolled CSS Module consuming src/styles/tokens.css only
+ * (no new tokens). The input is neutral chrome (--surface fill / --border edge); the
+ * "Inspect author" submit carries the teal accent — the app's ONE accent action
+ * (UI-SPEC accent reservation #3), modeled on the .nudgeDismiss accent treatment.
+ *
+ * The parse-failure note reuses the recoverable (amber) semantic treatment + a dot
+ * (shape) so color is never the sole signal.
+ */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.controlRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* Neutral input — NO accent on the field itself. */
+.input {
+  flex: 1 1 320px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+  border-color: var(--text-muted);
+}
+
+/* Accent submit — the app's single "go" action (accent reservation #3). */
+.submit {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  flex: none;
+}
+
+.submit:hover:not(:disabled) {
+  background: rgba(61, 214, 192, 0.1); /* accent-tinted surface */
+}
+
+.submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.submit:disabled {
+  color: var(--text-muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+/* Parse-failure inline note (recoverable/amber) — dot + label, color never alone. */
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+
+.recoverable {
+  color: var(--recoverable);
+}
+
+.stateDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
