@@ -1,7 +1,7 @@
 # lmdb2graphql.yaml — example config
 #
 # Runtime location: ~/deepfry/lmdb2graphql.yaml
-# This example file lives in: spam/config/lmdb2graphql.yaml.example
+# This example file lives in: LMDB2GraphQL/config/lmdb2graphql.yaml.example
 #
 # DeepFry convention: operator copies this file to ~/deepfry/lmdb2graphql.yaml
 # and fills in the actual strfry DB path for their deployment.

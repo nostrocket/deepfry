@@ -6,7 +6,7 @@
 # Stage 2 is a minimal Alpine runtime image that carries only the binary.
 #
 # IMPORTANT: verify static linkage after any dependency change:
-#   docker build --target builder -t lmdb2graphql-builder spam/
+#   docker build --target builder -t lmdb2graphql-builder LMDB2GraphQL/
 #   docker run --rm lmdb2graphql-builder \
 #       ldd /src/target/x86_64-unknown-linux-musl/release/lmdb2graphql
 # If "liblmdb.so.0" appears, add "ENV LMDB_STATIC=1" to the builder stage
