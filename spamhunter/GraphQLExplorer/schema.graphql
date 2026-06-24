@@ -1,0 +1,64 @@
+# LMDB2GraphQL schema — transcribed verbatim from contract.md §4 (v1.2, code-verified).
+#
+# Why this file exists (codegen fallback, per RESEARCH § "Environment Availability"):
+# the live lens enforces a query depth limit of 12 (contract §12), which rejects
+# graphql-codegen's full introspection query ("Query is nested too deep"). Codegen
+# therefore reads the schema from this checked-in SDL instead of live introspection.
+# The runtime client still talks to the live lens directly; only type GENERATION
+# uses this SDL. Keep in sync with contract §4 if the backend schema changes.
+
+type Query {
+  events(filter: EventFilterInput, after: String, limit: Int): EventsPage!
+  latestPerAuthor(kind: Int!, perAuthor: Int!, authors: [String!]!): [AuthorGroup!]!
+  authors(after: String, limit: Int): AuthorsPage!
+  stats: StatsResult!
+}
+
+type Event {
+  id: String!
+  pubkey: String!
+  kind: Int!
+  createdAt: Int!
+  content: String!
+  sig: String!
+  tags: [[String!]!]!
+  raw: String!
+}
+
+type EventsPage {
+  events: [Event!]!
+  endCursor: String
+  hasMore: Boolean!
+}
+
+type AuthorsPage {
+  authors: [String!]!
+  endCursor: String
+  hasMore: Boolean!
+}
+
+type AuthorGroup {
+  author: String!
+  events: [Event!]!
+}
+
+type StatsResult {
+  eventCount: Int!
+  maxLevId: Int!
+  dbVersion: Int!
+  pinnedStrfryVersion: String!
+}
+
+input EventFilterInput {
+  ids: [String!]
+  authors: [String!]
+  kinds: [Int!]
+  since: Int
+  until: Int
+  tag: TagFilterInput
+}
+
+input TagFilterInput {
+  name: String!
+  values: [String!]!
+}
