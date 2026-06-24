@@ -11,7 +11,7 @@
 //
 // Tests run in the existing Node vitest env (no DOM/network) — the module is pure.
 import { describe, it, expect } from 'vitest'
-import { analyzeRate, isSaneTs, type RateResult } from './rate'
+import { analyzeRate, isSaneTs, MIN_TS, MAX_TS, type RateResult } from './rate'
 import { BURST } from './thresholds'
 
 // A fixed base epoch (seconds) well inside the sane range for building fixtures.
@@ -128,5 +128,41 @@ describe('analyzeRate — tightestIntervalSec', () => {
     // Gaps after sorting: 50, 100, 200 → tightest 50.
     const result = analyzeRate([BASE, BASE + 250, BASE + 50, BASE + 150])
     expect(result.tightestIntervalSec).toBe(50)
+  })
+})
+
+describe('analyzeRate — binning over a large-but-sane gap (WR-04 regression)', () => {
+  it('bins two events ~4.1e9s apart without iterating the empty span', () => {
+    // MIN_TS=0, MAX_TS=4_102_444_800: two SANE timestamps can be the full sane
+    // range apart. The old loop advanced one empty bin (binSec) at a time — ~1.14M
+    // iterations for this gap. The integer-division jump bins it in O(events).
+    // Each event lands alone in its own bin, anchored at the first timestamp.
+    const start = MIN_TS
+    const end = MAX_TS // exactly the far edge of the sane range
+    const result = analyzeRate([start, end])
+
+    // Both timestamps are sane and analyzed; no empty bins are emitted.
+    expect(result.analyzedCount).toBe(2)
+    expect(result.rejectedCount).toBe(0)
+    expect(result.bins.length).toBe(2)
+
+    // First bin is anchored at the origin (start) with the single first event.
+    expect(result.bins[0]).toEqual({ start, count: 1 })
+    // Second bin's start is origin + k*binSec for the bin CONTAINING end.
+    const expectedSecondStart = start + Math.floor((end - start) / BURST.binSec) * BURST.binSec
+    expect(result.bins[1]).toEqual({ start: expectedSecondStart, count: 1 })
+    // The two events are too far apart to be a burst.
+    expect(result.burstDetected).toBe(false)
+  })
+
+  it('preserves multi-event-per-bin grouping across a large gap', () => {
+    // A tight pair at the origin, then a tight pair ~MAX_TS away. Each pair shares
+    // a bin (same integer bin index); the empty span between produces no bin.
+    const farBase = MAX_TS - 10
+    const result = analyzeRate([BASE, BASE + 5, farBase, farBase + 5])
+    expect(result.analyzedCount).toBe(4)
+    expect(result.bins.length).toBe(2)
+    expect(result.bins[0].count).toBe(2)
+    expect(result.bins[1].count).toBe(2)
   })
 })

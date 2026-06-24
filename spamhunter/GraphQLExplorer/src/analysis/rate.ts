@@ -58,10 +58,16 @@ function binByInterval(saneAscending: number[], binSec: number): { start: number
   let currentStart = origin
   let count = 0
   for (const t of saneAscending) {
-    // Advance the bin window until t falls inside [currentStart, currentStart + binSec).
-    while (t >= currentStart + binSec) {
+    // Jump straight to the bin containing t. Computing the bin index by integer
+    // division (rather than advancing one empty bin at a time) keeps the cost
+    // bounded by the number of events, not the timestamp span: two sane-but-distant
+    // timestamps can legitimately be ~4.1e9s apart, which would otherwise be ~1.14M
+    // empty-bin advances per gap (WR-04). Empty spans still produce no bin, and the
+    // per-bin `start` is still `origin + k*binSec`, so output is identical for every
+    // valid input.
+    if (t >= currentStart + binSec) {
       if (count > 0) bins.push({ start: currentStart, count })
-      currentStart += binSec
+      currentStart = origin + Math.floor((t - origin) / binSec) * binSec
       count = 0
     }
     count++
