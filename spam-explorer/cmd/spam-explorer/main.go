@@ -7,13 +7,21 @@
 // only if it sits on a strictly shallower level, then writes every account whose
 // valid-follower count is below a threshold to the output file.
 //
-// This file is the Phase-1 CLI skeleton: it wires the flags and leaves the
-// resolve -> BFS -> score -> output spine as a stub for Plan 02.
+// This file wires the full Phase-1 spine: resolve the seed pubkey to a UID,
+// BFS-level the reachable subgraph one frontier at a time off live Dgraph, score
+// each node by its strictly-upstream follower count, and write the
+// threshold/k-shell-filtered JSONL candidate file.
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+
+	"spam-explorer/internal/bfs"
+	"spam-explorer/internal/dgraph"
+	"spam-explorer/internal/output"
+	"spam-explorer/internal/score"
 )
 
 // Version, Commit, and Built are injected at build time via -ldflags
@@ -53,9 +61,52 @@ func main() {
 	opts := registerFlags(flag.CommandLine)
 	flag.Parse()
 
-	// Phase-1 skeleton: Plan 02 fills in the resolve -> BFS -> score -> output
-	// spine. For now, log the parsed configuration and return.
 	log.Printf("spam-explorer %s (commit %s, built %s)", Version, Commit, Built)
-	log.Printf("config: seed=%q threshold=%d exclude-shells=%d dgraph=%q max-level=%d out=%q",
-		opts.seed, opts.threshold, opts.excludeShells, opts.dgraphAddr, opts.maxLevel, opts.out)
+
+	ctx := context.Background()
+
+	// Connect to Dgraph (read-only). internal/dgraph is the only tier on the wire.
+	client, err := dgraph.NewClient(opts.dgraphAddr)
+	if err != nil {
+		log.Fatalf("Failed to create Dgraph client at %q: %v", opts.dgraphAddr, err)
+	}
+	defer client.Close()
+
+	// Resolve the seed pubkey to its internal UID. ResolveSeed already returns a
+	// clear error when the seed is absent from the graph (missing-seed guard), so
+	// main just propagates it as a fatal exit.
+	seedUID, err := client.ResolveSeed(ctx, opts.seed)
+	if err != nil {
+		log.Fatalf("Failed to resolve seed: %v", err)
+	}
+
+	// BFS-level the reachable subgraph one frontier at a time, injecting the live
+	// Dgraph expander. bfs.Level keys on UID and accumulates the follows adjacency
+	// + a uid->pubkey map for scoring and output. ExpandFrontier is the Phase-2
+	// pagination seam.
+	levels, adjacency, pubkeys, err := bfs.Level(ctx, seedUID, client.ExpandFrontier, opts.maxLevel)
+	if err != nil {
+		log.Fatalf("BFS leveling failed: %v", err)
+	}
+
+	// Score: invert the in-memory follows adjacency, counting strictly-upstream
+	// followers (D-02 — no ~follows query, no follower_count read).
+	vfc := score.Score(levels, adjacency)
+
+	// Write the threshold/k-shell-filtered JSONL candidate file.
+	emitted, err := output.Write(opts.out, vfc, levels, pubkeys, opts.threshold, opts.excludeShells)
+	if err != nil {
+		log.Fatalf("Failed to write output %q: %v", opts.out, err)
+	}
+
+	// Basic Phase-1 summary to stderr (full OUT-03/OPS logging is Phase 3): how
+	// many accounts were leveled, scored, emitted, and the deepest level reached.
+	deepest := 0
+	for _, lvl := range levels {
+		if lvl > deepest {
+			deepest = lvl
+		}
+	}
+	log.Printf("done: leveled=%d scored=%d emitted=%d deepest-level=%d -> %s",
+		len(levels), len(vfc), emitted, deepest, opts.out)
 }
