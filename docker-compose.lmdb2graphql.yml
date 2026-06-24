@@ -51,11 +51,18 @@ services:
       # IMPORTANT: use /health (liveness), NOT /ready.
       # /ready returns 503 before the LMDB self-check completes; using it here would
       # trigger Docker restart loops during startup. (RESEARCH.md Pitfall 5 / T-05-08)
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # Use 127.0.0.1 (NOT localhost): the server binds IPv4 0.0.0.0, but inside Alpine
+      # `localhost` resolves to IPv6 ::1 first — wget hits ::1, gets "connection refused",
+      # and the container is wrongly marked unhealthy despite a working service.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 10s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      # The startup self-check blocks the runtime (no HTTP accept) until all six Event__*
+      # indexes are verified against the live DB — ~35s on a 341 GiB DB and growing.
+      # start_period must comfortably exceed that, or healthchecks fail mid-self-check and
+      # flap the container to "unhealthy" before it is ever ready. (RESEARCH.md Pitfall 5)
+      start_period: 120s
     networks:
       - deepfry-net
 
