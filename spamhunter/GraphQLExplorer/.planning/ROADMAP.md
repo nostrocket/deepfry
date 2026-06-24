@@ -3,8 +3,9 @@
 ## Overview
 
 A read-only, author-centric spam-investigation SPA over the LMDB2GraphQL lens. The journey
-starts by standing up a robust typed transport through a Vite dev proxy and proving it
-end-to-end with the simplest real query (the corpus stats dashboard). It then delivers the
+starts by standing up a robust typed transport — a direct urql client against the lens's
+wildcard CORS — and proving it end-to-end with the simplest real query (the corpus stats
+dashboard). It then delivers the
 core value as a vertical slice — paste a suspect pubkey, drill into their event timeline with
 the window-honesty indicator baked in from the first signal — and broadens that drill-down with
 the remaining spam signals (duplicate content, tag/mention fan-out, kind distribution + raw
@@ -20,7 +21,7 @@ analyzer core is built and unit-tested alongside its transport, never depending 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation + Stats Dashboard** - Typed urql client through a Vite proxy with robust transport, proven by a polled corpus-stats dashboard
+- [ ] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard
 - [ ] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator
 - [ ] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector
 - [ ] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table
@@ -29,12 +30,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ### Phase 1: Foundation + Stats Dashboard
 **Goal**: An analyst can launch the tool through `vite dev` and watch live corpus stats update,
-proving the typed client, the CORS-solving proxy, and robust transport all work end-to-end.
+proving the typed client and robust transport work end-to-end against the lens's wildcard CORS —
+connecting directly, no proxy.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: FND-01, FND-02, FND-03, STATS-01, STATS-02
 **Success Criteria** (what must be TRUE):
-  1. App runs via `vite dev`; the urql client calls the relative `/graphql` URL (never an absolute API host) and the dev proxy forwards `/graphql`, `/ready`, `/health` to `127.0.0.1:8080` with `changeOrigin` — a browser query succeeds with no CORS error
+  1. App runs via `vite dev`; the urql client connects directly to a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`, never hardcoded inline) — the lens's wildcard CORS (`Access-Control-Allow-Origin: *`) means a cross-origin browser query succeeds with no proxy and no CORS error
   2. The stats dashboard shows live `eventCount`, `maxLevId`, `dbVersion`, and `pinnedStrfryVersion`, rendered from codegen-typed data (`package-lock.json` resolves `graphql` to 16.x and codegen produces typed output — never 17)
   3. Stats poll `maxLevId` on a seconds-scale interval, pause when the tab is hidden, and surface a non-intrusive "corpus changed" nudge without aggressively auto-refetching
   4. On cold start the UI shows a distinct "connecting to relay…" state (gated on `/ready`, treating `503` as retry-with-backoff), not a generic error
@@ -42,7 +44,7 @@ proving the typed client, the CORS-solving proxy, and robust transport all work 
 **Plans**: TBD
 
 Plans:
-- [ ] 01-01: Scaffold (React 19 + Vite + TS) with exact-pinned `graphql@16.14.2`, codegen `client-preset` wiring, Vite dev proxy, and the relative-URL urql client
+- [ ] 01-01: Scaffold (React 19 + Vite + TS) with exact-pinned `graphql@16.14.2`, codegen `client-preset` wiring, and the urql client pointed at a configurable base URL (env var, default `http://127.0.0.1:8080/graphql`) — direct connection over wildcard CORS, no proxy
 - [ ] 01-02: Transport hardening — `errors[]`-on-200 classifier (`extensions.code`), `/ready` gating with 503 backoff, opaque-cursor accumulator scaffold, `413`/clamp awareness
 - [ ] 01-03: Stats dashboard view + `useStatsPoll` (interval, hidden-tab pause, `maxLevId`-diff nudge)
 
@@ -92,17 +94,18 @@ sortable table, then drill into any author — without silently truncating, misa
 overloading the backend.
 **Mode:** mvp
 **Depends on**: Phase 3
-**Requirements**: BATCH-01, BATCH-02, BATCH-03
+**Requirements**: BATCH-01, BATCH-02, BATCH-03, BATCH-04
 **Success Criteria** (what must be TRUE):
   1. User can import a batch of pubkeys by pasting a list or uploading a file; mixed `npub`/hex entries are normalized (reusing the Phase 2 identifier module), deduped, and counted
   2. Batch `latestPerAuthor` queries are chunked to respect both the ≤1000-author cap (`TOO_MANY_AUTHORS`) and the 256 KiB body limit (`413`) — chunking on whichever binds first — using a deliberately small `perAuthor` (3–10) for triage
   3. User sees a triage table of authors with at-a-glance spam indicators; rows are matched by the `author` key (never zipped by index), and authors with zero matching events are shown explicitly as "0 events"
   4. Clicking a triage row opens that author's full Phase 2/3 drill-down for deeper investigation
+  5. As an alternative to pasting/uploading, the user can enumerate the corpus's distinct authors via the paginated `authors` query (opaque cursor, byte-ascending, loop until `hasMore` is false) and feed the discovered pubkeys into the same chunked triage pipeline — with the window-honesty posture applied (the enumerated set is a live snapshot, shown with its count)
 **Plans**: TBD
 **UI hint**: yes
 
 Plans:
-- [ ] 04-01: Batch import view (paste/file parse, dedupe, ≤1000 + body-size guards) + `useLatestPerAuthor` dual-axis chunking, merge-by-author
+- [ ] 04-01: Batch import (paste/file parse + `authors`-query enumeration source, dedupe, ≤1000 + body-size guards) + `useLatestPerAuthor` dual-axis chunking, merge-by-author
 - [ ] 04-02: Sortable triage table (transparent per-signal indicators, explicit "0 events" rows) with drill-in links
 
 ## Progress
