@@ -24,7 +24,7 @@ current_phase_name: batch-triage
 See: .planning/PROJECT.md (updated 2026-06-24)
 
 **Core value:** An analyst can take a suspect pubkey and quickly judge whether the author is a spammer.
-**Current focus:** Phase 04 — batch-triage
+**Current focus:** v1.0 MVP shipped 2026-06-25 — planning next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
