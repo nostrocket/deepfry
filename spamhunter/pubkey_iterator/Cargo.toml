@@ -7,6 +7,13 @@ edition = "2021"
 # persistence subset (rusqlite/serde/serde_json/flume); Phase 2 owns the GraphQL
 # transport (reqwest/tokio/thiserror). The remainder (rayon/clap/gaoya/linfa)
 # stays for its owning phase — do NOT add rayon or fetch-pipeline deps here.
+# The connectivity-proving binary (plan 02-03, D-12): a minimal `--resume`
+# entry point over the public lib API. The crate stays a library + this one bin;
+# the full clap `run`/`export` surface is Phase 5.
+[[bin]]
+name = "pubkey_iterator"
+path = "src/main.rs"
+
 [dependencies]
 # rusqlite: synchronous embedded SQLite. `bundled` compiles SQLite in (no system
 # libsqlite3, reproducible across hosts). sqlx was REJECTED for v1 per STACK.md:
