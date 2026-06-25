@@ -65,8 +65,11 @@ fn read_tau_from_run_snapshot(conn: &Connection, run_id: i64) -> rusqlite::Resul
 ///
 /// Idempotent (Pitfall 5): clears the run's prior rows, then re-inserts from
 /// `score WHERE run_id=?1 AND suspected=1`, stamping each row with the run's
-/// snapshot τ and a `ROW_NUMBER() OVER (ORDER BY score DESC)` review rank, inside
-/// one transaction. Open Q2 resolved: NO whitelist filter — a whitelisted pubkey
+/// snapshot τ and a `ROW_NUMBER() OVER (ORDER BY score DESC, pubkey ASC)` review
+/// rank, inside one transaction. The `pubkey ASC` tiebreaker makes the window a
+/// total order so the rank is deterministic across re-exports even when scores
+/// tie (HIGH-01 — e.g. every zero-event non-whitelisted pubkey scores
+/// identically). Open Q2 resolved: NO whitelist filter — a whitelisted pubkey
 /// can still be content-suspected, so the predicate is `suspected = 1` only.
 /// Returns the number of rows materialized.
 ///
@@ -84,7 +87,7 @@ pub fn materialize_suspected(conn: &mut Connection, run_id: i64) -> rusqlite::Re
     let n = tx.execute(
         "INSERT INTO suspected_spammer (run_id, pubkey, score, tau, rank, exported_at)
          SELECT run_id, pubkey, score, ?2,
-                ROW_NUMBER() OVER (ORDER BY score DESC) AS rank,
+                ROW_NUMBER() OVER (ORDER BY score DESC, pubkey ASC) AS rank,
                 ?3
          FROM score
          WHERE run_id = ?1 AND suspected = 1",
@@ -241,6 +244,67 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total, 1, "exactly one row per (run_id, pubkey) after re-export");
+    }
+
+    /// HIGH-01: with score ties (every zero-event non-whitelisted pubkey scores
+    /// identically), the `rank` must be deterministic across re-exports. The
+    /// `ORDER BY score DESC, pubkey ASC` tiebreaker totally orders the window, so
+    /// two `materialize_suspected` calls on the same data assign an identical
+    /// (pubkey → rank) map. Seeds ≥2 score-TIED suspected pubkeys, exports twice,
+    /// and asserts the two rank maps are identical (and follow pubkey ASC among
+    /// the tied scores).
+    #[test]
+    fn rank_is_deterministic_on_score_ties() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{\"tau\":0.5}").expect("begin_run");
+
+        // Three suspected pubkeys, all at the SAME score (0.8) — the tie case.
+        // Seeded out of pubkey-sort order to prove the tiebreaker, not insertion
+        // order, decides the rank.
+        let pk_b = "bb00000000000000000000000000000000000000000000000000000000000002";
+        let pk_a = "bb00000000000000000000000000000000000000000000000000000000000001";
+        let pk_c = "bb00000000000000000000000000000000000000000000000000000000000003";
+        seed_scored_pubkey(&store, run_id, pk_b, 0.8, true);
+        seed_scored_pubkey(&store, run_id, pk_a, 0.8, true);
+        seed_scored_pubkey(&store, run_id, pk_c, 0.8, true);
+        store.mark_run_done(run_id, 100).expect("mark done");
+
+        let mut conn = store.export_write_conn().expect("export write conn");
+
+        // Read the (pubkey → rank) map after a materialization.
+        let read_rank_map = |conn: &Connection| -> Vec<(String, i64)> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT pubkey, rank FROM suspected_spammer \
+                     WHERE run_id = ?1 ORDER BY rank",
+                )
+                .unwrap();
+            stmt.query_map(params![run_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        materialize_suspected(&mut conn, run_id).expect("materialize #1");
+        let first = read_rank_map(&conn);
+        materialize_suspected(&mut conn, run_id).expect("materialize #2");
+        let second = read_rank_map(&conn);
+
+        assert_eq!(
+            first, second,
+            "rank assignment is identical across two re-exports of tied scores"
+        );
+        // Among tied scores, pubkey ASC decides: pk_a (…001) < pk_b (…002) < pk_c (…003).
+        assert_eq!(
+            first,
+            vec![
+                (pk_a.to_string(), 1),
+                (pk_b.to_string(), 2),
+                (pk_c.to_string(), 3),
+            ],
+            "tied scores rank by pubkey ASC (the deterministic tiebreaker)"
+        );
     }
 
     /// SCORE-03 / D-05: an exported pubkey's per-layer evidence is JOINable from
