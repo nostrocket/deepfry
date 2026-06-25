@@ -78,3 +78,15 @@ pub mod run;
 /// touching only `suspected_spammer`, preserving the actor's single-writer
 /// invariant. Pure SQLite (D-05: no flat-file export).
 pub mod export;
+
+/// The offline logistic tuner (Phase 6, TUNE-02/TUNE-05, D-03/D-06): `run_tune`
+/// reads the `signal × backpropagation` join for one run, pivots it into a
+/// fixed-order feature matrix (`labeled_features`, sparse → 0.0), fits a
+/// deterministic `linfa-logistic` `LogisticRegression`, then backtests the
+/// freshly-fit STAGING weights against the full labeled set via the shared
+/// `detect::combine` — adopting them into the `weight` table with provenance
+/// (`tuned_at`/`tuned_from_run`) ONLY on a STRICT pass (zero new FN, zero new FP).
+/// A regression BLOCKS adoption and leaves the live weight rows unchanged. τ
+/// (`_threshold`) is never re-fit. Synchronous (no tokio) — pure SQLite +
+/// in-process math; the weight write uses the short-lived `weight_write_conn`.
+pub mod tune;
