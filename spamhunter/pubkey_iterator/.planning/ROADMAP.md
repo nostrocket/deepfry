@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Persistence Foundation** - SQLite store, schema, single-writer idempotent UPSERT API — the dependency root (completed 2026-06-25)
 - [x] **Phase 2: GraphQL Client + Author Enumeration** - Prove the contract: paginate every distinct pubkey, resumably, with graceful adapter-error handling (completed 2026-06-25)
-- [ ] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory
+- [x] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory (completed 2026-06-25)
 - [ ] **Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)** - Layer trait + L7 combiner + P1 layers (L0/L1/L3/L4) → first per-pubkey spam score with per-layer evidence
 - [ ] **Phase 5: CLI `run` + `export` (first shippable list)** - Drive a full batch and export the reviewable suspected-spammer list with per-layer reasons
 - [ ] **Phase 6: Labeling + Logistic Tuner + Backtest Gate** - Capture human labels, re-fit weights from labels, and gate adoption on a no-regression backtest
@@ -79,14 +79,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running the pipeline over a large synthetic author set holds memory bounded by the channel capacity (not by corpus size) — fetch back-pressures on the channel and CPU analysis runs off the tokio threads.
   4. A no-op (pass-through) consumer at the end of the pipeline proves end-to-end flow from enumeration through fetch to a rayon stage with no unbounded buffering.
 
-**Plans**: 2 plans
+**Plans**: 2/2 plans complete
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Additive `latestPerAuthor` query + serde structs + client wrapper; `fetch_batch` (match-by-author, 413 shrink-retry) + `read_pubkeys` enumeration source (INGEST-02)
+- [x] 03-01-PLAN.md — Additive `latestPerAuthor` query + serde structs + client wrapper; `fetch_batch` (match-by-author, 413 shrink-retry) + `read_pubkeys` enumeration source (INGEST-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — `run_pipeline`: tokio fetcher → bounded `flume` channel → rayon no-op consumer (injected-closure Phase-4 seam); bounded-memory watermark proof + live `latestPerAuthor` deserialization check (INGEST-03, INGEST-02)
+- [x] 03-02-PLAN.md — `run_pipeline`: tokio fetcher → bounded `flume` channel → rayon no-op consumer (injected-closure Phase-4 seam); bounded-memory watermark proof + live `latestPerAuthor` deserialization check (INGEST-03, INGEST-02)
 
 ### Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)
 
@@ -139,7 +139,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 |-------|----------------|--------|-----------|
 | 1. Persistence Foundation | 1/1 | Complete    | 2026-06-25 |
 | 2. GraphQL Client + Author Enumeration | 3/3 | Complete    | 2026-06-25 |
-| 3. Fetcher + Bounded Streaming Pipeline | 0/2 | Not started | - |
+| 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete   | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
 | 5. CLI `run` + `export` | 0/TBD | Not started | - |
 | 6. Labeling + Logistic Tuner + Backtest Gate | 0/TBD | Not started | - |
