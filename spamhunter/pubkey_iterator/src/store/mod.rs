@@ -463,6 +463,124 @@ mod tests {
         assert_eq!(n_a, 1, "re-inserting the same pubkey leaves one row");
     }
 
+    /// Read a `run` row back as a `model::Run` (test helper).
+    fn read_run(path: &std::path::Path, run_id: i64) -> crate::model::Run {
+        let conn = Connection::open(path).expect("reader");
+        conn.query_row(
+            "SELECT run_id, started_at, finished_at, max_lev_id_start, max_lev_id_end, \
+             last_cursor, config_json, status FROM run WHERE run_id = ?1",
+            rusqlite::params![run_id],
+            |r| {
+                Ok(crate::model::Run {
+                    run_id: r.get(0)?,
+                    started_at: r.get(1)?,
+                    finished_at: r.get(2)?,
+                    max_lev_id_start: r.get(3)?,
+                    max_lev_id_end: r.get(4)?,
+                    last_cursor: r.get(5)?,
+                    config_json: r.get(6)?,
+                    status: r.get(7)?,
+                })
+            },
+        )
+        .expect("read run row")
+    }
+
+    /// D-01/D-02: `latest_unfinished_run` returns the highest-id non-done run,
+    /// or `None` when every run is done.
+    #[test]
+    fn latest_unfinished_run_selection() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+
+        // No runs yet → None.
+        assert!(store.latest_unfinished_run().expect("query").is_none());
+
+        // One running run → Some(that run).
+        let r1 = store.begin_run("{}").expect("begin_run r1");
+        let got = store.latest_unfinished_run().expect("query").expect("some run");
+        assert_eq!(got.run_id, r1);
+        assert_eq!(got.status, "running");
+
+        // A second non-done run → highest run_id wins.
+        let r2 = store.begin_run("{}").expect("begin_run r2");
+        let got = store.latest_unfinished_run().expect("query").expect("some run");
+        assert_eq!(got.run_id, r2, "highest non-done run_id selected");
+
+        // Mark both done → None.
+        store.mark_run_done(r1, 10).expect("done r1");
+        store.mark_run_done(r2, 20).expect("done r2");
+        assert!(
+            store.latest_unfinished_run().expect("query").is_none(),
+            "all runs done → None"
+        );
+    }
+
+    /// D-07: `set_run_cursor` round-trips the opaque cursor string.
+    #[test]
+    fn set_run_cursor_roundtrip() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        store.set_run_cursor(run_id, "cur1").expect("set cursor");
+        assert_eq!(read_run(&path, run_id).last_cursor.as_deref(), Some("cur1"));
+
+        store.set_run_cursor(run_id, "cur2").expect("set cursor 2");
+        assert_eq!(read_run(&path, run_id).last_cursor.as_deref(), Some("cur2"));
+    }
+
+    /// D-09: `set_run_max_lev_start` / `set_run_max_lev_end` round-trip.
+    #[test]
+    fn set_run_max_lev_roundtrip() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        store.set_run_max_lev_start(run_id, 42).expect("set start");
+        store.set_run_max_lev_end(run_id, 99).expect("set end");
+
+        let run = read_run(&path, run_id);
+        assert_eq!(run.max_lev_id_start, Some(42));
+        assert_eq!(run.max_lev_id_end, Some(99));
+    }
+
+    /// D-07: `mark_run_aborted` sets status + finished_at but MUST leave
+    /// `last_cursor` unchanged (a failure never rewrites the cursor).
+    #[test]
+    fn mark_run_aborted_preserves_cursor() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        store.set_run_cursor(run_id, "lastgood").expect("set cursor");
+
+        store.mark_run_aborted(run_id).expect("abort");
+
+        let run = read_run(&path, run_id);
+        assert_eq!(run.status, "aborted");
+        assert!(run.finished_at.is_some(), "finished_at recorded");
+        assert_eq!(
+            run.last_cursor.as_deref(),
+            Some("lastgood"),
+            "abort must not touch last_cursor (D-07)"
+        );
+    }
+
+    /// `mark_run_done` sets status, finished_at, and max_lev_id_end.
+    #[test]
+    fn mark_run_done_sets_status_and_max_end() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        store.mark_run_done(run_id, 12345).expect("done");
+
+        let run = read_run(&path, run_id);
+        assert_eq!(run.status, "done");
+        assert!(run.finished_at.is_some(), "finished_at recorded");
+        assert_eq!(run.max_lev_id_end, Some(12345));
+    }
+
     /// Proves SCORE-02 determinism: the same synthetic batch into two fresh DBs
     /// yields row-set + value-equal score and signal tables.
     #[test]
