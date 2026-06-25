@@ -92,7 +92,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 2] flagged for deeper UX/heuristic research: window-honesty framing + asymmetric burst interpretation under forgeable `createdAt` (MEDIUM confidence)
+- [Phase 2] RESOLVED 2026-06-25 — non-removable window-honesty indicator + asymmetric burst analyzer with persistent forgeable-`createdAt` caveat built and human-validated.
 - [Phase 3] near-dup thresholds (Jaccard ≈0.8, shingle size, burst cutoffs) are sane defaults — validate against the live corpus
 
 ## Deferred Items
