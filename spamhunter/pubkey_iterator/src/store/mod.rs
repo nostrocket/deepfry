@@ -415,6 +415,38 @@ mod tests {
         assert_eq!(got, expected_signals, "signals round-trip identically");
     }
 
+    /// Phase-2 D-04: `insert_pubkeys` persists each distinct pubkey exactly
+    /// once through the single writer, and re-inserting the same pubkey (across
+    /// messages or within one vec) is idempotent (INSERT OR IGNORE → one row).
+    #[test]
+    fn insert_pubkeys_is_idempotent() {
+        let (_dir, path) = temp_db();
+        let pk_a = "ba00000000000000000000000000000000000000000000000000000000000001";
+        let pk_b = "ba00000000000000000000000000000000000000000000000000000000000002";
+
+        let store = Store::open(&path).expect("open store");
+        // Two distinct pubkeys in one message.
+        store.insert_pubkeys(vec![pk_a.into(), pk_b.into()]);
+        // pk_a again in a second message + a duplicate within the vec.
+        store.insert_pubkeys(vec![pk_a.into(), pk_a.into()]);
+        store.close().expect("flush + join writer");
+
+        let conn = Connection::open(&path).expect("reader");
+        let total: i64 = conn
+            .query_row("SELECT count(*) FROM pubkey", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 2, "exactly one row per distinct pubkey");
+
+        let n_a: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pubkey WHERE pubkey = ?1",
+                rusqlite::params![pk_a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_a, 1, "re-inserting the same pubkey leaves one row");
+    }
+
     /// Proves SCORE-02 determinism: the same synthetic batch into two fresh DBs
     /// yields row-set + value-equal score and signal tables.
     #[test]
