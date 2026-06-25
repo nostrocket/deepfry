@@ -18,9 +18,9 @@
 // (T-04-06). The file is read in-browser via the FileReader platform API and is NEVER sent
 // anywhere; TRIAGE.maxFileBytes is enforced before reading (T-04-07).
 import { useMemo, useRef, useState } from 'react'
-import { parseIdentifier } from '../identifier/identifier'
 import { useAuthorEnumeration } from '../hooks/useAuthorEnumeration'
 import { chunkAuthors, chunkSize } from '../analysis/chunk'
+import { parseBatchInput, type BatchImportResult } from '../analysis/batchImport'
 import { TRIAGE } from '../analysis/thresholds'
 import { TriageTable } from './TriageTable'
 import styles from './BatchTriage.module.css'
@@ -28,42 +28,10 @@ import styles from './BatchTriage.module.css'
 const NUMBER_FORMAT = new Intl.NumberFormat()
 const formatInt = (n: number): string => NUMBER_FORMAT.format(n)
 
-// The result of tokenizing + normalizing free text into a deduped lowercase-hex set.
-interface ParsedTokens {
-  /** Deduped lowercase-hex pubkeys, in first-seen order. */
-  valid: string[]
-  /** Count of duplicate valid tokens removed (valid occurrences beyond the first). */
-  duplicates: number
-  /** The raw tokens that failed to parse, verbatim (rendered as escaped plaintext). */
-  unparseable: string[]
-}
-
-// Split free text on whitespace/commas, route EVERY token through the single sanctioned
-// parseIdentifier (hex/npub/nprofile accepted; note/nsec/junk rejected), dedupe valid hexes
-// into a Set, and count duplicates + collect the unparseable tokens. Never silently drops.
-function parseBatchInput(text: string): ParsedTokens {
-  const tokens = text.split(/[\s,]+/).filter((t) => t.length > 0)
-  const seen = new Set<string>()
-  const valid: string[] = []
-  const unparseable: string[] = []
-  let duplicates = 0
-  for (const token of tokens) {
-    const r = parseIdentifier(token)
-    if (r.ok) {
-      if (seen.has(r.hex)) {
-        duplicates += 1
-      } else {
-        seen.add(r.hex)
-        valid.push(r.hex)
-      }
-    } else {
-      // EMPTY can't occur (empty tokens were filtered); NOT_RECOGNIZED + REJECTED_NSEC are
-      // both "the analyst should see and fix this" — listed verbatim, never hex-normalized.
-      unparseable.push(token)
-    }
-  }
-  return { valid, duplicates, unparseable }
-}
+// CR-01: the tokenizer is the SINGLE tested module `parseBatchInput` from analysis/batchImport
+// — the view no longer re-implements it. There is exactly ONE bech32-decode site (inside the
+// module, via parseIdentifier). The module returns BatchImportResult
+// ({ validHexes, duplicateCount, unparseable }); the view consumes those fields directly.
 
 // Merge two deduped hex sets in first-seen order (paste/file ∪ enumerated), de-duplicating.
 function mergeHexSets(a: string[], b: string[]): string[] {
@@ -81,7 +49,7 @@ function mergeHexSets(a: string[], b: string[]): string[] {
 export function BatchImport() {
   // Paste/file source: the parsed tokens from the textarea + the most recent file read.
   const [pasteText, setPasteText] = useState('')
-  const [fileTokens, setFileTokens] = useState<ParsedTokens | null>(null)
+  const [fileTokens, setFileTokens] = useState<BatchImportResult | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -96,10 +64,10 @@ export function BatchImport() {
 
   // The combined import summary across paste + file sources (sum the counts; union the hexes).
   const validHexes = useMemo(
-    () => mergeHexSets(pasteParsed.valid, fileTokens?.valid ?? []),
-    [pasteParsed.valid, fileTokens],
+    () => mergeHexSets(pasteParsed.validHexes, fileTokens?.validHexes ?? []),
+    [pasteParsed.validHexes, fileTokens],
   )
-  const duplicates = pasteParsed.duplicates + (fileTokens?.duplicates ?? 0)
+  const duplicates = pasteParsed.duplicateCount + (fileTokens?.duplicateCount ?? 0)
   const unparseable = useMemo(
     () => [...pasteParsed.unparseable, ...(fileTokens?.unparseable ?? [])],
     [pasteParsed.unparseable, fileTokens],
