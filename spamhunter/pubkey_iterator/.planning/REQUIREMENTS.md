@@ -16,19 +16,19 @@ Requirements for the initial release. Each maps to a roadmap phase.
 
 ### Detection
 
-- [ ] **DETECT-01**: Whitelist layer queries the whitelist (Dgraph `Profile` / whitelist-plugin); **absence emits a weighted spam sub-score, presence clears only this layer** (no exemption)
-- [ ] **DETECT-02**: Within-pubkey near-duplicate layer detects repeated / copy-paste content across a pubkey's own events (SimHash + Hamming threshold) and emits a sub-score
-- [ ] **DETECT-03**: Content-entropy layer flags low-entropy templated text and high-entropy gibberish, plus URL/emoji/hashtag density, and emits a sub-score
-- [ ] **DETECT-04**: Link & mention layer scores URL ratio, repeated domains, mass `p`-tag mentions, and hashtag stuffing, and emits a sub-score
-- [ ] **DETECT-05**: Every layer emits a normalized sub-score xᵢ∈[0,1] through a common Layer contract, is independently enable/disable-able, and exposes a tunable threshold/weight
+- [x] **DETECT-01**: Whitelist layer queries the whitelist (Dgraph `Profile` / whitelist-plugin); **absence emits a weighted spam sub-score, presence clears only this layer** (no exemption)
+- [x] **DETECT-02**: Within-pubkey near-duplicate layer detects repeated / copy-paste content across a pubkey's own events (SimHash + Hamming threshold) and emits a sub-score
+- [x] **DETECT-03**: Content-entropy layer flags low-entropy templated text and high-entropy gibberish, plus URL/emoji/hashtag density, and emits a sub-score
+- [x] **DETECT-04**: Link & mention layer scores URL ratio, repeated domains, mass `p`-tag mentions, and hashtag stuffing, and emits a sub-score
+- [x] **DETECT-05**: Every layer emits a normalized sub-score xᵢ∈[0,1] through a common Layer contract, is independently enable/disable-able, and exposes a tunable threshold/weight
 
 ### Scoring & Output
 
-- [ ] **SCORE-01**: A combiner fuses per-layer sub-scores into a per-pubkey spam score via weighted logistic combination (`sigmoid(Σwᵢxᵢ + b)`)
+- [x] **SCORE-01**: A combiner fuses per-layer sub-scores into a per-pubkey spam score via weighted logistic combination (`sigmoid(Σwᵢxᵢ + b)`)
 - [x] **SCORE-02**: Per-pubkey scores, per-layer sub-scores (EAV signal table), and run metadata persist to SQLite (WAL, batched writes), idempotent on `(run_id, pubkey)`
 - [ ] **SCORE-03**: Engine produces the suspected-spammer list (pubkeys above a tunable threshold τ) with per-layer evidence, exportable from SQLite
-- [ ] **SCORE-04**: Output is pubkey-level only — per-event signals are inputs, never the deliverable; no live enforcement
-- [ ] **SCORE-05**: Every flagged pubkey carries a per-layer explanation — which layers fired, each layer's sub-score, and the contributing evidence (e.g. matched duplicate clusters, offending URLs/domains, entropy values) — persisted and exported so reviewers understand *why* and the feedback loop can consume the reasons
+- [x] **SCORE-04**: Output is pubkey-level only — per-event signals are inputs, never the deliverable; no live enforcement
+- [x] **SCORE-05**: Every flagged pubkey carries a per-layer explanation — which layers fired, each layer's sub-score, and the contributing evidence (e.g. matched duplicate clusters, offending URLs/domains, entropy values) — persisted and exported so reviewers understand *why* and the feedback loop can consume the reasons
 
 ### Tuning & Feedback
 
@@ -41,8 +41,8 @@ Requirements for the initial release. Each maps to a roadmap phase.
 ### Operations
 
 - [ ] **OPS-01**: A CLI drives the engine — full batch `run`, `export`, `label`, and `tune` subcommands
-- [ ] **OPS-02**: Scoring is deterministic — same corpus snapshot + same weights → identical verdicts
-- [ ] **OPS-03**: Layer weights and thresholds are configurable without recompiling (config file)
+- [x] **OPS-02**: Scoring is deterministic — same corpus snapshot + same weights → identical verdicts
+- [x] **OPS-03**: Layer weights and thresholds are configurable without recompiling (config file)
 
 ## v2 Requirements
 

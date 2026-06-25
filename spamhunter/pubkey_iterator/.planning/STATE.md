@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 04
-current_phase_name: detection-layers-logistic-combiner
+current_phase: 05
+current_phase_name: first shippable list
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-25T16:10:51.522Z"
+last_updated: "2026-06-25T16:52:58.853Z"
 last_activity: 2026-06-25
-last_activity_desc: Phase 04 execution started
+last_activity_desc: Phase 04 complete, transitioned to Phase 05
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 9
-  completed_plans: 6
-  percent: 50
+  completed_plans: 9
+  percent: 67
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-25)
 
 ## Current Position
 
-Phase: 04 (detection-layers-logistic-combiner) — EXECUTING
-Plan: 1 of 3
+Phase: 05 — CLI `run` + `export` (first shippable list)
+Plan: Not started
 Status: Executing Phase 04
-Last activity: 2026-06-25 — Phase 04 execution started
+Last activity: 2026-06-25 — Phase 04 complete, transitioned to Phase 05
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,7 +39,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 9
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -50,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 | 01 | 1 | - | - |
 | 02 | 3 | - | - |
 | 03 | 2 | - | - |
+| 04 | 3 | - | - |
 
 **Recent Trend:**
 
