@@ -22,6 +22,7 @@ use crate::model::{Persist, SubScore, Weight};
 use crate::store::Store;
 use rusqlite::{params, Connection};
 
+pub mod content_entropy;
 pub mod near_duplicate;
 
 /// Sentinel `weight.layer` key holding the combiner bias `b`.
@@ -141,8 +142,16 @@ impl ScoringStage {
             ));
         }
 
-        // L3 — content entropy + emoji/hashtag density (DETECT-03) registers in
-        // Task 2 of this plan (the L3 slot, immediately after L1).
+        // L3 — content entropy + emoji/hashtag density (DETECT-03).
+        if config.layers.l3_content_entropy.enabled {
+            layers.push(Box::new(content_entropy::ContentEntropyLayer::new(
+                &config.layers.l3_content_entropy,
+            )));
+            weights.push(weight_of(
+                "L3_content_entropy",
+                config.layers.l3_content_entropy.weight,
+            ));
+        }
 
         ScoringStage {
             layers,
@@ -552,21 +561,26 @@ mod tests {
         let stage = ScoringStage::from_config(&config, &weights);
         // τ comes from the _threshold sentinel row.
         assert_eq!(stage.tau(), 0.5);
-        // Plan 04-02 Task 1 registers the enabled L1 content layer (the example
-        // config enables it). Scoring a ZERO-event pubkey: L1 emits 0.0 (below
-        // min_events), so the sum reduces to sigmoid(bias) and exactly the L1
-        // subscore row is present. (Task 2 adds L3 in the next slot.)
+        // Plan 04-02 registers the enabled L1 + L3 content layers (the example
+        // config enables both). Scoring a ZERO-event pubkey: both emit 0.0
+        // (below min_events / no content), so the sum reduces to sigmoid(bias)
+        // and exactly two subscore rows are present, in fixed declaration order.
         let p = stage.score(1, "pk", &[], false);
-        assert_eq!(p.subscores.len(), 1, "L1 registered (example config)");
+        assert_eq!(p.subscores.len(), 2, "L1 + L3 registered (example config)");
         assert!(
             p.subscores.iter().all(|s| s.value == 0.0),
-            "the content layer emits 0.0 on a zero-event pubkey"
+            "both content layers emit 0.0 on a zero-event pubkey"
         );
-        assert_eq!(p.subscores[0].layer, "L1_near_duplicate");
+        let layer_names: Vec<&str> = p.subscores.iter().map(|s| s.layer.as_str()).collect();
+        assert_eq!(
+            layer_names,
+            vec!["L1_near_duplicate", "L3_content_entropy"],
+            "fixed declaration order L1 then L3 (OPS-02)"
+        );
         let expected = 1.0 / (1.0 + (-(-4.0_f64)).exp());
         assert!(
             (p.score - expected).abs() < 1e-12,
-            "score = sigmoid(seeded bias) when L1 emits 0.0"
+            "score = sigmoid(seeded bias) when both layers emit 0.0"
         );
         store.close().expect("close");
     }
