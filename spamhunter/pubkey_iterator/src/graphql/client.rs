@@ -20,7 +20,10 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::envelope::GraphQlResponse;
-use super::queries::{AuthorsData, AuthorsPage, StatsData, StatsResult, AUTHORS_QUERY, STATS_QUERY};
+use super::queries::{
+    AuthorGroup, AuthorsData, AuthorsPage, LatestPerAuthorData, StatsData, StatsResult,
+    AUTHORS_QUERY, LATEST_PER_AUTHOR_QUERY, STATS_QUERY,
+};
 
 /// The two-layer error taxonomy (contract §7 → typed errors the walk branches on).
 ///
@@ -137,6 +140,32 @@ impl GraphQlClient {
         self.query::<StatsData>(STATS_QUERY, json!({}))
             .await
             .map(|d| d.stats)
+    }
+
+    /// Fetch the latest `per_author` kind-`kind` events for each of `authors`,
+    /// grouped (contract §6.2). A D-11 thin wrapper over the generic `query<T>`,
+    /// exactly like `authors()`/`stats()` — no transport change.
+    ///
+    /// `authors` is passed as the GraphQL VARIABLE `$authors` (never interpolated
+    /// into the query document — parameterization analog to SQL `?N`; T-03-02).
+    /// An oversized author batch overflows the adapter's 256 KiB request limit and
+    /// surfaces as [`ClientError::PayloadTooLarge`] via the existing transport
+    /// dispatch — `fetch_batch` (Phase-3 fetch) catches that to shrink-and-retry.
+    ///
+    /// Returns the top-level `[AuthorGroup!]!` list; authors with zero matches are
+    /// OMITTED (contract §5) — callers match back by `author`, never by index.
+    pub async fn latest_per_author(
+        &self,
+        kind: i64,
+        per_author: i64,
+        authors: &[String],
+    ) -> Result<Vec<AuthorGroup>, ClientError> {
+        self.query::<LatestPerAuthorData>(
+            LATEST_PER_AUTHOR_QUERY,
+            json!({ "kind": kind, "perAuthor": per_author, "authors": authors }),
+        )
+        .await
+        .map(|d| d.latest_per_author)
     }
 }
 
@@ -259,6 +288,43 @@ mod tests {
         let client = GraphQlClient::new(url);
         let stats = block_on(client.stats()).expect("stats");
         assert_eq!(stats.max_lev_id, 98765);
+    }
+
+    /// Happy path: a well-formed `latestPerAuthor` response over the stub
+    /// deserializes — through the `latest_per_author()` wrapper — into a
+    /// `Vec<AuthorGroup>` with `author` + `events` populated (proves the D-11
+    /// wrapper unwraps the top-level LIST `data.latestPerAuthor`, contract §6.2).
+    #[test]
+    fn latest_per_author_happy_path() {
+        let url = stub_server(
+            "200 OK",
+            r#"{"data":{"latestPerAuthor":[{"author":"aa00000000000000000000000000000000000000000000000000000000000001","events":[{"id":"e1","pubkey":"aa00000000000000000000000000000000000000000000000000000000000001","kind":1,"createdAt":1700000000,"content":"hi","tags":[["t","x"]]}]}]}}"#,
+        );
+        let client = GraphQlClient::new(url);
+        let pk = "aa00000000000000000000000000000000000000000000000000000000000001".to_string();
+        let groups =
+            block_on(client.latest_per_author(1, 5, std::slice::from_ref(&pk))).expect("groups");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].author, pk);
+        assert_eq!(groups[0].events.len(), 1);
+        assert_eq!(groups[0].events[0].id, "e1");
+        assert_eq!(groups[0].events[0].created_at, 1_700_000_000i64);
+    }
+
+    /// An oversized author batch trips the adapter's 256 KiB limit → HTTP 413,
+    /// which surfaces through `latest_per_author` as `ClientError::PayloadTooLarge`
+    /// via the EXISTING transport dispatch (no new handling in the wrapper). This
+    /// is the error `fetch_batch` (Task 2) catches to shrink-and-retry (D-02).
+    #[test]
+    fn latest_per_author_413_surfaces_payload_too_large() {
+        let url = stub_server("413 Payload Too Large", r#"{}"#);
+        let client = GraphQlClient::new(url);
+        let pk = "aa00000000000000000000000000000000000000000000000000000000000001".to_string();
+        let result = block_on(client.latest_per_author(1, 5, &[pk]));
+        assert!(
+            matches!(result, Err(ClientError::PayloadTooLarge)),
+            "413 must map to PayloadTooLarge through latest_per_author, got {result:?}"
+        );
     }
 
     /// A 200 with null data and no errors is itself a `Graphql` error — never a

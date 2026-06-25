@@ -16,4 +16,7 @@ pub mod queries;
 
 pub use client::{ClientError, GraphQlClient};
 pub use envelope::{Extensions, GraphQlError, GraphQlResponse};
-pub use queries::{AuthorsPage, StatsResult, AUTHORS_QUERY, STATS_QUERY};
+pub use queries::{
+    AuthorGroup, AuthorsPage, Event, StatsResult, AUTHORS_QUERY, LATEST_PER_AUTHOR_QUERY,
+    STATS_QUERY,
+};
