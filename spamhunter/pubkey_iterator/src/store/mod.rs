@@ -262,6 +262,20 @@ impl Store {
         Ok(conn)
     }
 
+    /// Open a short-lived write connection for `review_queue` population (the
+    /// Phase-6 TUNE-04 negative-sampling slice). Follows the `weight_write_conn`
+    /// template (PRAGMA `foreign_keys=ON` + `busy_timeout(5s)`). Like the other
+    /// short-lived writers, this conn touches ONLY the `review_queue` table —
+    /// which the writer actor never writes — so it does NOT violate the
+    /// single-writer invariant for the actor's `score`/`signal`/`pubkey` tables.
+    /// NOT a second writer for those (T-06-06).
+    pub fn review_queue_write_conn(&self) -> rusqlite::Result<Connection> {
+        let conn = Connection::open(&self.path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(conn)
+    }
+
     /// Enqueue a `Persist` payload to the writer actor.
     ///
     /// Sends on the channel; the writer commits it in its next batch. Panics

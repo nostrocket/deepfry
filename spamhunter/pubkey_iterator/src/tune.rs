@@ -661,6 +661,99 @@ mod tests {
         assert_eq!(l1.weight, 2.0, "L1 still holds its pre-tune seeded value");
         store.close().expect("close");
     }
+
+    /// Seed a `score` row on a short-lived write conn (FK target inserted first).
+    /// Mirrors export::tests::seed_scored_pubkey — synchronous, bypasses the
+    /// writer actor (fine for a fixture), so review_queue's `suspected=0` SELECT
+    /// has rows to sample.
+    fn seed_scored(store: &Store, run_id: i64, pubkey: &str, score: f64, suspected: bool) {
+        let conn = store.review_queue_write_conn().expect("write conn");
+        conn.execute(
+            "INSERT OR IGNORE INTO pubkey (pubkey) VALUES (?1)",
+            rusqlite::params![pubkey],
+        )
+        .expect("insert pubkey");
+        conn.execute(
+            "INSERT INTO score (run_id, pubkey, score, whitelisted, suspected) \
+             VALUES (?1, ?2, ?3, 0, ?4)",
+            rusqlite::params![run_id, pubkey, score, suspected as i64],
+        )
+        .expect("insert score");
+    }
+
+    /// TUNE-04 (D-05, RESEARCH §Pattern 3 / Pitfall 2): `run_tune` populates
+    /// `review_queue` with a DETERMINISTIC sample of UNFLAGGED (`suspected=0`)
+    /// pubkeys — never a flagged one — capped at `review_sample_size`, and a
+    /// second call yields the IDENTICAL set (hash-ordered, no RNG). A small
+    /// sample_size (2) exercises the cap.
+    #[test]
+    fn review_queue_samples_unflagged_deterministically() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let mut config = sample_config();
+        config.tune.review_sample_size = 2; // exercise the cap (< n_unflagged)
+        detect::seed_weights_if_empty(&store, &config).expect("seed weights");
+        let run_id = store.begin_run("{\"tau\":0.5}").expect("begin_run");
+        store.mark_run_done(run_id, 100).expect("mark done");
+
+        // Both-class labels so run_tune proceeds past the precondition guard and
+        // fits/backtests; the review-queue step then runs over this run's scores.
+        seed_labeled(&store, run_id, &pk("s1"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0)]);
+        seed_labeled(&store, run_id, &pk("h1"), false, &[("L1_near_duplicate", 0.0)]);
+
+        // Several UNFLAGGED (suspected=0) scored pubkeys — the negative pool.
+        seed_scored(&store, run_id, &pk("u1"), 0.10, false);
+        seed_scored(&store, run_id, &pk("u2"), 0.20, false);
+        seed_scored(&store, run_id, &pk("u3"), 0.30, false);
+        seed_scored(&store, run_id, &pk("u4"), 0.40, false);
+        // Two FLAGGED (suspected=1) pubkeys — must NEVER be sampled.
+        seed_scored(&store, run_id, &pk("f1"), 0.90, true);
+        seed_scored(&store, run_id, &pk("f2"), 0.95, true);
+
+        super::run_tune(&store, &config, None).expect("run_tune 1");
+
+        let conn = store.reader().expect("reader");
+        let first: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT pubkey FROM review_queue WHERE run_id = ?1 ORDER BY pubkey")
+                .expect("prepare");
+            let rows = stmt
+                .query_map(rusqlite::params![run_id], |r| r.get::<_, String>(0))
+                .expect("query");
+            rows.map(|r| r.expect("row")).collect()
+        };
+
+        // Capped at sample_size = 2.
+        assert_eq!(first.len(), 2, "review_queue capped at review_sample_size");
+
+        // Every sampled pubkey is UNFLAGGED (suspected=0) in `score`.
+        for pubkey in &first {
+            let suspected: i64 = conn
+                .query_row(
+                    "SELECT suspected FROM score WHERE run_id = ?1 AND pubkey = ?2",
+                    rusqlite::params![run_id, pubkey],
+                    |r| r.get(0),
+                )
+                .expect("score row for sampled pubkey");
+            assert_eq!(suspected, 0, "only UNFLAGGED pubkeys sampled (got {pubkey})");
+        }
+
+        // Re-running yields the IDENTICAL set (deterministic, hash-ordered).
+        super::run_tune(&store, &config, None).expect("run_tune 2");
+        let second: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT pubkey FROM review_queue WHERE run_id = ?1 ORDER BY pubkey")
+                .expect("prepare");
+            let rows = stmt
+                .query_map(rusqlite::params![run_id], |r| r.get::<_, String>(0))
+                .expect("query");
+            rows.map(|r| r.expect("row")).collect()
+        };
+        assert_eq!(first, second, "re-run yields the identical deterministic sample");
+
+        drop(conn);
+        store.close().expect("close");
+    }
 }
 
 
