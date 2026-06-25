@@ -22,6 +22,8 @@ use crate::model::{Persist, SubScore, Weight};
 use crate::store::Store;
 use rusqlite::{params, Connection};
 
+pub mod near_duplicate;
+
 /// Sentinel `weight.layer` key holding the combiner bias `b`.
 pub const BIAS_KEY: &str = "_bias";
 /// Sentinel `weight.layer` key holding the flag threshold τ (in the `threshold`
@@ -119,15 +121,28 @@ impl ScoringStage {
             .and_then(|w| w.threshold)
             .unwrap_or(config.tau);
 
-        // Fixed declaration order. Plans 02–03 construct the concrete layer
-        // structs here when each layer's config entry is enabled; this slice
-        // registers none (the real layers do not exist yet) but preserves the
-        // by-name weight lookup so the positional pairing is already correct.
-        let layers: Vec<Box<dyn Layer>> = Vec::new();
-        let weights: Vec<f64> = Vec::with_capacity(layers.len());
-        // (Plans 02–03: push weight_of("L0_whitelist_absence", config…weight) etc.
-        // alongside each enabled layer, in this same fixed order.)
-        let _ = &weight_of; // silence unused until layers register (Plan 02/03)
+        // Fixed declaration order (L0, L1, L3, L4) — only ENABLED layers are
+        // pushed; a disabled layer is omitted at build time (writes no `signal`
+        // row), never evaluated-then-zeroed. The positional `weights` Vec is
+        // built by name lookup so `weights[i]` pairs with `layers[i]` (OPS-02).
+        // L0 (whitelist) and L4 (link/mention) register in their own plans; this
+        // plan (04-02) registers the L1 and L3 content layers in the fixed slots.
+        let mut layers: Vec<Box<dyn Layer>> = Vec::new();
+        let mut weights: Vec<f64> = Vec::new();
+
+        // L1 — within-pubkey near-duplicate (DETECT-02).
+        if config.layers.l1_near_duplicate.enabled {
+            layers.push(Box::new(near_duplicate::NearDuplicateLayer::new(
+                &config.layers.l1_near_duplicate,
+            )));
+            weights.push(weight_of(
+                "L1_near_duplicate",
+                config.layers.l1_near_duplicate.weight,
+            ));
+        }
+
+        // L3 — content entropy + emoji/hashtag density (DETECT-03) registers in
+        // Task 2 of this plan (the L3 slot, immediately after L1).
 
         ScoringStage {
             layers,
@@ -537,14 +552,21 @@ mod tests {
         let stage = ScoringStage::from_config(&config, &weights);
         // τ comes from the _threshold sentinel row.
         assert_eq!(stage.tau(), 0.5);
-        // With no real layers registered yet (Plan 01), scoring a pubkey yields
-        // sigmoid(bias) with no subscores.
+        // Plan 04-02 Task 1 registers the enabled L1 content layer (the example
+        // config enables it). Scoring a ZERO-event pubkey: L1 emits 0.0 (below
+        // min_events), so the sum reduces to sigmoid(bias) and exactly the L1
+        // subscore row is present. (Task 2 adds L3 in the next slot.)
         let p = stage.score(1, "pk", &[], false);
-        assert!(p.subscores.is_empty(), "no layers registered in Plan 01 slice");
+        assert_eq!(p.subscores.len(), 1, "L1 registered (example config)");
+        assert!(
+            p.subscores.iter().all(|s| s.value == 0.0),
+            "the content layer emits 0.0 on a zero-event pubkey"
+        );
+        assert_eq!(p.subscores[0].layer, "L1_near_duplicate");
         let expected = 1.0 / (1.0 + (-(-4.0_f64)).exp());
         assert!(
             (p.score - expected).abs() < 1e-12,
-            "score = sigmoid(seeded bias) when no layer registered"
+            "score = sigmoid(seeded bias) when L1 emits 0.0"
         );
         store.close().expect("close");
     }
