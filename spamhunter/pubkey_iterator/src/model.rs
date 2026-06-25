@@ -88,7 +88,7 @@ pub struct Weight {
     pub tuned_from_run: Option<i64>,
 }
 
-/// The writer-channel payload funnelled to the single writer.
+/// The score/signal write payload funnelled to the single writer.
 ///
 /// Phase 3/4 will add `Vec<Fingerprint>` when the analyzer emits them; for
 /// Phase 1 the payload carries a `Score` plus its fixed-order `Vec<SubScore>`.
@@ -100,4 +100,21 @@ pub struct Persist {
     pub whitelisted: bool,
     pub suspected: bool,
     pub subscores: Vec<SubScore>,
+}
+
+/// The writer-channel payload funnelled to the single writer actor.
+///
+/// Widening the channel from a bare `Persist` to this enum is the sanctioned
+/// single-writer extension point (D-11): every variant is committed by the one
+/// writer thread, preserving message ordering. Phase 3 adds variants additively
+/// (e.g. a fetch/run-update message) without disturbing existing paths.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WriteMsg {
+    /// The Phase-1 score/signal write path — wraps `Persist` unchanged so no
+    /// Phase-1 field moves.
+    Score(Persist),
+    /// The D-04 enumeration write: pubkey-dimension rows only (idempotent
+    /// INSERT OR IGNORE via the existing `UPSERT_PUBKEY` const), carrying no
+    /// score/signal payload.
+    Pubkeys(Vec<String>),
 }

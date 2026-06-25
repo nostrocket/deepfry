@@ -19,7 +19,7 @@ mod schema;
 pub mod queries;
 mod writer;
 
-use crate::model::Persist;
+use crate::model::{Persist, WriteMsg};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
@@ -53,7 +53,7 @@ fn bootstrap(conn: &Connection) -> rusqlite::Result<()> {
 /// joined, so an idiomatic drop also drains and commits the final batch.
 pub struct Store {
     path: PathBuf,
-    tx: Option<flume::Sender<Persist>>,
+    tx: Option<flume::Sender<WriteMsg>>,
     writer: Option<JoinHandle<rusqlite::Result<()>>>,
 }
 
@@ -70,7 +70,7 @@ impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Store> {
         let conn = Connection::open(path)?;
         bootstrap(&conn)?;
-        let (tx, rx) = flume::unbounded::<Persist>();
+        let (tx, rx) = flume::unbounded::<WriteMsg>();
         let writer = std::thread::spawn(move || writer::writer_loop(conn, rx));
         Ok(Store {
             path: path.to_path_buf(),
@@ -106,7 +106,23 @@ impl Store {
     /// `persist` after `close`).
     pub fn persist(&self, p: Persist) {
         if let Some(tx) = &self.tx {
-            tx.send(p).expect("writer thread is alive while Store is open");
+            tx.send(WriteMsg::Score(p))
+                .expect("writer thread is alive while Store is open");
+        }
+    }
+
+    /// Enqueue a batch of pubkey-dimension rows (D-04) to the writer actor.
+    ///
+    /// Sends a `WriteMsg::Pubkeys` on the same ordered channel as `persist`, so
+    /// the writer commits these pubkeys (idempotent INSERT OR IGNORE) in batch
+    /// order relative to every other message — this ordering is what lets the
+    /// enumerator flush a page's pubkeys before advancing the cursor. Routes
+    /// through the single writer; NO second write connection. Panics only if the
+    /// writer thread has already gone away (`insert_pubkeys` after `close`).
+    pub fn insert_pubkeys(&self, pks: Vec<String>) {
+        if let Some(tx) = &self.tx {
+            tx.send(WriteMsg::Pubkeys(pks))
+                .expect("writer thread is alive while Store is open");
         }
     }
 
