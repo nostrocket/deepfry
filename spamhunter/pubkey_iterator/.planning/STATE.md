@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Persistence Foundation
-status: executing
+current_phase: 01
+current_phase_name: persistence-foundation
+status: verifying
 stopped_at: Roadmap created and committed; STATE.md initialized
-last_updated: "2026-06-25T05:01:57.741Z"
+last_updated: "2026-06-25T07:48:43.959Z"
 last_activity: 2026-06-25
-last_activity_desc: Project initialized (PROJECT, research, requirements, roadmap)
+last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 17
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Produce an accurate, low-false-positive list of suspected spammer pubkeys as fast as possible, with every layer independently tunable and the whole system correctable from human-labeled false positives.
-**Current focus:** Phase 1 — Persistence Foundation
+**Current focus:** Phase 01 — persistence-foundation
 
 ## Current Position
 
-Phase: 1 of 6 (Persistence Foundation)
-Plan: — (not yet planned)
-Status: Ready to execute
-Last activity: 2026-06-25 — Project initialized (PROJECT, research, requirements, roadmap)
+Phase: 01 (persistence-foundation) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-06-25 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01 P01 | 16 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Full log in PROJECT.md Key Decisions. Recent decisions affecting current work:
 - Init: "Backpropagation" = logistic-regression weight re-tuning from human-labeled false positives, gated by a no-regression backtest (TUNE-05).
 - Init: Detect at pubkey level; complement (not replace) the graph-based spam-explorer.
 - Init: Cross-pubkey clustering (L6) + extra layers (L2/L5/L8) deferred to v2.
+- [Phase ?]: Phase 1: flume::unbounded analyze->writer channel; Sender-drop closes the channel and flushes the final batch on close().
+- [Phase ?]: Phase 1: embedded SCHEMA_DDL with CREATE TABLE IF NOT EXISTS (no migration lib for v1); adopt rusqlite_migration at first ALTER TABLE.
+- [Phase ?]: Phase 1: idempotency proven across batch boundaries (close->reopen->close), not only same-transaction.
 
 ### Pending Todos
 
@@ -85,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25
+Last session: 2026-06-25T07:48:09.889Z
 Stopped at: Roadmap created and committed; STATE.md initialized
 Resume file: None

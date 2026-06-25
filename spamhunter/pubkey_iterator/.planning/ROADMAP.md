@@ -11,12 +11,13 @@ The dominant project risk is **false positives**, not throughput. That risk is b
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Persistence Foundation** - SQLite store, schema, single-writer idempotent UPSERT API — the dependency root
+- [x] **Phase 1: Persistence Foundation** - SQLite store, schema, single-writer idempotent UPSERT API — the dependency root (completed 2026-06-25)
 - [ ] **Phase 2: GraphQL Client + Author Enumeration** - Prove the contract: paginate every distinct pubkey, resumably, with graceful adapter-error handling
 - [ ] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory
 - [ ] **Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)** - Layer trait + L7 combiner + P1 layers (L0/L1/L3/L4) → first per-pubkey spam score with per-layer evidence
@@ -26,83 +27,102 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Persistence Foundation
+
 **Goal**: A single SQLite store with the full schema and an idempotent single-writer API exists, so every later stage has somewhere to persist runs, per-pubkey scores, per-layer signals, labels, and weights.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: SCORE-02
 **Success Criteria** (what must be TRUE):
+
   1. A fresh SQLite file is created on demand with WAL mode and the full schema (`run`, `pubkey`, `score`, `signal` EAV, `fingerprint`, `label`, `weight`).
   2. Writing the same `(run_id, pubkey)` (and `(run_id, pubkey, layer)`) twice leaves exactly one row — re-processing a pubkey within a run is idempotent (UPSERT), never duplicated.
   3. A new detection layer can record a sub-score by inserting a `signal` row with a new `layer` name without any schema migration.
   4. Writes go through a single writer using batched transactions; a developer can persist a batch of synthetic scores and read them back identically.
-**Plans**: 1 plan
-- [ ] 01-01-PLAN.md — SQLite store: scaffold + WAL schema + single-writer idempotent UPSERT API + 5-test round-trip contract (SCORE-02)
+
+**Plans**: 1/1 plans complete
+
+- [x] 01-01-PLAN.md — SQLite store: scaffold + WAL schema + single-writer idempotent UPSERT API + 5-test round-trip contract (SCORE-02)
 
 ### Phase 2: GraphQL Client + Author Enumeration
+
 **Goal**: The engine can enumerate every distinct pubkey in the live corpus through the LMDB2GraphQL adapter, resumably and terminating cleanly, while handling the adapter's real failure modes — proving connectivity against the actual contract before any analysis exists.
 **Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: INGEST-01, INGEST-04
 **Success Criteria** (what must be TRUE):
+
   1. Running the enumerator against the adapter walks the entire `authors` keyspace via cursor pagination, visits each distinct pubkey exactly once, and terminates cleanly when `hasMore` is false.
   2. The walk is resumable: the latest `endCursor` and `stats.maxLevId` are persisted per batch into the `run` row, and a restart with `--resume` continues from the stored cursor instead of starting over.
   3. A `503` causes a backoff-and-retry without advancing the cursor; an `INVALID_CURSOR` error restarts pagination from page 1; GraphQL `errors[]`/`extensions.code` in a `200` body are parsed rather than ignored.
   4. `maxLevId` is recorded at run start and end as a snapshot-drift probe, and a corpus change mid-pagination does not abort the run.
+
 **Plans**: TBD
 
 ### Phase 3: Fetcher + Bounded Streaming Pipeline
+
 **Goal**: Enumerated pubkeys flow through a bounded-memory streaming pipeline (tokio fetch → bounded channel → rayon analysis) that fetches each pubkey's ~100 recent events without ever buffering the corpus — locking in the structural decision before any layer depends on it.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: INGEST-02, INGEST-03
 **Success Criteria** (what must be TRUE):
+
   1. The fetcher retrieves each pubkey's most-recent ~100 events via batched `latestPerAuthor(kind:1, perAuthor:100)` at ≤1000 authors per call, respecting the 256 KiB body limit and the silent ≤500 page clamp.
   2. Fetched author groups are matched back to requested pubkeys by the `author` field (never zipped by index), and authors omitted because they have zero matching events are handled without misalignment.
   3. Running the pipeline over a large synthetic author set holds memory bounded by the channel capacity (not by corpus size) — fetch back-pressures on the channel and CPU analysis runs off the tokio threads.
   4. A no-op (pass-through) consumer at the end of the pipeline proves end-to-end flow from enumeration through fetch to a rayon stage with no unbounded buffering.
+
 **Plans**: TBD
 
 ### Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)
+
 **Goal**: The pipeline produces a real per-pubkey spam score: each P1 detection layer emits a normalized sub-score through a common Layer contract, the logistic combiner fuses them, and the score plus per-layer evidence is persisted — the first end-to-end runnable verdict.
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: DETECT-01, DETECT-02, DETECT-03, DETECT-04, DETECT-05, SCORE-01, SCORE-04, SCORE-05, OPS-02, OPS-03
 **Success Criteria** (what must be TRUE):
+
   1. Each P1 layer emits a normalized sub-score xᵢ∈[0,1] through one shared Layer contract: L0 whitelist (absence emits a weighted spam sub-score, presence clears only this layer — never a gate/exemption), L1 within-pubkey near-duplicate (SimHash + Hamming), L3 content entropy/templated-text, L4 link & mention ratios.
   2. The combiner fuses the sub-scores into one per-pubkey score via weighted logistic combination `sigmoid(Σwᵢxᵢ + b)`, using hand-set conservative starting weights read from the `weight` table.
   3. For every scored pubkey the `score` row and the per-layer `signal` rows are persisted, and each flagged pubkey carries a per-layer explanation (which layers fired, each sub-score, the contributing evidence) sufficient for a human to understand *why*.
   4. Verdicts are pubkey-level only (per-event signals are inputs, never the deliverable) and no enforcement action is taken; each layer can be independently enabled/disabled and has a tunable threshold/weight set from a config file without recompiling.
   5. Re-running the same corpus snapshot with the same weights produces identical verdicts (deterministic: seeded RNG, fixed layer-sum order, UPSERT on `(run_id, pubkey)`).
+
 **Plans**: TBD
 
 ### Phase 5: CLI `run` + `export` (first shippable list)
+
 **Goal**: A human can drive a full batch and get back the suspected-spammer list — the first shippable, reviewable artifact — with each flagged pubkey accompanied by its per-layer reasons and evidence.
 **Mode:** mvp
 **Depends on**: Phase 4
 **Requirements**: SCORE-03, OPS-01
 **Success Criteria** (what must be TRUE):
+
   1. A `run` subcommand executes a full batch over the corpus end-to-end (enumerate → fetch → score → persist) and reports progress to completion.
   2. An `export` subcommand emits the suspected-spammer list — pubkeys whose score exceeds a tunable threshold τ — read from SQLite.
   3. Each exported pubkey carries its per-layer decomposition (which layers fired, sub-scores, sample evidence) so a reviewer can judge the verdict, and the run's threshold and weight snapshot are recorded for reproducibility.
+
 **Plans**: TBD
 
 ### Phase 6: Labeling + Logistic Tuner + Backtest Gate
+
 **Goal**: The correctability loop closes — humans label confirmed spam and false positives, an offline tuner re-fits layer weights from those labels, the next run consumes them reproducibly, and no weight change is adopted unless it survives a backtest against the full labeled set.
 **Mode:** mvp
 **Depends on**: Phase 5
 **Requirements**: TUNE-01, TUNE-02, TUNE-03, TUNE-04, TUNE-05
 **Success Criteria** (what must be TRUE):
+
   1. A `label` subcommand records run-independent labels (confirmed spam and confirmed false-positive/ham) for pubkeys in SQLite, and the review queue includes a random sample of *unflagged* pubkeys to counter selection bias.
   2. A `tune` subcommand fits a logistic model (`linfa-logistic`) over the stored `signal × label` join and writes new layer weights (plus bias and threshold) to the `weight` table with provenance recorded.
   3. Each run reads the latest weights at startup and snapshots them into run metadata, so any past score can be traced to the exact weights that produced it.
   4. New weights are backtested against the full human-labeled set before adoption: confirmed-spam pubkeys must remain flagged (no new false negatives) and confirmed-non-spam pubkeys must remain unflagged (no new false positives); a regression is surfaced and blocks/flags adoption of the new weights.
+
 **Plans**: TBD
 
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Persistence Foundation | 0/1 | Not started | - |
+| 1. Persistence Foundation | 1/1 | Complete   | 2026-06-25 |
 | 2. GraphQL Client + Author Enumeration | 0/TBD | Not started | - |
 | 3. Fetcher + Bounded Streaming Pipeline | 0/TBD | Not started | - |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
@@ -142,6 +162,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Deferred to v2 (not in this roadmap)
 
 Tracked in REQUIREMENTS.md; not v1 phases:
+
 - DETECT-06 (L2 cadence/burst), DETECT-07 (L5 tag/kind fingerprint), DETECT-08 (L6 cross-pubkey clustering — top v2 priority), DETECT-09 (L8 language/script & homoglyph)
 - PERF-01 (direct `heed` LMDB reads, profiling-gated), SVC-01 (incremental service mode)
 

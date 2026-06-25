@@ -25,7 +25,7 @@ Requirements for the initial release. Each maps to a roadmap phase.
 ### Scoring & Output
 
 - [ ] **SCORE-01**: A combiner fuses per-layer sub-scores into a per-pubkey spam score via weighted logistic combination (`sigmoid(Σwᵢxᵢ + b)`)
-- [ ] **SCORE-02**: Per-pubkey scores, per-layer sub-scores (EAV signal table), and run metadata persist to SQLite (WAL, batched writes), idempotent on `(run_id, pubkey)`
+- [x] **SCORE-02**: Per-pubkey scores, per-layer sub-scores (EAV signal table), and run metadata persist to SQLite (WAL, batched writes), idempotent on `(run_id, pubkey)`
 - [ ] **SCORE-03**: Engine produces the suspected-spammer list (pubkeys above a tunable threshold τ) with per-layer evidence, exportable from SQLite
 - [ ] **SCORE-04**: Output is pubkey-level only — per-event signals are inputs, never the deliverable; no live enforcement
 - [ ] **SCORE-05**: Every flagged pubkey carries a per-layer explanation — which layers fired, each layer's sub-score, and the contributing evidence (e.g. matched duplicate clusters, offending URLs/domains, entropy values) — persisted and exported so reviewers understand *why* and the feedback loop can consume the reasons
@@ -103,6 +103,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | OPS-03 | Phase 4 | Mapped |
 
 **Coverage:**
+
 - v1 requirements: 22 total
 - Mapped to phases: 22 ✓
 - Unmapped: 0 ✓
