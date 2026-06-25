@@ -430,12 +430,53 @@ mod tests {
             "score",
             "signal",
             "fingerprint",
-            "label",
+            "backpropagation",
             "weight",
             "suspected_spammer",
+            "review_queue",
         ] {
             assert!(tables.contains(&t.to_string()), "missing table: {t}");
         }
+    }
+
+    /// Proves the TUNE-01 / D-02 human-insert contract: a fresh `Store::open`
+    /// creates the `backpropagation` table, and a direct human INSERT of a
+    /// ground-truth label (pubkey, is_spam=1, labeled_at) round-trips through a
+    /// plain `rusqlite::Connection` (the same way an operator would with any
+    /// SQLite client). There is intentionally NO `label` subcommand.
+    #[test]
+    fn backpropagation_insert_roundtrip() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        store.close().expect("flush + join writer");
+
+        // A plain connection — the operator's SQLite client (D-02: direct INSERT,
+        // no subcommand). foreign_keys ON so the pubkey FK is enforced.
+        let conn = Connection::open(&path).expect("open conn");
+        conn.pragma_update(None, "foreign_keys", "ON").expect("fk on");
+
+        let pk = "bb00000000000000000000000000000000000000000000000000000000000001";
+        conn.execute(
+            "INSERT INTO pubkey (pubkey) VALUES (?1)",
+            rusqlite::params![pk],
+        )
+        .expect("insert pubkey");
+        conn.execute(
+            "INSERT INTO backpropagation (pubkey, is_spam, labeled_at, source, note) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![pk, 1_i64, 1_700_000_000_i64, "manual", "obvious spam"],
+        )
+        .expect("insert backpropagation label");
+
+        let (is_spam, labeled_at): (i64, i64) = conn
+            .query_row(
+                "SELECT is_spam, labeled_at FROM backpropagation WHERE pubkey = ?1",
+                rusqlite::params![pk],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("read back the label row");
+        assert_eq!(is_spam, 1, "the human-inserted is_spam flag round-trips");
+        assert_eq!(labeled_at, 1_700_000_000, "labeled_at round-trips");
     }
 
     /// Proves SCORE-02 criterion #2: double-writing `(run_id, pubkey)` and

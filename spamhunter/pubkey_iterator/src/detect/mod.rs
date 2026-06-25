@@ -830,7 +830,7 @@ mod combiner {
                 .unwrap()
         };
         let conn0 = rusqlite::Connection::open(&path).expect("reader");
-        let label_before = count(&conn0, "label");
+        let labels_before = count(&conn0, "backpropagation");
         let pubkey_before = count(&conn0, "pubkey");
         drop(conn0);
 
@@ -848,9 +848,9 @@ mod combiner {
         assert!(count(&conn, "signal") >= 1, "signal rows written");
         // …but the NON-verdict tables are untouched (SCORE-04: no enforcement).
         assert_eq!(
-            count(&conn, "label"),
-            label_before,
-            "scoring must NOT write the label table (no enforcement)"
+            count(&conn, "backpropagation"),
+            labels_before,
+            "scoring must NOT write the operator-label table (no enforcement)"
         );
         assert_eq!(
             count(&conn, "pubkey"),
