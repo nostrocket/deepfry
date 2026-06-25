@@ -18,3 +18,9 @@ pub mod store;
 /// transport, the `{data, errors}` envelope, the `authors`/`stats` query documents
 /// + response structs, and the two-layer `ClientError` taxonomy (D-10/D-11).
 pub mod graphql;
+
+/// The `authors` opaque-cursor enumeration walk (`enumerate::run`): the bounded
+/// retry + abort + drift-probe + flush-before-cursor pagination loop that
+/// composes the store (plan 01) and the GraphQL client (plan 02) into the
+/// connectivity-proving vertical slice (INGEST-01 / INGEST-04).
+pub mod enumerate;
