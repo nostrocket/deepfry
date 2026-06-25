@@ -48,3 +48,12 @@ pub mod fetch;
 /// Phase-4 Layer/combiner seam. The bounded channel is the back-pressure point,
 /// so peak in-flight memory is capped by channel capacity, never the corpus size.
 pub mod pipeline;
+
+/// The detection-layer integration seam (Phase 4): the shared `Layer` trait, the
+/// fixed-order `ScoringStage` registry + logistic `sigmoid(Σwᵢxᵢ+b)` combiner
+/// (SCORE-01), the `weight`-table seed/read helpers (seeded from config on first
+/// run, SCORE-04), and the `ScoredInput { group, whitelisted }` channel carrier
+/// (D-15). One trivial layer proves the slice end-to-end in Plan 01; the four
+/// real layers (L0/L1/L3/L4) plug into this same registry in Plans 02–03.
+/// Deterministic: positional `Vec` sum, zero RNG (OPS-02).
+pub mod detect;

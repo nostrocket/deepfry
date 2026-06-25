@@ -195,6 +195,19 @@ impl Store {
         Ok(conn)
     }
 
+    /// Open a short-lived write connection for `weight`-table seeding (the L7
+    /// combiner's weight/bias/τ persistence, Phase 4). Follows the `run_write_conn`
+    /// template (PRAGMA `foreign_keys=ON` + `busy_timeout(5s)`). Like the `run`-row
+    /// updaters, this touches ONLY the `weight` table — which the writer actor
+    /// never writes — so it does not race the single-writer invariant for the
+    /// actor's `score`/`signal`/`pubkey` tables. NOT a second writer for those.
+    pub fn weight_write_conn(&self) -> rusqlite::Result<Connection> {
+        let conn = Connection::open(&self.path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(conn)
+    }
+
     /// Enqueue a `Persist` payload to the writer actor.
     ///
     /// Sends on the channel; the writer commits it in its next batch. Panics
