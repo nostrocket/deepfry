@@ -20,12 +20,37 @@ pub mod queries;
 mod writer;
 
 use crate::model::Persist;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use schema::SCHEMA_DDL;
+
+/// Apply the PRAGMAs (in load-bearing order) then create the schema. Shared by
+/// the writer connection at `open` time. PRAGMAs MUST precede any schema/DML.
+fn bootstrap(conn: &Connection) -> rusqlite::Result<()> {
+    // journal_mode=WAL returns a row ("wal"); pragma_update issues it fine.
+    // WAL persists across reopens, so later reader connections inherit it.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    // synchronous=NORMAL is WAL-consistent and far faster than FULL; a crash
+    // loses at most the last uncommitted batch, which an idempotent re-run
+    // regenerates (threat T-01-03, accepted).
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // foreign_keys is OFF by default in SQLite — the schema's REFERENCES are
+    // inert without this.
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    conn.busy_timeout(Duration::from_secs(5))?; // absorb transient lock waits
+    conn.execute_batch(SCHEMA_DDL)?; // CREATE TABLE IF NOT EXISTS ×7 + indexes
+    Ok(())
+}
 
 /// Handle to the SQLite store: owns the writer thread + the channel `Sender`
 /// for `Persist` messages, plus the DB path for opening reader connections.
+///
+/// Drop order matters: `tx` (the `Sender`) is dropped before `writer` is
+/// joined, so an idiomatic drop also drains and commits the final batch.
 pub struct Store {
     path: PathBuf,
     tx: Option<flume::Sender<Persist>>,
@@ -34,33 +59,87 @@ pub struct Store {
 
 impl Store {
     /// Open (or create) the store at `path`: apply PRAGMAs, run `SCHEMA_DDL`,
-    /// then spawn the single writer thread. Idempotent — re-opening an existing
-    /// DB is a no-op via `CREATE TABLE IF NOT EXISTS`.
-    pub fn open(_path: &Path) -> rusqlite::Result<Store> {
-        // Task 1 stub: return a value so the type-checker is satisfied, but the
-        // store is non-functional until Task 2. Tests run RED.
-        todo!("Store::open is implemented in Task 2 (GREEN)")
+    /// then spawn the single writer thread holding the only write `Connection`.
+    /// Idempotent — re-opening an existing DB is a no-op via
+    /// `CREATE TABLE IF NOT EXISTS`.
+    ///
+    /// Durability: opened WAL + `synchronous=NORMAL` (see `bootstrap`). This
+    /// module deliberately exposes NO second write connection — every write
+    /// funnels through the writer actor; only `reader()` opens read-side
+    /// connections (WAL lets readers run without blocking the writer).
+    pub fn open(path: &Path) -> rusqlite::Result<Store> {
+        let conn = Connection::open(path)?;
+        bootstrap(&conn)?;
+        let (tx, rx) = flume::unbounded::<Persist>();
+        let writer = std::thread::spawn(move || writer::writer_loop(conn, rx));
+        Ok(Store {
+            path: path.to_path_buf(),
+            tx: Some(tx),
+            writer: Some(writer),
+        })
     }
 
-    /// Insert a `run` row and return its `run_id`.
-    pub fn begin_run(&self, _config_json: &str) -> rusqlite::Result<i64> {
-        todo!("begin_run is implemented in Task 2 (GREEN)")
+    /// Insert a `run` row (status `running`) and return its `run_id`.
+    ///
+    /// Opens a short-lived write connection for this one INSERT; the row must
+    /// exist before any `score`/`signal` is persisted (they FK-reference it).
+    /// All other writes go through the actor.
+    pub fn begin_run(&self, config_json: &str) -> rusqlite::Result<i64> {
+        let conn = Connection::open(&self.path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        conn.execute(
+            "INSERT INTO run (started_at, config_json, status) VALUES (?1, ?2, 'running')",
+            params![now, config_json],
+        )?;
+        Ok(conn.last_insert_rowid())
     }
 
     /// Enqueue a `Persist` payload to the writer actor.
-    pub fn persist(&self, _p: Persist) {
-        todo!("persist is implemented in Task 2 (GREEN)")
+    ///
+    /// Sends on the channel; the writer commits it in its next batch. Panics
+    /// only if the writer thread has already gone away (a programming error —
+    /// `persist` after `close`).
+    pub fn persist(&self, p: Persist) {
+        if let Some(tx) = &self.tx {
+            tx.send(p).expect("writer thread is alive while Store is open");
+        }
     }
 
-    /// Flush + shut down: drop the `Sender`, join the writer thread, surface its
-    /// `rusqlite::Result`. After `close()` all batches are committed.
-    pub fn close(self) -> rusqlite::Result<()> {
-        todo!("close is implemented in Task 2 (GREEN)")
+    /// Flush + shut down: drop the `Sender` (closing the channel), join the
+    /// writer thread, and surface its `rusqlite::Result`. After `close()`
+    /// returns, every batch — including the final partial one — is committed,
+    /// so subsequent reads see all rows.
+    pub fn close(mut self) -> rusqlite::Result<()> {
+        // Drop the sender first so the writer's `recv()` returns Err and the
+        // loop exits after committing the final batch.
+        self.tx = None;
+        if let Some(handle) = self.writer.take() {
+            handle
+                .join()
+                .expect("writer thread did not panic")?;
+        }
+        Ok(())
     }
 
     /// Open a fresh read-side `Connection` on the same path.
     pub fn reader(&self) -> rusqlite::Result<Connection> {
         Connection::open(&self.path)
+    }
+}
+
+impl Drop for Store {
+    /// Best-effort flush if the caller never called `close()`: drop the sender
+    /// and join the writer so buffered batches are not lost.
+    fn drop(&mut self) {
+        self.tx = None;
+        if let Some(handle) = self.writer.take() {
+            let _ = handle.join();
+        }
     }
 }
 
