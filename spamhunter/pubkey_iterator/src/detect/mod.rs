@@ -23,6 +23,7 @@ use crate::store::Store;
 use rusqlite::{params, Connection};
 
 pub mod content_entropy;
+pub mod link_mention;
 pub mod near_duplicate;
 pub mod whitelist;
 
@@ -165,6 +166,17 @@ impl ScoringStage {
             weights.push(weight_of(
                 "L3_content_entropy",
                 config.layers.l3_content_entropy.weight,
+            ));
+        }
+
+        // L4 — link & mention (DETECT-04). Completes the fixed L0,L1,L3,L4 order.
+        if config.layers.l4_link_mention.enabled {
+            layers.push(Box::new(link_mention::LinkMentionLayer::new(
+                &config.layers.l4_link_mention,
+            )));
+            weights.push(weight_of(
+                "L4_link_mention",
+                config.layers.l4_link_mention.weight,
             ));
         }
 
@@ -576,17 +588,17 @@ mod tests {
         let stage = ScoringStage::from_config(&config, &weights);
         // τ comes from the _threshold sentinel row.
         assert_eq!(stage.tau(), 0.5);
-        // Plan 04-03 Task 1 registers the enabled L0 layer in front of the
-        // Plan-02 L1 + L3 content layers (the example config enables them all;
-        // L4 registers in Task 2). Scoring a ZERO-event WHITELISTED pubkey: L0
-        // clears (whitelisted→0.0) and the content layers emit 0.0 (no content /
-        // below min_events), so the sum reduces to sigmoid(bias) and the subscore
-        // rows are present in fixed declaration order L0, L1, L3.
+        // Plan 04-03 registers the enabled L0 + L4 layers around the Plan-02
+        // L1 + L3 content layers (the example config enables all four). Scoring a
+        // ZERO-event WHITELISTED pubkey: L0 clears (whitelisted→0.0) and the
+        // content/link layers emit 0.0 (no content / below min_events), so the
+        // sum reduces to sigmoid(bias) and the subscore rows are present in fixed
+        // declaration order L0, L1, L3, L4.
         let p = stage.score(1, "pk", &[], true);
         assert_eq!(
             p.subscores.len(),
-            3,
-            "L0 + L1 + L3 registered (example config; L4 lands in Task 2)"
+            4,
+            "L0 + L1 + L3 + L4 registered (example config)"
         );
         assert!(
             p.subscores.iter().all(|s| s.value == 0.0),
@@ -598,9 +610,10 @@ mod tests {
             vec![
                 "L0_whitelist_absence",
                 "L1_near_duplicate",
-                "L3_content_entropy"
+                "L3_content_entropy",
+                "L4_link_mention"
             ],
-            "fixed declaration order L0, L1, L3 (OPS-02)"
+            "fixed declaration order L0, L1, L3, L4 (OPS-02)"
         );
         let expected = 1.0 / (1.0 + (-(-4.0_f64)).exp());
         assert!(
