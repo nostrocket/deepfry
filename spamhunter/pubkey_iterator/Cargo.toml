@@ -1,0 +1,25 @@
+[package]
+name = "pubkey_iterator"
+version = "0.1.0"
+edition = "2021"
+
+# Phase 1 dependency subset of the project-wide stack (01-RESEARCH.md "Installation").
+# Persistence-only — the rest of the stack (tokio/rayon/reqwest/clap/gaoya/linfa)
+# lands in its owning phase, not here.
+[dependencies]
+# rusqlite: synchronous embedded SQLite. `bundled` compiles SQLite in (no system
+# libsqlite3, reproducible across hosts). sqlx was REJECTED for v1 per STACK.md:
+# async + compile-time query checking needs a live DB at build time and a runtime
+# around every query — wrong tradeoff for a single-writer local batch.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# serde: derive (de)serialization for JSON columns (config_json, evidence).
+serde = { version = "1.0", features = ["derive"] }
+# serde_json: serialize/deserialize the JSON-typed columns.
+serde_json = "1.0"
+# flume: the analyze->writer channel seam (project-standard channel per STACK.md).
+flume = "0.12"
+
+[dev-dependencies]
+# tempfile: temp-FILE-backed DB so tests exercise real WAL on-disk behavior
+# (the -wal/-shm sidecars), which a :memory: DB does not replicate.
+tempfile = "3.27"
