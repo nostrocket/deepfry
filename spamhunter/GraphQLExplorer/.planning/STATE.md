@@ -96,7 +96,7 @@ None yet.
 ### Blockers/Concerns
 
 - [Phase 2] RESOLVED 2026-06-25 — non-removable window-honesty indicator + asymmetric burst analyzer with persistent forgeable-`createdAt` caveat built and human-validated.
-- [Phase 3] near-dup thresholds (Jaccard ≈0.8, shingle size, burst cutoffs) are sane defaults — validate against the live corpus
+- [Phase 3] SHIPPED 2026-06-25 with documented sane defaults in `thresholds.ts` (Jaccard 0.8, shingle k=3, tag mass/stuffing); panels human-validated live. Exact threshold tuning against the corpus remains an open (non-blocking) refinement — the window-honesty framing holds regardless of the numbers.
 
 ## Deferred Items
 
