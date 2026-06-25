@@ -6,11 +6,9 @@ edition = "2021"
 # Dependencies land in their owning phase (stack discipline). Phase 1 added the
 # persistence subset (rusqlite/serde/serde_json/flume); Phase 2 owns the GraphQL
 # transport (reqwest/tokio/thiserror); Phase 3 owns rayon (the pipeline's CPU
-# consumer stage). The remainder (clap/gaoya/linfa) stays for its owning phase —
-# do NOT add the detection deps (gaoya/linfa) or the full clap CLI surface here.
-# The connectivity-proving binary (plan 02-03, D-12): a minimal `--resume`
-# entry point over the public lib API. The crate stays a library + this one bin;
-# the full clap `run`/`export` surface is Phase 5.
+# consumer stage); Phase 5 owns clap (the `run`/`export` CLI surface). The
+# remainder (gaoya/linfa) stays for its owning phase — do NOT add the detection
+# deps (gaoya/linfa) here; those are Phase 6.
 [[bin]]
 name = "pubkey_iterator"
 path = "src/main.rs"
@@ -48,6 +46,10 @@ url = "2.5"
 # toml (Phase-4-owned): parse pubkey_iterator_config.toml into serde structs
 # (OPS-03 — retune without recompile). Plain toml + serde, not figment (Phase 5).
 toml = "1.1"
+# clap (Phase-5-owned, D-01): the `run`/`export` subcommand CLI surface (derive
+# API). The ONLY Phase-5 dep — do NOT add gaoya/linfa (Phase 6). MSRV 1.85 ≤ the
+# 1.96 toolchain.
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 # tempfile: temp-FILE-backed DB so tests exercise real WAL on-disk behavior

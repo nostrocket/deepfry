@@ -1,15 +1,23 @@
 //! Embedded schema DDL.
 //!
-//! `SCHEMA_DDL` is lifted verbatim from `01-RESEARCH.md` "Code Examples → Schema
-//! creation" — the 7 `CREATE TABLE IF NOT EXISTS` (run, pubkey, score, signal,
-//! fingerprint, label, weight) plus `idx_signal_layer` and `idx_fp_chash`. Every
-//! table uses `IF NOT EXISTS` so `Store::open` is idempotent.
+//! `SCHEMA_DDL` is the 8 `CREATE TABLE IF NOT EXISTS` (run, pubkey, score,
+//! signal, fingerprint, label, weight, suspected_spammer) plus `idx_signal_layer`,
+//! `idx_fp_chash`, and `idx_suspected_run`. The first 7 tables + 2 indexes were
+//! lifted verbatim from `01-RESEARCH.md` "Code Examples → Schema creation"; the
+//! 8th table (`suspected_spammer`) + `idx_suspected_run` are the Phase-5 export
+//! materialization (05-RESEARCH §"suspected_spammer schema"). Every table uses
+//! `IF NOT EXISTS` so `Store::open` is idempotent.
 //!
 //! The `signal` table is intentionally EAV (`run_id, pubkey, layer, value,
 //! evidence`): a brand-new detection layer is a new ROW, never a schema
 //! migration (SCORE-02 criterion #3).
+//!
+//! `suspected_spammer` is a per-run materialization keyed by (run_id, pubkey) —
+//! one table, many runs (D-05/D-06). τ and score are denormalized inline so a
+//! reviewer reads the verdict without joining `config_json`; per-layer evidence
+//! is NOT duplicated here (it stays in `signal`, JOINed at read time).
 
-/// The full schema: 7 tables + 2 indexes, run once via `conn.execute_batch`.
+/// The full schema: 8 tables + 3 indexes, run once via `conn.execute_batch`.
 pub const SCHEMA_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS run (
   run_id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,4 +78,15 @@ CREATE TABLE IF NOT EXISTS weight (
   tuned_at       INTEGER,                                -- NULL = hand-set default
   tuned_from_run INTEGER                                 -- provenance
 );
+
+CREATE TABLE IF NOT EXISTS suspected_spammer (
+  run_id      INTEGER NOT NULL REFERENCES run(run_id),
+  pubkey      TEXT    NOT NULL REFERENCES pubkey(pubkey),
+  score       REAL    NOT NULL,                          -- sigmoid score at export time
+  tau         REAL    NOT NULL,                          -- run's τ threshold (denormalized)
+  rank        INTEGER NOT NULL,                          -- descending-score rank within the run
+  exported_at INTEGER NOT NULL,                          -- materialization timestamp
+  PRIMARY KEY (run_id, pubkey)
+);
+CREATE INDEX IF NOT EXISTS idx_suspected_run ON suspected_spammer(run_id, rank);
 "#;

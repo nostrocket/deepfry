@@ -345,9 +345,9 @@ mod tests {
     }
 
     /// Proves SCORE-02 criterion #1: `Store::open` creates a fresh WAL DB with
-    /// all 7 tables. Asserts `PRAGMA journal_mode == "wal"`, the `-wal` sidecar
+    /// all 8 tables. Asserts `PRAGMA journal_mode == "wal"`, the `-wal` sidecar
     /// exists, and `sqlite_master` lists run/pubkey/score/signal/fingerprint/
-    /// label/weight.
+    /// label/weight/suspected_spammer.
     #[test]
     fn open_creates_wal_and_schema() {
         let (_dir, path) = temp_db();
@@ -370,7 +370,16 @@ mod tests {
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
-        for t in ["run", "pubkey", "score", "signal", "fingerprint", "label", "weight"] {
+        for t in [
+            "run",
+            "pubkey",
+            "score",
+            "signal",
+            "fingerprint",
+            "label",
+            "weight",
+            "suspected_spammer",
+        ] {
             assert!(tables.contains(&t.to_string()), "missing table: {t}");
         }
     }
