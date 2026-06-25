@@ -35,6 +35,15 @@ pub(crate) const UPSERT_SIGNAL: &str = "
 pub(crate) const UPSERT_PUBKEY: &str =
     "INSERT INTO pubkey (pubkey) VALUES (?1) ON CONFLICT(pubkey) DO NOTHING";
 
+/// Idempotent L1 fingerprint upsert keyed on `(run_id, pubkey, content_hash)`;
+/// the second write's `simhash` wins. `content_hash`/`simhash` are u64-as-i64
+/// integers bound with `params![]` (never `format!`-interpolated — T-04-01).
+pub(crate) const UPSERT_FINGERPRINT: &str = "
+  INSERT INTO fingerprint (run_id, pubkey, content_hash, simhash)
+  VALUES (?1, ?2, ?3, ?4)
+  ON CONFLICT(run_id, pubkey, content_hash) DO UPDATE SET
+    simhash = excluded.simhash";
+
 /// The single-writer actor loop.
 ///
 /// Block for one message, greedily drain up to `BATCH`, then commit them in one
@@ -64,6 +73,7 @@ pub(crate) fn writer_loop(mut conn: Connection, rx: flume::Receiver<WriteMsg>) -
             let mut up_pubkey = tx.prepare_cached(UPSERT_PUBKEY)?;
             let mut up_score = tx.prepare_cached(UPSERT_SCORE)?;
             let mut up_signal = tx.prepare_cached(UPSERT_SIGNAL)?;
+            let mut up_fingerprint = tx.prepare_cached(UPSERT_FINGERPRINT)?;
             for msg in buf.drain(..) {
                 match msg {
                     WriteMsg::Score(p) => {
@@ -87,6 +97,19 @@ pub(crate) fn writer_loop(mut conn: Connection, rx: flume::Receiver<WriteMsg>) -
                     WriteMsg::Pubkeys(pks) => {
                         for pk in &pks {
                             up_pubkey.execute([pk])?;
+                        }
+                    }
+                    // L1 fingerprints: ensure the pubkey dimension row exists
+                    // (FK target), then UPSERT each fingerprint with params![].
+                    WriteMsg::Fingerprints(fps) => {
+                        for fp in &fps {
+                            up_pubkey.execute([&fp.pubkey])?;
+                            up_fingerprint.execute(params![
+                                fp.run_id,
+                                fp.pubkey,
+                                fp.content_hash,
+                                fp.simhash
+                            ])?;
                         }
                     }
                     // Defer the ack until after the commit below.

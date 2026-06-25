@@ -19,7 +19,7 @@ mod schema;
 pub mod queries;
 mod writer;
 
-use crate::model::{self, Persist, WriteMsg};
+use crate::model::{self, Fingerprint, Persist, WriteMsg};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
@@ -231,6 +231,24 @@ impl Store {
     pub fn insert_pubkeys(&self, pks: Vec<String>) {
         if let Some(tx) = &self.tx {
             tx.send(WriteMsg::Pubkeys(pks))
+                .expect("writer thread is alive while Store is open");
+        }
+    }
+
+    /// Enqueue a batch of L1 content fingerprints (DETECT-02) to the writer actor.
+    ///
+    /// Sends a `WriteMsg::Fingerprints` on the same ordered channel as `persist`,
+    /// so the writer commits these rows (idempotent UPSERT on `(run_id, pubkey,
+    /// content_hash)`) in batch order relative to every other message. Routes
+    /// through the single writer; NO second write connection. A no-op for an
+    /// empty batch (nothing sent). Panics only if the writer thread has already
+    /// gone away (`persist_fingerprints` after `close`).
+    pub fn persist_fingerprints(&self, fps: Vec<Fingerprint>) {
+        if fps.is_empty() {
+            return;
+        }
+        if let Some(tx) = &self.tx {
+            tx.send(WriteMsg::Fingerprints(fps))
                 .expect("writer thread is alive while Store is open");
         }
     }
@@ -618,6 +636,136 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1, "flush() commits the prior pubkey before returning");
+    }
+
+    /// T-04-01 idempotency: persisting the same `(run_id, pubkey, content_hash)`
+    /// fingerprint twice leaves exactly one row, and the second write's `simhash`
+    /// wins (mirrors `upsert_is_idempotent`).
+    #[test]
+    fn fingerprint_upsert_is_idempotent() {
+        use crate::model::Fingerprint;
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        let pk = "fa00000000000000000000000000000000000000000000000000000000000000";
+
+        store.persist_fingerprints(vec![Fingerprint {
+            run_id,
+            pubkey: pk.into(),
+            content_hash: 1234,
+            simhash: 1111,
+            minhash: None,
+        }]);
+        // Same (run_id, pubkey, content_hash); different simhash → second wins.
+        store.persist_fingerprints(vec![Fingerprint {
+            run_id,
+            pubkey: pk.into(),
+            content_hash: 1234,
+            simhash: 2222,
+            minhash: None,
+        }]);
+        store.close().expect("flush + join writer");
+
+        let conn = Connection::open(&path).expect("reader");
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM fingerprint WHERE run_id = ?1 AND pubkey = ?2 AND content_hash = ?3",
+                rusqlite::params![run_id, pk, 1234i64],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "exactly one row per (run_id, pubkey, content_hash)");
+        let sim: i64 = conn
+            .query_row(
+                "SELECT simhash FROM fingerprint WHERE run_id = ?1 AND pubkey = ?2 AND content_hash = ?3",
+                rusqlite::params![run_id, pk, 1234i64],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sim, 2222, "second write's simhash wins");
+    }
+
+    /// Round-trip: a batch of fingerprints persists and reads back identically
+    /// (content_hash/simhash via the i64 bit-reinterpret, incl. a negative i64
+    /// that a u64 high-bit would produce — T-04-06).
+    #[test]
+    fn fingerprint_batch_roundtrip() {
+        use crate::model::Fingerprint;
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        let pk = "fb00000000000000000000000000000000000000000000000000000000000000";
+
+        let mut batch = vec![
+            Fingerprint { run_id, pubkey: pk.into(), content_hash: 10, simhash: 100, minhash: None },
+            Fingerprint { run_id, pubkey: pk.into(), content_hash: 20, simhash: 200, minhash: None },
+            // u64 with the high bit set reinterprets to a negative i64 — must
+            // round-trip byte-identically (never signed-ordered).
+            Fingerprint {
+                run_id,
+                pubkey: pk.into(),
+                content_hash: (0xFFFF_FFFF_FFFF_FFFFu64) as i64,
+                simhash: (0x8000_0000_0000_0000u64) as i64,
+                minhash: None,
+            },
+        ];
+        store.persist_fingerprints(batch.clone());
+        store.close().expect("flush + join writer");
+
+        let conn = Connection::open(&path).expect("reader");
+        let mut got = queries::read_fingerprints(&conn, run_id).expect("read fingerprints");
+        got.sort_by_key(|f| f.content_hash);
+        batch.sort_by_key(|f| f.content_hash);
+        assert_eq!(got, batch, "fingerprints round-trip identically");
+    }
+
+    /// L1 wired to the store: scoring a duplicate-heavy pubkey emits one
+    /// fingerprint row per DISTINCT normalized content hash through the single
+    /// writer (DETECT-02 persistence path).
+    #[test]
+    fn l1_emits_one_fingerprint_per_distinct_content() {
+        use crate::config::L1Config;
+        use crate::detect::near_duplicate::NearDuplicateLayer;
+        use crate::graphql::queries::Event;
+
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        let pk = "fc00000000000000000000000000000000000000000000000000000000000000";
+
+        let layer = NearDuplicateLayer::new(&L1Config {
+            enabled: true,
+            weight: 2.0,
+            hamming_threshold: 3,
+            shingle_size: 3,
+            min_events: 5,
+        });
+        let mk = |i: usize, c: &str| Event {
+            id: format!("e{i}"),
+            pubkey: pk.into(),
+            kind: 1,
+            created_at: 1_700_000_000 + i as i64,
+            content: c.to_string(),
+            tags: vec![],
+        };
+        // 6 events: 4 share one normalized content, 2 share another → 2 distinct.
+        let events = vec![
+            mk(0, "buy cheap pills now online"),
+            mk(1, "BUY cheap   pills now online"), // normalizes to same as 0
+            mk(2, "buy cheap pills now online"),
+            mk(3, "buy cheap pills now online"),
+            mk(4, "follow me for the free airdrop"),
+            mk(5, "follow me for the free airdrop"),
+        ];
+        let fps = layer.fingerprints(run_id, pk, &events);
+        assert_eq!(fps.len(), 2, "one fingerprint per distinct normalized content");
+        store.persist_fingerprints(fps);
+        store.close().expect("flush + join writer");
+
+        let conn = Connection::open(&path).expect("reader");
+        let rows = queries::read_fingerprints(&conn, run_id).expect("read fingerprints");
+        assert_eq!(rows.len(), 2, "two distinct fingerprint rows persisted");
+        assert!(rows.iter().all(|f| f.pubkey == pk));
     }
 
     /// Read a `run` row back as a `model::Run` (test helper).

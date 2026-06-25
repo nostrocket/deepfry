@@ -117,6 +117,12 @@ pub enum WriteMsg {
     /// INSERT OR IGNORE via the existing `UPSERT_PUBKEY` const), carrying no
     /// score/signal payload.
     Pubkeys(Vec<String>),
+    /// The L1 content-fingerprint write path (Phase 4, DETECT-02): per-event
+    /// `(run_id, pubkey, content_hash, simhash)` rows, committed by the one writer
+    /// via `UPSERT_FINGERPRINT` (idempotent on `(run_id, pubkey, content_hash)`).
+    /// Additive — moves no existing field, mirrors the `Pubkeys`/`Flush`
+    /// extension pattern; preserves the single-writer ordering invariant (D-11).
+    Fingerprints(Vec<Fingerprint>),
     /// A flush barrier (D-07 / Pitfall 2): the writer commits every message
     /// enqueued before this one, then acks on the channel. The enumerator awaits
     /// the ack before advancing the run cursor, so the cursor is never made

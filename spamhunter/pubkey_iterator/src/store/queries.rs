@@ -4,6 +4,7 @@
 //! assertions depend on a stable read order. All binding is parameterized
 //! (`?N`) — no value is `format!`-interpolated into SQL (T-01-01).
 
+use crate::model::Fingerprint;
 use rusqlite::Connection;
 
 /// Read every persisted pubkey, ordered ascending — the pipeline's enumeration
@@ -41,6 +42,28 @@ pub fn read_signals(
             r.get::<_, String>(1)?,
             r.get::<_, f64>(2)?,
         ))
+    })?;
+    rows.collect()
+}
+
+/// Read the L1 `fingerprint` rows for a run as `Fingerprint`s, ordered by
+/// `(pubkey, content_hash)` for a stable round-trip read order. `content_hash`/
+/// `simhash` are read as the stored `i64` (the u64-as-i64 bit-reinterpret —
+/// equality/Hamming only, never signed-ordered, T-04-06). `minhash` is unused in
+/// Phase 4 (always `None`).
+pub fn read_fingerprints(conn: &Connection, run_id: i64) -> rusqlite::Result<Vec<Fingerprint>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, pubkey, content_hash, simhash FROM fingerprint \
+         WHERE run_id = ?1 ORDER BY pubkey, content_hash",
+    )?;
+    let rows = stmt.query_map([run_id], |r| {
+        Ok(Fingerprint {
+            run_id: r.get::<_, i64>(0)?,
+            pubkey: r.get::<_, String>(1)?,
+            content_hash: r.get::<_, i64>(2)?,
+            simhash: r.get::<_, i64>(3)?,
+            minhash: None,
+        })
     })?;
     rows.collect()
 }
