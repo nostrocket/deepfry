@@ -623,3 +623,245 @@ mod tests {
         store.close().expect("close");
     }
 }
+
+/// Full four-layer combiner integration tests (Plan 04-03 Task 3): the load-
+/// bearing multi-signal-agreement property (SC2/SCORE-01), config enable/disable
+/// (SC4/OPS-03), and the no-enforcement guarantee (SCORE-04). These build the
+/// REAL `ScoringStage::from_config` over the committed defaults — not the trivial
+/// stand-in layer — so they exercise the actual L0/L1/L3/L4 weight budget.
+#[cfg(test)]
+mod combiner {
+    use super::*;
+    use crate::graphql::queries::Event;
+    use crate::store::queries::{read_scores, read_signals};
+    use crate::store::Store;
+    use tempfile::TempDir;
+
+    const PK: &str = "cc00000000000000000000000000000000000000000000000000000000000001";
+
+    fn temp_db() -> (TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("spamhunter.sqlite");
+        (dir, path)
+    }
+
+    /// Parse the committed example config (the conservative D-08 defaults).
+    fn sample_config() -> Config {
+        let body = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/pubkey_iterator_config.example.toml"
+        ))
+        .expect("read example config");
+        toml::from_str(&body).expect("parse example config")
+    }
+
+    fn ev(idx: usize, content: &str, tags: Vec<Vec<String>>) -> Event {
+        Event {
+            id: format!("{PK}-{idx}"),
+            pubkey: PK.to_string(),
+            kind: 1,
+            created_at: 1_700_000_000 + idx as i64,
+            content: content.to_string(),
+            tags,
+        }
+    }
+
+    /// Build the full four-layer stage from the committed defaults via the
+    /// `weight` table (seeded from config) — the real production wiring.
+    fn full_stage(store: &Store, config: &Config) -> ScoringStage {
+        seed_weights_if_empty(store, config).expect("seed weights");
+        let conn = store.reader().expect("reader");
+        let weights = read_weights(&conn).expect("read weights");
+        ScoringStage::from_config(config, &weights)
+    }
+
+    /// SC2 / SCORE-01 — multi-signal agreement over the REAL four layers.
+    ///
+    /// A pubkey firing ONLY ONE strong content layer (near-duplicate repetition,
+    /// no links/density) scores < τ; a pubkey firing TWO-PLUS strong content
+    /// layers (repetition + link-spam + emoji/hashtag density) scores > τ. A
+    /// whitelisted-absent pubkey with no content signal stays well below τ. This
+    /// proves the RESEARCH §L7 weight budget and the "no hard single-layer
+    /// cutoff" anti-feature guard.
+    #[test]
+    fn multi_signal_agreement() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let config = sample_config();
+        let stage = full_stage(&store, &config);
+        let tau = stage.tau();
+
+        // (a) SINGLE strong layer: 10 IDENTICAL plain posts → L1 ratio ≈ 1.0;
+        // no URLs (L4 ≈ 0), normal entropy + no emoji/hashtags (L3 ≈ 0). Pubkey
+        // whitelisted → L0 cleared. Only L1 fires (weight 2.0).
+        let single: Vec<Event> = (0..10)
+            .map(|i| ev(i, "lets grab lunch at the cafe downtown tomorrow", vec![]))
+            .collect();
+        let p_single = stage.score(1, PK, &single, true);
+        assert!(
+            p_single.score < tau && !p_single.suspected,
+            "a single strong content layer (L1) must NOT flag (score {} < τ {})",
+            p_single.score,
+            tau
+        );
+        // Sanity: L1 really did fire strongly while L3/L4 stayed ~0.
+        let by = |p: &Persist, name: &str| {
+            p.subscores.iter().find(|s| s.layer == name).map(|s| s.value).unwrap()
+        };
+        assert!(by(&p_single, "L1_near_duplicate") > 0.9, "L1 fired");
+        assert!(by(&p_single, "L4_link_mention") < 0.1, "L4 quiet");
+
+        // (b) MULTI-signal: 10 IDENTICAL posts that are link-spam (same host →
+        // L4 url_ratio + concentration ≈ 1.0) AND emoji/hashtag dense (L3 ≈ 1.0)
+        // AND repeated (L1 ≈ 1.0). Whitelisted → L0 still cleared; the flag comes
+        // purely from content-layer agreement.
+        let spam_content = "🎉🎊🚀🔥💎🌙⭐🎯 https://spam.example/x #crypto #airdrop #free #nft";
+        let tags = vec![vec!["t".to_string(), "crypto".to_string()]];
+        let multi: Vec<Event> = (0..10)
+            .map(|i| ev(i, spam_content, tags.clone()))
+            .collect();
+        let p_multi = stage.score(2, PK, &multi, true);
+        assert!(
+            p_multi.score > tau && p_multi.suspected,
+            "two-plus strong content layers must flag (score {} > τ {})",
+            p_multi.score,
+            tau
+        );
+        assert!(by(&p_multi, "L1_near_duplicate") > 0.9, "L1 fired (multi)");
+        assert!(by(&p_multi, "L3_content_entropy") > 0.5, "L3 fired (multi)");
+        assert!(by(&p_multi, "L4_link_mention") > 0.5, "L4 fired (multi)");
+
+        // (c) Whitelist-absence ALONE (non-whitelisted, but zero content signal)
+        // stays well below τ — absence only nudges, never flags (D-03/§L7).
+        let p_absent = stage.score(3, PK, &[], false);
+        assert!(
+            p_absent.score < tau && !p_absent.suspected,
+            "whitelist-absence alone must NOT flag (score {} < τ {})",
+            p_absent.score,
+            tau
+        );
+        assert_eq!(
+            by(&p_absent, "L0_whitelist_absence"),
+            config.layers.l0_whitelist_absence.absence_subscore,
+            "L0 fired on absence"
+        );
+        store.close().expect("close");
+    }
+
+    /// SC4 / OPS-03 — disabling a layer via config OMITS its signal row entirely
+    /// (built-out at registration, not evaluated-then-zeroed) while the score
+    /// still computes deterministically from the remaining layers.
+    #[test]
+    fn disabled_layer_omitted() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        store.insert_pubkeys(vec![PK.to_string()]);
+        store.flush().expect("flush pubkeys");
+
+        // Disable L4 in the config; the other three stay enabled.
+        let mut config = sample_config();
+        config.layers.l4_link_mention.enabled = false;
+        let stage = full_stage(&store, &config);
+
+        // A link-spam pubkey that WOULD fire L4 if it were enabled.
+        let events: Vec<Event> = (0..6)
+            .map(|i| ev(i, "buy now https://spam.example/x #a #b #c", vec![]))
+            .collect();
+        let p = stage.score(run_id, PK, &events, false);
+        // No L4 subscore is produced at all (omitted at build time).
+        assert!(
+            !p.subscores.iter().any(|s| s.layer == "L4_link_mention"),
+            "a disabled layer must produce NO subscore (omitted, not zeroed)"
+        );
+        assert_eq!(
+            p.subscores.len(),
+            3,
+            "three enabled layers remain (L0, L1, L3)"
+        );
+        store.persist(p.clone());
+        store.close().expect("flush + join writer");
+
+        // The persisted signal table has NO L4 row for this pubkey.
+        let conn = rusqlite::Connection::open(&path).expect("reader");
+        let signals = read_signals(&conn, run_id).expect("read signals");
+        assert!(
+            signals.iter().all(|(_, layer, _)| layer != "L4_link_mention"),
+            "the disabled layer writes NO signal row (SC4/OPS-03)"
+        );
+        assert_eq!(
+            signals.len(),
+            3,
+            "exactly three signal rows for the three enabled layers"
+        );
+        // The score still computes (deterministically — re-scoring matches).
+        let scores = read_scores(&conn, run_id).expect("read scores");
+        assert_eq!(scores.len(), 1, "the pubkey still got a score row");
+        let rescored = {
+            let store2 = Store::open(&path).expect("reopen");
+            let s = full_stage(&store2, &config).score(run_id, PK, &events, false);
+            store2.close().expect("close");
+            s
+        };
+        assert_eq!(
+            (scores[0].1 * 1e12).round(),
+            (rescored.score * 1e12).round(),
+            "the score with a disabled layer is deterministic across re-scores (OPS-02)"
+        );
+    }
+
+    /// SC4 / SCORE-04 — a full scoring run mutates ONLY the
+    /// score/signal/fingerprint/weight tables; no enforcement side-effect (no
+    /// event mutation, no whitelist write, no label write). The whitelist is a
+    /// pre-resolved bool here, so the run is hermetic — it makes no external call.
+    #[test]
+    fn no_enforcement_side_effect() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let config = sample_config();
+        let run_id = store.begin_run("{}").expect("begin_run");
+        store.insert_pubkeys(vec![PK.to_string()]);
+        store.flush().expect("flush pubkeys");
+        let stage = full_stage(&store, &config);
+
+        // Snapshot row counts of the tables a scoring run must NEVER touch.
+        let count = |conn: &rusqlite::Connection, table: &str| -> i64 {
+            conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        let conn0 = rusqlite::Connection::open(&path).expect("reader");
+        let label_before = count(&conn0, "label");
+        let pubkey_before = count(&conn0, "pubkey");
+        drop(conn0);
+
+        // Score a spammy pubkey and persist (no whitelist HTTP — bool is given).
+        let events: Vec<Event> = (0..6)
+            .map(|i| ev(i, "spam https://x.example #a #b", vec![]))
+            .collect();
+        let p = stage.score(run_id, PK, &events, false);
+        store.persist(p);
+        store.close().expect("flush + join writer");
+
+        let conn = rusqlite::Connection::open(&path).expect("reader");
+        // The verdict tables changed…
+        assert_eq!(count(&conn, "score"), 1, "one score row written");
+        assert!(count(&conn, "signal") >= 1, "signal rows written");
+        // …but the NON-verdict tables are untouched (SCORE-04: no enforcement).
+        assert_eq!(
+            count(&conn, "label"),
+            label_before,
+            "scoring must NOT write the label table (no enforcement)"
+        );
+        assert_eq!(
+            count(&conn, "pubkey"),
+            pubkey_before,
+            "scoring must NOT add/remove pubkey rows (no event mutation)"
+        );
+        // `weight` carries only the seeded combiner rows — six, no per-run growth.
+        assert_eq!(
+            count(&conn, "weight"),
+            6,
+            "weight table holds only the six seeded combiner rows (no run-time writes)"
+        );
+    }
+}
