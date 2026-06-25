@@ -108,14 +108,14 @@ the canonical bytes of any single event without bloating the list query.
   3. A kind-distribution breakdown shows the author's event-kind histogram, with out-of-safe-range `kind`/`createdAt` values flagged rather than silently mis-computed
   4. A raw-JSON inspector shows the canonical `raw` bytes for any selected event, fetched lazily on demand (never selected in list queries) and rendered as escaped plaintext — never executed as HTML/markdown
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **UI hint**: yes
 
 Plans:
 
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Pure `nearDup` + `tags` + `kinds` analyzers (+ `thresholds.ts` NEAR_DUP/TAGS), TDD against fixtures, zero network, no clean field (DRILL-02, DRILL-03, DRILL-04)
+- [x] 03-01-PLAN.md — Pure `nearDup` + `tags` + `kinds` analyzers (+ `thresholds.ts` NEAR_DUP/TAGS), TDD against fixtures, zero network, no clean field (DRILL-02, DRILL-03, DRILL-04)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -154,5 +154,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 3/3 | Complete    | 2026-06-24 |
-| 3. Remaining Spam Signals | 0/2 | Planned | - |
+| 3. Remaining Spam Signals | 1/2 | In Progress|  |
 | 4. Batch Triage | 0/2 | Not started | - |
