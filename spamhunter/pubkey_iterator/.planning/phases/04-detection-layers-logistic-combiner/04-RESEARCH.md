@@ -660,7 +660,7 @@ let rebuilt: Vec<AuthorGroup> = matched.into_iter()
 
 **These are exactly the values D-08 delegates to research discretion; every one is a config value and the discuss/plan step may adjust them. The structural guarantees (xᵢ∈[0,1], multi-signal-only flagging, determinism) are NOT assumptions — they are verified design properties.**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **L0 lookup placement (fetch stage vs pre-pass).**
    - What we know: must not block rayon; reqwest client is reused.
