@@ -44,6 +44,12 @@ enum Commands {
         #[arg(long)]
         run_id: Option<i64>,
     },
+    /// Re-fit layer weights from human labels; adopt only if the backtest passes.
+    Tune {
+        /// Which run's signals to train + backtest from (default: latest `done`).
+        #[arg(long)]
+        run_id: Option<i64>,
+    },
 }
 
 /// Resolve the default config path: `$HOME/deepfry/pubkey_iterator_config.toml`
@@ -106,6 +112,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             drop(conn);
             store.close()?;
         }
+        Commands::Tune { run_id } => {
+            // Pure-SQLite + in-process logistic fit (D-03/D-06) — no tokio runtime
+            // (only `Run` builds one). `run_tune` reads the signal × backpropagation
+            // join, fits a deterministic linfa-logistic model, backtests the staging
+            // weights against the full labeled set via the SHARED combiner, and
+            // adopts them into the `weight` table with provenance ONLY on a strict
+            // PASS (zero new FN, zero new FP). A regression — or a single-class
+            // precondition — BLOCKS adoption and is a no-op on the live weights.
+            let config = pubkey_iterator::config::load(&config_path)?;
+            let store = pubkey_iterator::store::Store::open(&cli.db)?;
+            let report = pubkey_iterator::tune::run_tune(&store, &config, run_id)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            eprintln!("{}", report.summary());
+            store.close()?;
+        }
     }
     Ok(())
 }
@@ -147,6 +168,21 @@ mod tests {
         match cli.command {
             Commands::Export { run_id } => assert_eq!(run_id, None, "no --run-id → None"),
             other => panic!("expected Export, got {other:?}"),
+        }
+
+        // `tune --run-id 5` → Tune { run_id: Some(5) } (the sync Phase-6 arm).
+        let cli = Cli::try_parse_from(["pubkey_iterator", "tune", "--run-id", "5"])
+            .expect("parse tune --run-id 5");
+        match cli.command {
+            Commands::Tune { run_id } => assert_eq!(run_id, Some(5), "--run-id 5 → Some(5)"),
+            other => panic!("expected Tune, got {other:?}"),
+        }
+
+        // `tune` without --run-id → None (defaults to latest done run at dispatch).
+        let cli = Cli::try_parse_from(["pubkey_iterator", "tune"]).expect("parse tune");
+        match cli.command {
+            Commands::Tune { run_id } => assert_eq!(run_id, None, "no --run-id → None"),
+            other => panic!("expected Tune, got {other:?}"),
         }
 
         // Global args BEFORE the subcommand.

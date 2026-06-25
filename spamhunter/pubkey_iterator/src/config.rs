@@ -44,6 +44,53 @@ pub struct Config {
     pub bias: f64,
     /// The per-layer entries, keyed by stable `signal.layer` name (D-02).
     pub layers: Layers,
+    /// Phase-6 offline tuner hyperparameters (TUNE-02/TUNE-04). `#[serde(default)]`
+    /// so existing config files (written before Phase 6) keep loading — a missing
+    /// `[tune]` section yields the conservative defaults.
+    #[serde(default)]
+    pub tune: TuneConfig,
+}
+
+/// `[tune]` hyperparameters for the offline logistic tuner (D-05, Claude's
+/// discretion). Every field carries a `#[serde(default)]` so the whole section
+/// — or any individual field — may be omitted from the TOML.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TuneConfig {
+    /// L2 regularization strength for the logistic fit. Default 0.01 — DELIBERATELY
+    /// weaker than RESEARCH A1's suggested 1.0, which over-shrinks the weights of a
+    /// small labeled set (a few rows) so far that even strongly-separable classes
+    /// collapse below τ. 0.01 lets a separable synthetic fixture actually separate
+    /// while still penalising over-large coefficients. Tunable per-deployment as
+    /// the labeled set grows.
+    #[serde(default = "default_alpha")]
+    pub alpha: f64,
+    /// L-BFGS iteration cap for the fit. Default 100 (RESEARCH A1).
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u64,
+    /// Negative-sampling review-queue size (consumed by Plan 03). Default 100
+    /// (RESEARCH A2).
+    #[serde(default = "default_review_sample_size")]
+    pub review_sample_size: usize,
+}
+
+fn default_alpha() -> f64 {
+    0.01
+}
+fn default_max_iterations() -> u64 {
+    100
+}
+fn default_review_sample_size() -> usize {
+    100
+}
+
+impl Default for TuneConfig {
+    fn default() -> Self {
+        TuneConfig {
+            alpha: default_alpha(),
+            max_iterations: default_max_iterations(),
+            review_sample_size: default_review_sample_size(),
+        }
+    }
 }
 
 /// The four P1 detection-layer config entries, keyed by their stable layer

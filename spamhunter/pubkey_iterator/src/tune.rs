@@ -153,7 +153,34 @@ impl TuneReport {
     /// A one-line operator-facing summary (named pubkeys + counts; never event
     /// content — T-06-04).
     pub fn summary(&self) -> String {
-        todo!("Task 2 GREEN")
+        match self {
+            TuneReport::Adopted {
+                weights,
+                bias,
+                run_id,
+            } => {
+                let ws: Vec<String> =
+                    weights.iter().map(|(l, w)| format!("{l}={w:.4}")).collect();
+                format!(
+                    "adopted new weights from run {run_id}: [{}] _bias={bias:.4} \
+                     (backtest passed: zero new FN, zero new FP)",
+                    ws.join(", ")
+                )
+            }
+            TuneReport::BlockedByRegression(reg) => {
+                format!(
+                    "BLOCKED by backtest regression — weights UNCHANGED. \
+                     new false negatives ({}): [{}]; new false positives ({}): [{}]",
+                    reg.new_false_negatives.len(),
+                    reg.new_false_negatives.join(", "),
+                    reg.new_false_positives.len(),
+                    reg.new_false_positives.join(", "),
+                )
+            }
+            TuneReport::BlockedByPrecondition(msg) => {
+                format!("BLOCKED by precondition — weights UNCHANGED: {msg}")
+            }
+        }
     }
 }
 
@@ -202,31 +229,98 @@ fn fit(
         .fit(&dataset)
         .map_err(|e| format!("logistic fit failed: {e}"))?;
 
+    // Orient the sign to the SPAM class (CRITICAL — correctness, not cosmetic).
+    // linfa-logistic's `label_classes` assigns POSITIVE_LABEL to whichever class
+    // it counts first (with a count-based, NOT value-based, tiebreak — the doc's
+    // "smaller class" claim is misleading); `params()`/`intercept()` are then
+    // oriented toward `labels().pos.class`. For a balanced both-class fixture the
+    // positive class is therefore ROW-ORDER-dependent, so the raw `params()` may
+    // be oriented toward ham. `predict_probabilities` = sigmoid(x·params+b) is the
+    // probability of `labels().pos.class`. The combiner the live run applies
+    // expects weights oriented toward SPAM (score > τ ⇒ suspected). So if the
+    // fitted positive class is NOT spam (==1), negate weights + bias so the
+    // returned `(weights, bias)` predict spam — making the tuner's output sign
+    // canonical and order-independent (and combine() == predict_probabilities of
+    // spam). Without this, a retune could write sign-inverted weights that flag
+    // ham and clear spam.
+    let pos_is_spam = model.labels().pos.class == 1;
     let coeffs = model.params(); // &Array1<f64>, one per feature column, LAYERS order
-    let bias = model.intercept(); // f64 → the _bias sentinel
-    Ok((coeffs.to_vec(), bias))
+    let intercept = model.intercept();
+    let (weights, bias): (Vec<f64>, f64) = if pos_is_spam {
+        (coeffs.to_vec(), intercept)
+    } else {
+        (coeffs.iter().map(|w| -w).collect(), -intercept)
+    };
+    Ok((weights, bias))
 }
 
-/// STRICT backtest gate (Task 2 GREEN): re-score every labeled pubkey with the
-/// STAGING weights via the shared combiner; `Err` on ANY new FN or FP.
+/// STRICT backtest gate (TUNE-05 / D-06, Open Q2): re-score every labeled pubkey
+/// with the STAGING weights via the SHARED [`detect::combine`] (NOT a private
+/// sigmoid — the gate must measure the exact function live scoring applies), then
+/// compare the staging verdict (`score > τ`) against the human label. ANY new
+/// false negative (confirmed-spam now unflagged) OR new false positive
+/// (confirmed-ham now flagged) → `Err(Regression)`. `Ok(())` only when BOTH are
+/// empty (strict, zero-tolerance — the FP-averse default).
 fn backtest(
-    _labeled: &[(String, bool, Vec<f64>)],
-    _staging_w: &[f64],
-    _staging_b: f64,
-    _tau: f64,
+    labeled: &[(String, bool, Vec<f64>)],
+    staging_w: &[f64],
+    staging_b: f64,
+    tau: f64,
 ) -> Result<(), Regression> {
-    todo!("Task 2 GREEN")
+    let mut new_false_negatives = Vec::new();
+    let mut new_false_positives = Vec::new();
+    for (pubkey, is_spam, xs) in labeled {
+        // Identical math to live scoring (detect::combine), so the gate measures
+        // exactly what the next `run` will compute.
+        let flagged = detect::combine(staging_w, staging_b, xs) > tau;
+        if *is_spam && !flagged {
+            new_false_negatives.push(pubkey.clone()); // confirmed-spam now unflagged
+        }
+        if !*is_spam && flagged {
+            new_false_positives.push(pubkey.clone()); // confirmed-ham now flagged
+        }
+    }
+    if new_false_negatives.is_empty() && new_false_positives.is_empty() {
+        Ok(())
+    } else {
+        Err(Regression {
+            new_false_negatives,
+            new_false_positives,
+        })
+    }
 }
 
-/// Adopt the staging weights + bias into the `weight` table with provenance
-/// (Task 2 GREEN). Only called on a backtest PASS.
+/// Adopt the staging weights + bias into the `weight` table with provenance.
+/// Only called on a backtest PASS. UPDATEs the four `LAYERS` rows + the `_bias`
+/// row (setting `tuned_at = now`, `tuned_from_run = run_id`) in ONE transaction
+/// on the short-lived `weight_write_conn` — which touches ONLY the `weight`
+/// table, preserving the actor's single-writer invariant. `_threshold` (τ) is
+/// NEVER touched (Open Q1). Every value is bound with `params![]` (T-06-02 / V5).
 fn write_weights(
-    _store: &Store,
-    _staging_w: &[f64],
-    _staging_b: f64,
-    _run_id: i64,
+    store: &Store,
+    staging_w: &[f64],
+    staging_b: f64,
+    run_id: i64,
 ) -> rusqlite::Result<()> {
-    todo!("Task 2 GREEN")
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut conn = store.weight_write_conn()?;
+    let tx = conn.transaction()?;
+    for (layer, w) in LAYERS.iter().zip(staging_w.iter()) {
+        tx.execute(
+            "UPDATE weight SET weight = ?2, tuned_at = ?3, tuned_from_run = ?4 WHERE layer = ?1",
+            rusqlite::params![layer, w, now, run_id],
+        )?;
+    }
+    tx.execute(
+        "UPDATE weight SET weight = ?2, tuned_at = ?3, tuned_from_run = ?4 WHERE layer = ?1",
+        rusqlite::params![BIAS_KEY, staging_b, now, run_id],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Re-fit layer weights from human labels and adopt them ONLY if the strict
@@ -267,10 +361,10 @@ pub fn run_tune(
         ));
     }
 
-    // Fit the staging weights + bias (deterministic).
-    let (alpha, max_iterations) = (1.0_f64, 100_u64);
+    // Fit the staging weights + bias (deterministic). Hyperparameters come from
+    // the `[tune]` config section (D-05) — defaulted when the section is absent.
     let (staging_w, staging_b) =
-        fit(&labeled, alpha, max_iterations).map_err(|e| e)?;
+        fit(&labeled, config.tune.alpha, config.tune.max_iterations)?;
 
     // τ is read from the live `_threshold` row and NEVER re-fit (Open Q1).
     let live_weights =
@@ -568,3 +662,7 @@ mod tests {
         store.close().expect("close");
     }
 }
+
+
+
+
