@@ -18,7 +18,7 @@ The dominant project risk is **false positives**, not throughput. That risk is b
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Persistence Foundation** - SQLite store, schema, single-writer idempotent UPSERT API — the dependency root (completed 2026-06-25)
-- [ ] **Phase 2: GraphQL Client + Author Enumeration** - Prove the contract: paginate every distinct pubkey, resumably, with graceful adapter-error handling
+- [x] **Phase 2: GraphQL Client + Author Enumeration** - Prove the contract: paginate every distinct pubkey, resumably, with graceful adapter-error handling (completed 2026-06-25)
 - [ ] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory
 - [ ] **Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)** - Layer trait + L7 combiner + P1 layers (L0/L1/L3/L4) → first per-pubkey spam score with per-layer evidence
 - [ ] **Phase 5: CLI `run` + `export` (first shippable list)** - Drive a full batch and export the reviewable suspected-spammer list with per-layer reasons
@@ -56,15 +56,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A `503` causes a backoff-and-retry without advancing the cursor; an `INVALID_CURSOR` error restarts pagination from page 1; GraphQL `errors[]`/`extensions.code` in a `200` body are parsed rather than ignored.
   4. `maxLevId` is recorded at run start and end as a snapshot-drift probe, and a corpus change mid-pagination does not abort the run.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans complete
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Store run-state helpers + pubkey-only single-writer insert path (WriteMsg enum) for resume/abort/drift (INGEST-01, INGEST-04)
-- [ ] 02-02-PLAN.md — Reusable async GraphQL client: hand-written `authors`/`stats` queries + envelope with two-layer error dispatch (INGEST-01, INGEST-04)
+- [x] 02-01-PLAN.md — Store run-state helpers + pubkey-only single-writer insert path (WriteMsg enum) for resume/abort/drift (INGEST-01, INGEST-04)
+- [x] 02-02-PLAN.md — Reusable async GraphQL client: hand-written `authors`/`stats` queries + envelope with two-layer error dispatch (INGEST-01, INGEST-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — `authors` opaque-cursor walk + minimal `--resume` binary; bounded 503 retry, INVALID_CURSOR restart, drift probe, abort-preserves-cursor (INGEST-01, INGEST-04)
+- [x] 02-03-PLAN.md — `authors` opaque-cursor walk + minimal `--resume` binary; bounded 503 retry, INVALID_CURSOR restart, drift probe, abort-preserves-cursor (INGEST-01, INGEST-04)
 
 ### Phase 3: Fetcher + Bounded Streaming Pipeline
 
@@ -131,7 +131,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Persistence Foundation | 1/1 | Complete    | 2026-06-25 |
-| 2. GraphQL Client + Author Enumeration | 0/3 | Not started | - |
+| 2. GraphQL Client + Author Enumeration | 3/3 | Complete   | 2026-06-25 |
 | 3. Fetcher + Bounded Streaming Pipeline | 0/TBD | Not started | - |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
 | 5. CLI `run` + `export` | 0/TBD | Not started | - |
