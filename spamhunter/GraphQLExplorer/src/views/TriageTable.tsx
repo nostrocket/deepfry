@@ -118,9 +118,17 @@ function BatchIndicator({ n, m }: { n: number; m: number }) {
   )
 }
 
-// Per-chunk recoverable-error copy (VERBATIM UI-SPEC). INTERNAL/unknown → generic hard copy
-// that NEVER echoes the server message (T-04-08).
-function chunkErrorTreatment(kind: string): { tone: 'recoverable' | 'hardFail'; message: string } {
+// Per-chunk error copy (VERBATIM UI-SPEC). INTERNAL/unknown → generic hard copy that NEVER
+// echoes the server message (T-04-08). `retryable === false` (WR-04/WR-05) is a terminal
+// chunk failure that shrinking/Retry cannot fix — it gets the generic hard-fail copy and the
+// caller suppresses the Retry control (a Retry here would deterministically re-fail).
+function chunkErrorTreatment(
+  kind: string,
+  retryable: boolean,
+): { tone: 'recoverable' | 'hardFail'; message: string } {
+  if (!retryable) {
+    return { tone: 'hardFail', message: 'Couldn’t triage these authors in this chunk.' }
+  }
   switch (kind) {
     case 'PAYLOAD_TOO_LARGE':
       return { tone: 'recoverable', message: 'That chunk was too large — shrinking and retrying.' }
@@ -210,8 +218,8 @@ export function TriageTable({ inputHexes }: { inputHexes: string[] }) {
 
       {chunkErrors.length > 0 && (
         <div className={styles.chunkErrors}>
-          {chunkErrors.map(({ index, error }) => {
-            const { tone, message } = chunkErrorTreatment(error.kind)
+          {chunkErrors.map(({ index, error, retryable }) => {
+            const { tone, message } = chunkErrorTreatment(error.kind, retryable)
             const toneClass = tone === 'recoverable' ? styles.recoverable : styles.hardFail
             return (
               <div className={styles.chunkErrorRow} key={index} role="status" aria-live="polite">
@@ -219,13 +227,18 @@ export function TriageTable({ inputHexes }: { inputHexes: string[] }) {
                   <span aria-hidden="true" className={styles.stateDot} />
                   {message}
                 </span>
-                <button
-                  type="button"
-                  className={styles.neutralButton}
-                  onClick={() => retryChunk(index)}
-                >
-                  Retry
-                </button>
+                {/* WR-04/WR-05: only offer Retry when re-issuing can plausibly succeed. A
+                    terminal hard failure (unsplittable 413, at-cap TOO_MANY_AUTHORS) gets no
+                    Retry — it would deterministically re-fail. */}
+                {retryable && (
+                  <button
+                    type="button"
+                    className={styles.neutralButton}
+                    onClick={() => retryChunk(index)}
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )
           })}

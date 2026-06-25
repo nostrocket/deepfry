@@ -32,10 +32,44 @@ interface AuthorGroup {
   events: WindowEvent[]
 }
 
-/** A per-chunk error surfaced to the UI for a Retry affordance. */
+/** A per-chunk error surfaced to the UI for a Retry affordance.
+ *  `retryable === false` marks a terminal hard failure that re-issuing cannot fix
+ *  (WR-04/WR-05): a single-author chunk that still 413s cannot shrink further, and a
+ *  TOO_MANY_AUTHORS at chunk length 1 means the backend cap is below one author — Retry
+ *  would deterministically re-fail, so the UI must present it as a non-retryable hard fail. */
 export interface ChunkError {
   index: number
   error: ApiError
+  retryable: boolean
+}
+
+/** Pure decision for how to handle a classified chunk error (extracted for unit testing,
+ *  mirroring the shouldNudge convention in useStatsPoll). Given the error kind and the chunk
+ *  length, decide whether to SHRINK (halve-and-retry inside fetchChunk), present a RETRYABLE
+ *  per-chunk error, or present a TERMINAL non-retryable hard failure.
+ *
+ *  - 413 / TOO_MANY_AUTHORS with length > 1  → 'shrink'   (WR-04: TOO_MANY shrinks like 413)
+ *  - 413 / TOO_MANY_AUTHORS with length <= 1 → 'terminal' (WR-05: nothing left to shrink)
+ *  - any other classified error              → 'retryable'(NETWORK / NOT_READY / etc.)
+ */
+export type ChunkDegrade = 'shrink' | 'retryable' | 'terminal'
+export function chunkDegradeDecision(kind: ApiError['kind'], chunkLength: number): ChunkDegrade {
+  const shrinkable = kind === 'PAYLOAD_TOO_LARGE' || kind === 'TOO_MANY_AUTHORS'
+  if (shrinkable) return chunkLength > 1 ? 'shrink' : 'terminal'
+  return 'retryable'
+}
+
+/** The outcome of fetching one chunk. `groups` carries every author group that resolved —
+ *  INCLUDING partial work from a successful 413-split sub-half even when a sibling sub-half
+ *  later fails (WR-01: partial work inside a chunk is never discarded). `covered` is the set
+ *  of authors whose sub-request fully resolved (the honest "triaged N" numerator — authors
+ *  in a failed sub-half are NOT covered). `error`/`retryable` are present iff a sub-request
+ *  failed. */
+interface ChunkOutcome {
+  groups: AuthorGroup[]
+  covered: string[]
+  error?: ApiError
+  retryable?: boolean
 }
 
 export interface UseLatestPerAuthor {
@@ -76,10 +110,11 @@ export function useLatestPerAuthor(): UseLatestPerAuthor {
   // Authors already covered by resolved chunks (the triaged numerator).
   const coveredAuthors = useRef<Set<string>>(new Set())
 
-  // Issue a single chunk request; classify BEFORE data; on 413 halve-and-retry (bottoms at
-  // length 1). Returns the groups for this chunk, or an ApiError for a non-413 failure.
+  // Issue a single chunk request; classify BEFORE data; on 413 / TOO_MANY_AUTHORS halve-and-
+  // retry (bottoms at length 1). Always returns a ChunkOutcome that carries whatever groups
+  // resolved (partial sub-half work is NEVER discarded — WR-01) plus an optional error.
   const fetchChunk = useCallback(
-    async (chunk: string[], myRun: number): Promise<AuthorGroup[] | ApiError> => {
+    async (chunk: string[], myRun: number): Promise<ChunkOutcome> => {
       const result = await client
         .query(
           LatestPerAuthorDocument,
@@ -89,28 +124,49 @@ export function useLatestPerAuthor(): UseLatestPerAuthor {
         .toPromise()
         .catch(() => 'THREW' as const)
 
-      // A newer run superseded this fetch — drop it. Signal via a NETWORK sentinel that the
-      // caller will discard because myRun !== runId.current is re-checked there too.
-      if (myRun !== runId.current) return { kind: 'NETWORK' }
+      // A newer run superseded this fetch — drop it. The NETWORK sentinel is discarded by the
+      // caller because myRun !== runId.current is re-checked there too.
+      if (myRun !== runId.current) return { groups: [], covered: [], error: { kind: 'NETWORK' }, retryable: true }
 
-      if (result === 'THREW') return { kind: 'NETWORK' }
+      if (result === 'THREW') return { groups: [], covered: [], error: { kind: 'NETWORK' }, retryable: true }
 
       const apiError = classify(result)
       if (apiError) {
-        // 413: the chunk body exceeded the limit despite static sizing — halve and re-issue.
-        if (apiError.kind === 'PAYLOAD_TOO_LARGE' && chunk.length > 1) {
+        const degrade = chunkDegradeDecision(apiError.kind, chunk.length)
+        if (degrade === 'shrink') {
+          // WR-04: 413 AND TOO_MANY_AUTHORS are both degraded by shrinking, not surfaced as a
+          // futile Retry. Halve and re-issue both halves.
           const mid = Math.ceil(chunk.length / 2)
           const left = await fetchChunk(chunk.slice(0, mid), myRun)
-          if (!Array.isArray(left)) return left
-          const right = await fetchChunk(chunk.slice(mid), myRun)
-          if (!Array.isArray(right)) return right
-          return [...left, ...right]
+          // WR-01: retain the left half's resolved groups even if the right half fails —
+          // partial work inside a chunk is never thrown away.
+          const right = left.error
+            ? { groups: [], covered: [], error: left.error, retryable: left.retryable }
+            : await fetchChunk(chunk.slice(mid), myRun)
+          const merged: ChunkOutcome = {
+            groups: [...left.groups, ...right.groups],
+            covered: [...left.covered, ...right.covered],
+          }
+          // Surface the first error encountered (left precedence) so the UI offers a Retry
+          // of the still-missing authors; the retried chunk re-splits and skips covered work.
+          const firstError = left.error ?? right.error
+          if (firstError) {
+            merged.error = firstError
+            merged.retryable = (left.error ? left.retryable : right.retryable) ?? true
+          }
+          return merged
         }
-        return apiError
+        // WR-05 / WR-04 terminal: a single-author chunk that still 413s cannot shrink any
+        // further, and a TOO_MANY_AUTHORS at length 1 means the backend cap is below one
+        // author. Either way there is nothing left to shrink — present a NON-retryable hard
+        // failure rather than a Retry that deterministically re-fails.
+        return { groups: [], covered: [], error: apiError, retryable: degrade !== 'terminal' }
       }
 
       const groups = (result.data?.latestPerAuthor ?? []) as AuthorGroup[]
-      return groups
+      // A fully-resolved request covers ALL its authors (zero-event authors resolve as an
+      // explicit "0 events" left-join row, not an omission) — the honest "triaged N" numerator.
+      return { groups, covered: chunk }
     },
     [],
   )
@@ -140,15 +196,19 @@ export function useLatestPerAuthor(): UseLatestPerAuthor {
           const outcome = await fetchChunk(chunk, myRun)
           if (myRun !== runId.current) return
 
-          if (Array.isArray(outcome)) {
-            accumulated.current.push(...outcome)
-            for (const hex of chunk) coveredAuthors.current.add(hex)
+          // Always absorb whatever resolved — including partial sub-half work (WR-01). Only
+          // the authors that actually resolved are marked covered, so "triaged N of M" stays
+          // honest when a chunk partially failed.
+          if (outcome.groups.length > 0 || outcome.covered.length > 0) {
+            accumulated.current.push(...outcome.groups)
+            for (const hex of outcome.covered) coveredAuthors.current.add(hex)
             setRows(mergeByAuthor(inputHexes.current, accumulated.current))
             setTriagedCount(coveredAuthors.current.size)
-          } else {
-            // Recoverable or hard chunk error — retain partial results, offer Retry. The
-            // chunk's authors are NOT marked covered, so "triaged N of M" stays honest.
-            setChunkErrors((prev) => [...prev, { index, error: outcome }])
+          }
+          if (outcome.error) {
+            const error = outcome.error
+            const retryable = outcome.retryable ?? true
+            setChunkErrors((prev) => [...prev, { index, error, retryable }])
           }
         }
         if (myRun === runId.current) setLoading(false)
@@ -162,18 +222,31 @@ export function useLatestPerAuthor(): UseLatestPerAuthor {
       const myRun = runId.current
       const chunk = chunkAuthorsByIndex.current[index]
       if (!chunk) return
+      // Re-issue only the authors of this chunk that are NOT already covered — a prior
+      // partial 413-split may have resolved some of them (WR-01); re-fetching them would be
+      // wasted work and could re-413 the same body.
+      const pending = chunk.filter((hex) => !coveredAuthors.current.has(hex))
+      if (pending.length === 0) {
+        setChunkErrors((prev) => prev.filter((c) => c.index !== index))
+        return
+      }
       setChunkErrors((prev) => prev.filter((c) => c.index !== index))
       setLoading(true)
       void (async () => {
-        const outcome = await fetchChunk(chunk, myRun)
+        const outcome = await fetchChunk(pending, myRun)
+        // WR-02: gate ALL state writes on run identity. A stale retry from a superseded batch
+        // must never clear/overwrite a freshly started run's loading or results.
         if (myRun !== runId.current) return
-        if (Array.isArray(outcome)) {
-          accumulated.current.push(...outcome)
-          for (const hex of chunk) coveredAuthors.current.add(hex)
+        if (outcome.groups.length > 0 || outcome.covered.length > 0) {
+          accumulated.current.push(...outcome.groups)
+          for (const hex of outcome.covered) coveredAuthors.current.add(hex)
           setRows(mergeByAuthor(inputHexes.current, accumulated.current))
           setTriagedCount(coveredAuthors.current.size)
-        } else {
-          setChunkErrors((prev) => [...prev, { index, error: outcome }])
+        }
+        if (outcome.error) {
+          const error = outcome.error
+          const retryable = outcome.retryable ?? true
+          setChunkErrors((prev) => [...prev, { index, error, retryable }])
         }
         setLoading(false)
       })()
