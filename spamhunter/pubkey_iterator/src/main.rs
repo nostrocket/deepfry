@@ -77,12 +77,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("run complete: run_id={run_id}");
         }
         Commands::Export { run_id } => {
-            // Plan 03 fills this arm (the suspected_spammer INSERT…SELECT). Until
-            // then it is a clearly-marked placeholder that exits non-zero so a
-            // premature `export` is loud, never a silent no-op.
-            let _ = run_id;
-            eprintln!("export: not yet implemented (Plan 05-03 fills this arm)");
-            std::process::exit(2);
+            // Pure-SQLite materialize (D-05) — no tokio runtime needed (only `Run`
+            // builds one). Open the store and a short-lived export write conn that
+            // touches only `suspected_spammer` (single-writer invariant preserved).
+            let store = pubkey_iterator::store::Store::open(&cli.db)?;
+            let mut conn = store.export_write_conn()?;
+
+            // Resolve the target run: the explicit --run-id, else the latest `done`
+            // run (never a half-finished one). No completed run → a clear error so a
+            // premature `export` is loud, never a silent zero-row no-op.
+            let rid = match run_id.or(pubkey_iterator::export::latest_done_run(&conn)?) {
+                Some(rid) => rid,
+                None => {
+                    return Err(
+                        "no completed run to export — run `pubkey_iterator run` first".into(),
+                    )
+                }
+            };
+
+            let n = pubkey_iterator::export::materialize_suspected(&mut conn, rid)?;
+            eprintln!("exported {n} suspected pubkeys for run {rid}");
+            eprintln!(
+                "review: SELECT * FROM suspected_spammer s \
+                 JOIN signal USING (run_id, pubkey) WHERE s.run_id = {rid} ORDER BY s.rank"
+            );
+
+            // Drop the export conn before close() so the DB is left consistent.
+            drop(conn);
+            store.close()?;
         }
     }
     Ok(())
