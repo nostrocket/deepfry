@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: GraphQL Client + Author Enumeration** - Prove the contract: paginate every distinct pubkey, resumably, with graceful adapter-error handling (completed 2026-06-25)
 - [x] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory (completed 2026-06-25)
 - [x] **Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)** - Layer trait + L7 combiner + P1 layers (L0/L1/L3/L4) → first per-pubkey spam score with per-layer evidence (completed 2026-06-25)
-- [ ] **Phase 5: CLI `run` + `export` (first shippable list)** - Drive a full batch and export the reviewable suspected-spammer list with per-layer reasons
+- [x] **Phase 5: CLI `run` + `export` (first shippable list)** - Drive a full batch and export the reviewable suspected-spammer list with per-layer reasons (completed 2026-06-25)
 - [ ] **Phase 6: Labeling + Logistic Tuner + Backtest Gate** - Capture human labels, re-fit weights from labels, and gate adoption on a no-regression backtest
 
 ## Phase Details
@@ -128,19 +128,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. An `export` subcommand emits the suspected-spammer list — pubkeys whose score exceeds a tunable threshold τ — read from SQLite.
   3. Each exported pubkey carries its per-layer decomposition (which layers fired, sub-scores, sample evidence) so a reviewer can judge the verdict, and the run's threshold and weight snapshot are recorded for reproducibility.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans complete
 
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — Foundation slice: clap dep + suspected_spammer schema table + run-lifecycle unification (widen enumerate::run to carry the snapshot config_json, move mark_run_done to the scoring caller) + Store::set_run_config_json / export_write_conn (OPS-01, SCORE-03)
+- [x] 05-01-PLAN.md — Foundation slice: clap dep + suspected_spammer schema table + run-lifecycle unification (widen enumerate::run to carry the snapshot config_json, move mark_run_done to the scoring caller) + Store::set_run_config_json / export_write_conn (OPS-01, SCORE-03)
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 05-02-PLAN.md — `run` slice: src/run.rs run_batch lifts the tested pipeline consumer into production on ONE run_id (enumerate→fetch→score→persist, τ+weight snapshot), full clap `run`/`export` CLI surface, live self-skipping e2e proof (OPS-01)
+- [x] 05-02-PLAN.md — `run` slice: src/run.rs run_batch lifts the tested pipeline consumer into production on ONE run_id (enumerate→fetch→score→persist, τ+weight snapshot), full clap `run`/`export` CLI surface, live self-skipping e2e proof (OPS-01)
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 05-03-PLAN.md — `export` slice: src/export.rs materialize_suspected (idempotent INSERT…SELECT FROM score WHERE suspected=1 into suspected_spammer, τ+rank stamped, evidence JOINable from signal) + latest_done_run + wired Export CLI arm (SCORE-03)
+- [x] 05-03-PLAN.md — `export` slice: src/export.rs materialize_suspected (idempotent INSERT…SELECT FROM score WHERE suspected=1 into suspected_spammer, τ+rank stamped, evidence JOINable from signal) + latest_done_run + wired Export CLI arm (SCORE-03)
 
 ### Phase 6: Labeling + Logistic Tuner + Backtest Gate
 
@@ -165,7 +165,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 2. GraphQL Client + Author Enumeration | 3/3 | Complete    | 2026-06-25 |
 | 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 3/3 | Complete    | 2026-06-25 |
-| 5. CLI `run` + `export` | 0/3 | Not started | - |
+| 5. CLI `run` + `export` | 3/3 | Complete   | 2026-06-25 |
 | 6. Labeling + Logistic Tuner + Backtest Gate | 0/TBD | Not started | - |
 
 ## Coverage
