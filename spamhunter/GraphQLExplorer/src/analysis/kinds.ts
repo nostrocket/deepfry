@@ -11,6 +11,13 @@
 // >= 0 (kinds are non-negative). An event failing EITHER check is COUNTED in
 // outOfRangeCount and excluded from the histogram — a forged value never gets charted.
 //
+// HOSTILE INPUT (WR-04, parity with analyzeTags): kind/createdAt reach this analyzer via an
+// unchecked `page.events as WindowEvent[]` cast — a partial-error payload can deliver
+// null/undefined/non-number values the type checker cannot see. Both guards are
+// Number.isSafeInteger-based, which returns false for null, undefined, NaN, and non-numbers,
+// so a malformed value is COUNTED into outOfRangeCount and skipped, never thrown. The
+// asymmetry with tags.ts (which is explicitly hardened) is closed: no input shape escapes.
+//
 // bins mirror rate.ts's { ... ; count }[] shape so the slice-02 KindsPanel can reuse the
 // hand-rolled RatePanel bar JSX.
 import { isSaneTs } from './rate'

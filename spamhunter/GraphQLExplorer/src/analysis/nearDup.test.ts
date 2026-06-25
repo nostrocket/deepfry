@@ -189,3 +189,53 @@ describe('nearDup — degenerate input (no crash)', () => {
     expect(NEAR_DUP.jaccard).toBeLessThanOrEqual(1)
   })
 })
+
+describe('nearDup — hostile/malformed content (WR-04, parity with tags.ts)', () => {
+  // The `page.events as WindowEvent[]` cast in useAuthorWindow can deliver content that is
+  // null/undefined/non-string (partial-error payload) — the type checker cannot see it.
+  // normalizeContent must coerce rather than throw, mirroring how analyzeTags survives
+  // malformed tag rows. A non-string normalizes to '' (empty key + empty shingle Set), so
+  // it never near-matches a substantive post and only ever exact-buckets with other empties.
+
+  it('does not throw on null content (coerced to empty, never .normalize on null)', () => {
+    const events = [{ id: '1', content: null }, { id: '2', content: 'real post here' }]
+    // Cast to the public signature — the runtime value is intentionally malformed.
+    expect(() => nearDup(events as unknown as { id: string; content: string }[])).not.toThrow()
+  })
+
+  it('does not throw on undefined content', () => {
+    const events = [{ id: '1', content: undefined }, { id: '2', content: 'real post here' }]
+    expect(() => nearDup(events as unknown as { id: string; content: string }[])).not.toThrow()
+  })
+
+  it('does not throw on non-string (number/object) content', () => {
+    const events = [
+      { id: '1', content: 42 },
+      { id: '2', content: { evil: true } },
+      { id: '3', content: 'real post here' },
+    ]
+    expect(() => nearDup(events as unknown as { id: string; content: string }[])).not.toThrow()
+  })
+
+  it('exact-buckets multiple malformed (empty-coerced) posts together, not with substantive ones', () => {
+    const events = [
+      { id: '1', content: null },
+      { id: '2', content: undefined },
+      { id: '3', content: 'a substantive unique post that stands alone' },
+    ]
+    const result = nearDup(events as unknown as { id: string; content: string }[])
+    // The two empty-coerced rows share the '' normalized key → one exact cluster of 2;
+    // the substantive post never joins (its shingle Set is non-empty, empties never near-match).
+    expect(result.clusters).toHaveLength(1)
+    expect(result.clusters[0].kind).toBe('exact')
+    expect(result.clusters[0].memberIds.sort()).toEqual(['1', '2'])
+  })
+})
+
+describe('normalizeContent — non-string coercion (WR-04)', () => {
+  it('coerces null/undefined/non-string to an empty string instead of throwing', () => {
+    expect(normalizeContent(null as unknown as string)).toBe('')
+    expect(normalizeContent(undefined as unknown as string)).toBe('')
+    expect(normalizeContent(42 as unknown as string)).toBe('')
+  })
+})

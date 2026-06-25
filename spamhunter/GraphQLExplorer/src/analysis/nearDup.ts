@@ -25,8 +25,16 @@ import { NEAR_DUP } from './thresholds'
 /**
  * Exact-hash stage key: NFC + lowercase + collapse internal whitespace + trim.
  * Deliberately PRESERVES URLs / mentions / punctuation verbatim (CONTEXT over-merge guard).
+ *
+ * HOSTILE INPUT (WR-04, parity with analyzeTags): `content` is author-supplied and reaches
+ * this analyzer via an unchecked `page.events as WindowEvent[]` cast — a partial-error
+ * payload can deliver `null`/`undefined`/non-string `content` the type checker cannot see.
+ * A non-string is coerced to '' (it normalizes to an empty key + empty shingle Set, so it
+ * only ever exact-buckets with other empties and never near-matches a substantive post),
+ * never thrown — mirroring the defensive posture tags.ts already has.
  */
 export function normalizeContent(s: string): string {
+  if (typeof s !== 'string') return ''
   return s.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()
 }
 

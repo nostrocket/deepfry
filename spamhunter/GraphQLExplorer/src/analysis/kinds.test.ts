@@ -92,6 +92,57 @@ describe('analyzeKinds — degenerate input (no crash)', () => {
   })
 })
 
+describe('analyzeKinds — hostile/malformed kind & createdAt (WR-04, parity with tags.ts)', () => {
+  // The `page.events as WindowEvent[]` cast in useAuthorWindow can deliver kind/createdAt
+  // that are null/undefined/non-number (partial-error payload) the type checker cannot see.
+  // Number.isSafeInteger returns false for all of those, so the event is flagged into
+  // outOfRangeCount and excluded — never thrown, never mis-charted.
+
+  it('flags null/undefined kind into outOfRangeCount without throwing', () => {
+    const events = [
+      { kind: 1, createdAt: BASE },
+      { kind: null, createdAt: BASE + 1 },
+      { kind: undefined, createdAt: BASE + 2 },
+    ]
+    let result: KindsResult
+    expect(() => {
+      result = analyzeKinds(events as unknown as { kind: number; createdAt: number }[])
+    }).not.toThrow()
+    expect(result!.outOfRangeCount).toBe(2)
+    expect(result!.analyzedCount).toBe(1)
+    expect(result!.bins).toEqual([{ kind: 1, count: 1 }])
+  })
+
+  it('flags null/undefined/non-number createdAt into outOfRangeCount without throwing', () => {
+    const events = [
+      { kind: 1, createdAt: BASE },
+      { kind: 1, createdAt: null },
+      { kind: 1, createdAt: undefined },
+      { kind: 1, createdAt: 'not-a-number' },
+    ]
+    let result: KindsResult
+    expect(() => {
+      result = analyzeKinds(events as unknown as { kind: number; createdAt: number }[])
+    }).not.toThrow()
+    expect(result!.outOfRangeCount).toBe(3)
+    expect(result!.analyzedCount).toBe(1)
+    expect(result!.bins).toEqual([{ kind: 1, count: 1 }])
+  })
+
+  it('flags non-number (object) kind without throwing', () => {
+    const events = [
+      { kind: { evil: true }, createdAt: BASE },
+      { kind: 1, createdAt: BASE + 1 },
+    ]
+    let result: KindsResult
+    expect(() => {
+      result = analyzeKinds(events as unknown as { kind: number; createdAt: number }[])
+    }).not.toThrow()
+    expect(result!.outOfRangeCount).toBe(1)
+    expect(result!.analyzedCount).toBe(1)
+  })
+})
+
 describe('KIND_NAMES — NIP lookup', () => {
   it('labels known kinds and omits unknown ones', () => {
     expect(KIND_NAMES[1]).toBe('Short Text Note')
