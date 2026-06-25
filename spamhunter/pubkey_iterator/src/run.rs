@@ -70,6 +70,12 @@ pub enum RunError {
     /// The τ + weight snapshot could not be serialized to JSON.
     #[error("snapshot serialization error: {0}")]
     Snapshot(#[from] serde_json::Error),
+    /// The canonical `run` row vanished between enumerate and the done-mark
+    /// (out-of-band delete or a refactor that changes `run_id` mid-batch). Marking
+    /// would silently UPDATE zero rows, so `run_batch` fails loudly instead of
+    /// reporting success for a run that was never marked `done` (MED-01).
+    #[error("run row {0} vanished before it could be marked done")]
+    MissingRunRow(i64),
 }
 
 /// Drive ONE full end-to-end batch — enumerate → fetch → score → persist — on a
@@ -186,7 +192,18 @@ pub async fn run_batch(store: Arc<Store>, config: &Config, resume: bool) -> Resu
     // 10. Re-mark the canonical run done. enumerate recorded the end drift via
     //     set_run_max_lev_end; read it back so mark_run_done stamps the SAME
     //     max_lev_id_end (a single run_id spans enumerate→score→done, A5).
-    let max_lev_end = read_max_lev_end(&store, run_id)?.unwrap_or(0);
+    //
+    //     MED-01: distinguish None (the run row is GONE — should never happen, but
+    //     an out-of-band delete or a future run_id-changing refactor could trigger
+    //     it) from Some(0) (the row exists, drift probe genuinely unrecorded). A
+    //     missing row is a hard error, NOT a silent unwrap_or(0) that would let
+    //     mark_run_done UPDATE zero rows while run_batch still reports success.
+    let max_lev_end = match read_max_lev_end(&store, run_id)? {
+        Some(v) => v,
+        None => return Err(RunError::MissingRunRow(run_id)),
+    };
+    // mark_run_done itself also asserts it matched exactly one row (defence in
+    // depth — the run row could vanish between this read and the UPDATE).
     store.mark_run_done(run_id, max_lev_end)?;
     store.close()?;
     Ok(run_id)

@@ -203,13 +203,23 @@ impl Store {
 
     /// Mark a run `done`, stamp `finished_at`, and record the final
     /// `max_lev_id_end` (D-09 drift end).
+    ///
+    /// Asserts the UPDATE matched exactly one row (MED-01): if the `run` row has
+    /// vanished (out-of-band delete, or a refactor that changes `run_id` between
+    /// enumerate and mark), the UPDATE matches nothing and we return
+    /// `QueryReturnedNoRows` rather than silently reporting "done" for a run that
+    /// was never marked — which would surface only later as `export` finding no
+    /// `done` run.
     pub fn mark_run_done(&self, run_id: i64, max_lev_id_end: i64) -> rusqlite::Result<()> {
         let conn = self.run_write_conn()?;
-        conn.execute(
+        let rows = conn.execute(
             "UPDATE run SET status = 'done', finished_at = ?2, max_lev_id_end = ?3 \
              WHERE run_id = ?1",
             params![run_id, now_epoch_secs(), max_lev_id_end],
         )?;
+        if rows != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 
@@ -1010,6 +1020,31 @@ mod tests {
         assert_eq!(run.status, "done");
         assert!(run.finished_at.is_some(), "finished_at recorded");
         assert_eq!(run.max_lev_id_end, Some(12345));
+    }
+
+    /// MED-01: if the `run` row has vanished, `mark_run_done` matches zero rows and
+    /// must return an error rather than silently reporting success — otherwise a
+    /// caller would believe a run was marked `done` when it never was.
+    #[test]
+    fn mark_run_done_errors_when_run_row_missing() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        // Delete the run row out-of-band, simulating the "should never happen"
+        // vanished-row case.
+        Connection::open(&path)
+            .expect("writer")
+            .execute("DELETE FROM run WHERE run_id = ?1", rusqlite::params![run_id])
+            .expect("delete run row");
+
+        let err = store
+            .mark_run_done(run_id, 42)
+            .expect_err("marking a vanished run row must error");
+        assert!(
+            matches!(err, rusqlite::Error::QueryReturnedNoRows),
+            "vanished run row surfaces as QueryReturnedNoRows (got: {err:?})"
+        );
     }
 
     /// Proves SCORE-02 determinism: the same synthetic batch into two fresh DBs
