@@ -108,9 +108,13 @@ describe('nearDup — stage 1: exact-duplicate bucketing', () => {
 
 describe('nearDup — stage 2: near-duplicate clustering', () => {
   it('clusters a near-duplicate pair over the Jaccard cutoff as kind "near"', () => {
-    // Two long posts sharing most word-shingles but not identical.
-    const a = 'the quick brown fox jumps over the lazy dog today'
-    const b = 'the quick brown fox jumps over the lazy dog tomorrow'
+    // Two long posts (20 words) differing only in the final word. For k=3 shingles a
+    // single trailing-word change perturbs 2 of the 18 shingles, leaving Jaccard
+    // 16/20 = 0.8 — exactly at NEAR_DUP.jaccard, so they group as a 'near' cluster
+    // while staying distinct enough not to share a stage-1 exact bucket.
+    const stem = 'w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19'
+    const a = `${stem} alpha`
+    const b = `${stem} omega`
     const result = nearDup([ev('1', a), ev('2', b)])
     expect(result.clusters).toHaveLength(1)
     expect(result.clusters[0].kind).toBe('near')
@@ -118,11 +122,15 @@ describe('nearDup — stage 2: near-duplicate clustering', () => {
   })
 
   it('unions a transitive chain (A≈B, B≈C) into ONE cluster (order-independent)', () => {
-    // Each consecutive pair shares enough shingles to exceed the cutoff; A and C may
-    // not directly match but the chain unions all three.
-    const a = 'one two three four five six seven eight nine ten'
-    const b = 'one two three four five six seven eight nine eleven'
-    const c = 'one two three four five six seven eight twelve eleven'
+    // 22-word posts. A↔B differ only in the FINAL word (2 shingles → Jaccard 0.818 ≥
+    // cutoff). B↔C differ only in the FIRST word (1 shingle → Jaccard 0.905 ≥ cutoff). A↔C
+    // therefore differ in BOTH ends (3 shingles → Jaccard ~0.74 < cutoff, no direct match).
+    // Union-find still unions all three via the B-bridge — the deterministic transitive-
+    // closure choice greedy first-match would miss.
+    const mid = 'w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20'
+    const a = `head ${mid} tailA`
+    const b = `head ${mid} tailB`
+    const c = `nose ${mid} tailB`
     const result = nearDup([ev('1', a), ev('2', b), ev('3', c)])
     expect(result.clusters).toHaveLength(1)
     expect(result.clusters[0].memberIds.sort()).toEqual(['1', '2', '3'])

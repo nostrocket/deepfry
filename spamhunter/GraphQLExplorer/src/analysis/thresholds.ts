@@ -15,3 +15,25 @@ export const BURST = {
   minEvents: 5, // that many events within windowSec flags a burst worth investigating
   binSec: 3600, // fixed-width display bins (seconds) for the hand-rolled rate bars
 } as const
+
+// Near-duplicate detection tunables (DRILL-02) — same posture as BURST above.
+// k=3 word shingles + Jaccard 0.8 are standard textbook defaults for near-dup text
+// clustering (RESEARCH § Pattern 1, A2). Corpus-validation of the exact numbers is
+// explicitly DEFERRED to the Phase-3 corpus pass (STATE blocker); the honesty posture
+// (an honest "X of N fetched" denominator with NO "clean" verdict) is threshold-
+// independent — these numbers only move where the suspicious-when-present line sits.
+export const NEAR_DUP = {
+  k: 3, // word-shingle size for stage-2 similarity
+  jaccard: 0.8, // shingle-set Jaccard at/above this groups two posts as near-duplicates
+} as const
+
+// Tag/mention aggregation tunables (DRILL-03) — conservative discretion defaults
+// (RESEARCH A3), same posture as BURST/NEAR_DUP. These are deliberately high so a flag
+// means a genuinely unusual fan-out / hashtag load, not normal threading. Corpus-
+// validation is DEFERRED to Phase 3 (STATE); the honesty posture holds regardless — a
+// tripped flag is a suspicious-when-present signal, never a "clean" verdict when absent.
+export const TAGS = {
+  highTagCount: 20, // total tag rows on a single event above this = a high-tag outlier
+  massMention: 20, // p-mention (fan-out) count on one event above this = mass-mention
+  stuffing: 15, // t-hashtag count on one event above this = hashtag stuffing
+} as const
