@@ -50,3 +50,14 @@ domain_concentration_knee = 0.7   # max-host-share / events-with-URL → 1.0 at/
 mean_ptags_knee           = 10.0  # mean p-tags/event → 1.0 at/above
 mean_ttags_knee           = 8.0   # mean t-tags/event → 1.0 at/above
 min_events                = 5     # below this, the layer emits 0.0 (FP-averse)
+
+# Phase-6 offline tuner (TUNE-02/TUNE-04/TUNE-05). OPTIONAL — the whole [tune]
+# section (or any field) may be omitted; the defaults below apply. The `tune`
+# subcommand fits a logistic model over the signal × backpropagation join and
+# adopts new weights ONLY if a strict backtest passes (zero new FN, zero new FP).
+[tune]
+alpha              = 0.01  # L2 regularization for the logistic fit. Lower = the
+                           # model separates the labeled set more aggressively;
+                           # raise it as the labeled corpus grows to curb over-fit.
+max_iterations     = 100   # L-BFGS iteration cap for the fit.
+review_sample_size = 100   # negative-sampling review-queue size (Plan 03).
