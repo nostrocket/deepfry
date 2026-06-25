@@ -62,7 +62,11 @@ function IdentityHeader({ hex, npub }: { hex: string; npub: string }) {
           type="button"
           className={styles.copyButton}
           aria-label="Copy pubkey"
-          onClick={() => void navigator.clipboard?.writeText(npub)}
+          // WR-03: writeText rejects in real conditions (denied permission, non-secure
+          // context, unfocused doc). The optional-chain guards only the absence of
+          // clipboard; the .catch swallows a rejected write so it never surfaces as an
+          // unhandled rejection. Copy is best-effort convenience — silent catch is fine.
+          onClick={() => void navigator.clipboard?.writeText(npub).catch(() => {})}
         >
           Copy
         </button>
@@ -74,7 +78,8 @@ function IdentityHeader({ hex, npub }: { hex: string; npub: string }) {
           type="button"
           className={styles.copyButton}
           aria-label="Copy pubkey"
-          onClick={() => void navigator.clipboard?.writeText(hex)}
+          // WR-03: see npub button above — swallow a rejected clipboard write.
+          onClick={() => void navigator.clipboard?.writeText(hex).catch(() => {})}
         >
           Copy
         </button>
