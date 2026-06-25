@@ -397,6 +397,23 @@ mod tests {
         let _ = stage.score(1, "pk", &[], false);
     }
 
+    /// `combine` is the single shared logistic combiner `sigmoid(b + Σ wᵢ·xᵢ)`
+    /// that BOTH `ScoringStage::score` and the Plan-02 tuner backtest call, so the
+    /// backtest re-scores with byte-identical math. Asserts it matches the
+    /// hand-computed inline form and the bias-only midpoint.
+    #[test]
+    fn combine_matches_inline_sigmoid() {
+        // sigmoid(-1.0 + 2.0*1.0) = sigmoid(1.0).
+        let got = combine(&[2.0], -1.0, &[1.0]);
+        let want = 1.0 / (1.0 + (-(2.0 * 1.0 + -1.0_f64)).exp());
+        assert!(
+            (got - want).abs() < 1e-12,
+            "combine must equal the inline sigmoid: got {got}, want {want}"
+        );
+        // Zero inputs + zero bias → sigmoid(0) = 0.5 exactly.
+        assert_eq!(combine(&[1.0, 1.0], 0.0, &[0.0, 0.0]), 0.5);
+    }
+
     /// One trivial layer at value=v under weight=w, bias=b → score = sigmoid(b+w*v),
     /// and the subscore carries the layer name + value + non-empty evidence.
     #[test]
