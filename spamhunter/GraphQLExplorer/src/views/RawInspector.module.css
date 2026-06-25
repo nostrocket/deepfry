@@ -1,0 +1,112 @@
+/*
+ * RawInspector — hand-rolled CSS Module consuming src/styles/tokens.css only (no new
+ * tokens). The <pre> styling mirrors RatePanel.module.css's panel discipline; the
+ * trigger / close controls mirror AuthorDrillDown's neutral-chrome .copyButton (NEVER
+ * accent). Error notes reuse the recoverable (amber) / hard-fail (red) semantic pair.
+ *
+ * The raw bytes are author-controlled and are rendered as an escaped text node only.
+ */
+
+/* Neutral-chrome trigger / close — matches .copyButton (no accent). */
+.trigger {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+  cursor: pointer;
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+.trigger:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.raw {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.rawToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* The canonical bytes — mono, escaped, never executed; long lines wrap, never overflow. */
+.pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-md);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+
+.caption {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.zeroMatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
+/* Inline error note — amber (recoverable) / red (hard), paired with a dot. */
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.recoverable {
+  color: var(--recoverable);
+}
+
+.hardFail {
+  color: var(--hard-fail);
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}

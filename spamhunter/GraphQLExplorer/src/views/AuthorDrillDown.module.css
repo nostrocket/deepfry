@@ -140,16 +140,24 @@
   border-bottom: 1px solid var(--border);
 }
 
-.row {
+/* Each timeline row + its row-inline raw inspector form one group; the divider lives on
+   the group so the per-row RawInspector expand stays within the row's visual band. */
+.rowGroup {
   border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
 }
 
-.row:last-child {
+.rowGroup:last-child {
   border-bottom: none;
 }
 
 .row:hover {
   background: var(--surface);
+}
+
+/* The row-inline raw inspector control/output sits under the row's content column. */
+.rowGroup > :not(.row) {
+  padding: 0 var(--space-md) var(--space-md);
 }
 
 .cellKind {

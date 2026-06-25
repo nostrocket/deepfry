@@ -30,6 +30,10 @@ import type { ApiError } from '../transport/errors'
 import { ConnectingShell } from './ConnectingShell'
 import { WindowIndicator } from './WindowIndicator'
 import { RatePanel } from './RatePanel'
+import { DuplicatePanel } from './DuplicatePanel'
+import { TagsPanel } from './TagsPanel'
+import { KindsPanel } from './KindsPanel'
+import { RawInspector } from './RawInspector'
 import styles from './AuthorDrillDown.module.css'
 
 // Render an author-claimed epoch (seconds) as human UTC, trimmed to seconds + 'Z'.
@@ -115,7 +119,10 @@ function ErrorShell({
 // VERBATIM UI-SPEC copy per classifier kind — drill-down phrasing. INTERNAL is generic
 // (no server internals); VALIDATION verbatim (user-safe per contract §7); NETWORK echoes
 // the configured GRAPHQL_URL only.
-function errorTreatment(error: ApiError): { tone: 'recoverable' | 'hardFail'; message: string } {
+export function errorTreatment(error: ApiError): {
+  tone: 'recoverable' | 'hardFail'
+  message: string
+} {
   switch (error.kind) {
     case 'INVALID_CURSOR':
       return { tone: 'recoverable', message: 'Pagination expired — reloading from the top.' }
@@ -144,14 +151,21 @@ function errorTreatment(error: ApiError): { tone: 'recoverable' | 'hardFail'; me
 }
 
 // ── One timeline row ────────────────────────────────────────────────────────
+// Row-inline raw expand (RESEARCH Open-Question 2): the per-event "View raw" control and
+// its lazily-fetched escaped <pre> live under the clicked row — the analyst stays in
+// timeline context, no modal / focus-trap. RawInspector owns its own idle→loaded state
+// and fetches ONLY on activation.
 function TimelineRow({ event }: { event: WindowEvent }) {
   return (
-    <div className={styles.row}>
-      <span className={styles.cellKind}>{event.kind}</span>
-      <span className={styles.cellTime}>
-        {utc(event.createdAt)} · {event.createdAt}
-      </span>
-      <span className={styles.cellContent}>{event.content}</span>
+    <div className={styles.rowGroup}>
+      <div className={styles.row}>
+        <span className={styles.cellKind}>{event.kind}</span>
+        <span className={styles.cellTime}>
+          {utc(event.createdAt)} · {event.createdAt}
+        </span>
+        <span className={styles.cellContent}>{event.content}</span>
+      </div>
+      <RawInspector id={event.id} />
     </div>
   )
 }
@@ -241,6 +255,13 @@ export function AuthorDrillDown({ hex }: { hex: string }) {
               Its own co-located window indicator + the persistent forgeable caveat live
               inside the panel. Only on the loaded branch (>= 1 event to analyze). */}
           <RatePanel events={events} windowMeta={windowMeta} />
+
+          {/* DRILL-02 / DRILL-03 / DRILL-04 — the three slice-03 signal panels, stacked
+              below the rate panel, each re-deriving live over the same accumulated window
+              on Load more. Loaded branch only (>= 1 event to analyze). */}
+          <DuplicatePanel events={events} windowMeta={windowMeta} />
+          <TagsPanel events={events} windowMeta={windowMeta} />
+          <KindsPanel events={events} windowMeta={windowMeta} />
         </section>
       )}
     </main>
