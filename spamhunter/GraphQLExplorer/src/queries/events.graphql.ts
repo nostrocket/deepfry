@@ -4,10 +4,11 @@ import { graphql } from '../gql'
 // §6 pagination). Mirrors stats.graphql.ts: a graphql() document so the generated
 // types make data.events.events[].createdAt / .kind typed `number`.
 //
-// Field selection (contract §9.6, A4): select ONLY the five fields the timeline
-// renders — id, pubkey, kind, createdAt, content. The large canonical payload field
-// and the signature/tag fields are deliberately omitted: they would inflate every
-// page for no Phase-2 render, and the tag/kind histogram work lands in Phase 3.
+// Field selection (contract §9.6, A4): select the six fields the window now needs —
+// id, pubkey, kind, createdAt, content, and (Phase 3) tags, which feeds the tag /
+// mention fan-out aggregation. The large canonical bytes payload remains deliberately
+// EXCLUDED: it would inflate every page for no list render and is fetched lazily, for a
+// single event at a time, by the inspector's dedicated query document (DRILL-04).
 //
 // Ordering is FIXED server-side: createdAt DESC, levId DESC (contract §3) — there
 // is no orderBy argument, so the timeline renders the server order verbatim
@@ -22,6 +23,7 @@ export const EventsDocument = graphql(`
         kind
         createdAt
         content
+        tags
       }
       endCursor
       hasMore

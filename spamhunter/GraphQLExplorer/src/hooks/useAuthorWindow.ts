@@ -26,13 +26,18 @@ import { EventsDocument } from '../queries/events.graphql'
 // the server silently clamps to [1, 500]). 100 is the contract default page size.
 export const PAGE_LIMIT = 100
 
-/** One rendered event row — exactly the five fields EventsDocument selects. */
+/**
+ * One rendered event row — the six fields EventsDocument selects (id, pubkey, kind,
+ * createdAt, content, and the Phase-3 `tags`). The large canonical `raw` payload is NOT
+ * here: it is fetched lazily, per event, by the raw inspector (rawEvent.graphql.ts).
+ */
 export interface WindowEvent {
   id: string
   pubkey: string
   kind: number
   createdAt: number
   content: string
+  tags: string[][]
 }
 
 /**
