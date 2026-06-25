@@ -5,8 +5,9 @@ edition = "2021"
 
 # Dependencies land in their owning phase (stack discipline). Phase 1 added the
 # persistence subset (rusqlite/serde/serde_json/flume); Phase 2 owns the GraphQL
-# transport (reqwest/tokio/thiserror). The remainder (rayon/clap/gaoya/linfa)
-# stays for its owning phase — do NOT add rayon or fetch-pipeline deps here.
+# transport (reqwest/tokio/thiserror); Phase 3 owns rayon (the pipeline's CPU
+# consumer stage). The remainder (clap/gaoya/linfa) stays for its owning phase —
+# do NOT add the detection deps (gaoya/linfa) or the full clap CLI surface here.
 # The connectivity-proving binary (plan 02-03, D-12): a minimal `--resume`
 # entry point over the public lib API. The crate stays a library + this one bin;
 # the full clap `run`/`export` surface is Phase 5.
@@ -34,6 +35,10 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "cha
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 # thiserror: derive the two-layer ClientError taxonomy (transport vs in-body GraphQL).
 thiserror = "2"
+# rayon: the CPU analysis thread pool for the pipeline's consumer stage (Phase-3-
+# owned add). The bounded flume channel feeds a rayon/std::thread drain so CPU work
+# runs off the tokio reactor (D-05); Phase 4 fans out per-group scoring here.
+rayon = "1.12"
 
 [dev-dependencies]
 # tempfile: temp-FILE-backed DB so tests exercise real WAL on-disk behavior
