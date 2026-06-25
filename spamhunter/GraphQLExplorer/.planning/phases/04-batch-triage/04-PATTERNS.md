@@ -395,7 +395,7 @@ Test analog: `src/analysis/nearDup.test.ts` describe/it/expect structure.
 **Analog:** itself — the existing route-outlet switch (App.tsx lines 54-58) + the shell
 header (lines 49-53). Add:
 ```typescript
-{route.name === 'batch' && <BatchTriage />}        // new outlet line
+{route.name === 'batch' && <BatchImport />}        // new outlet line
 ```
 Add a NEUTRAL nav affordance to `#/batch` in the shell header (UI-SPEC App-shell nav —
 NOT accent; accent stays on the two "go" submits). The readiness gate (App.tsx lines 32-45)

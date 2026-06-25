@@ -442,7 +442,7 @@ export function parseHash(hash: string): Route {
   if (m) return { name: 'author', hex: m[1] }
   return { name: 'notfound' }
 }
-// App.tsx: add `{route.name === 'batch' && <BatchTriage />}` to the route outlet.
+// App.tsx: add `{route.name === 'batch' && <BatchImport />}` to the route outlet.
 ```
 
 ## State of the Art
@@ -467,7 +467,12 @@ churn. `graphql` stays exact-pinned (do not bump).
 **All A1–A5 fall under "Claude's Discretion" in CONTEXT** — they are tuning constants, not new
 decisions, and every one lives in `thresholds.ts`. No locked decision is assumed.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Both resolved 2026-06-25 during plan/check; the plans adopt the recommendations.
+> - **Q1 → RESOLVED:** incremental re-merge against the full input set after each chunk (04-01 Task 3).
+> - **Q2 → RESOLVED:** omit not-yet-fetched rows; the batch `WindowIndicator` "triaged N of M" carries partial-ness with M = full input count.
+> Naming note: earlier drafts referred to the batch view as `BatchTriage`; the plan/implementation uses **`BatchImport.tsx`** (with `TriageTable.tsx`).
 
 1. **Incremental vs end-of-batch merge rendering.**
    - What we know: rows should stream in as chunks resolve (UI-SPEC "results stream into the table by
