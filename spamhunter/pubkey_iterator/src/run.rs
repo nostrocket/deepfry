@@ -499,4 +499,97 @@ mod tests {
             );
         }
     }
+
+    /// OPS-01 (live, must_have) / D-07 — the live end-to-end `run` proof, SELF-
+    /// SKIPPING. Builds a `Config` pointing `adapter_url` at the live LMDB2GraphQL
+    /// adapter (`LMDB2GRAPHQL_URL`, default the CONTEXT host) and `whitelist_url` at
+    /// the live whitelist (`WHITELIST_URL`, default loopback :8081), with the four
+    /// layers at the example-config defaults.
+    ///
+    /// It first PROBES the adapter (`client.authors(None, 1)`, mirroring
+    /// `pipeline::tests::live_latest_per_author`); on `Unavailable`/`Transport` it
+    /// prints a deferred-manual note and `return`s — NEVER failing CI on a transient
+    /// outage (D-07). When reachable it drives the FULL `run_batch` (enumerate the
+    /// live keyspace → fetch ~100 events/pubkey → score → persist) and asserts ≥1
+    /// `score` row plus a `done` run.
+    ///
+    /// `#[ignore]` by default: a full live walk is unbounded (the whole corpus), so
+    /// `cargo test` stays hermetic and fast; the live proof runs via
+    /// `cargo test --lib run::tests::live_run_self_skipping -- --ignored`. Even under
+    /// `--ignored` it self-skips on outage, so it is never a flaky CI failure.
+    #[test]
+    #[ignore = "live integration: requires the LMDB2GraphQL adapter + whitelist (run with --ignored); self-skips on outage"]
+    fn live_run_self_skipping() {
+        const DEFAULT_ADAPTER: &str = "http://192.168.149.21:8080/graphql";
+        const DEFAULT_WHITELIST: &str = "http://127.0.0.1:8081";
+        let adapter_url =
+            std::env::var("LMDB2GRAPHQL_URL").unwrap_or_else(|_| DEFAULT_ADAPTER.to_string());
+        let whitelist_url =
+            std::env::var("WHITELIST_URL").unwrap_or_else(|_| DEFAULT_WHITELIST.to_string());
+
+        let config = stub_config(adapter_url.clone(), whitelist_url);
+        let (_dir, path) = temp_store();
+
+        block_on(async {
+            // Probe the adapter first: any transport-level unreachability self-skips
+            // (D-07) rather than failing CI.
+            let client = GraphQlClient::new(adapter_url.clone());
+            match client.authors(None, 1).await {
+                Ok(_) => {}
+                Err(ClientError::Unavailable) | Err(ClientError::Transport(_)) => {
+                    eprintln!(
+                        "live_run_self_skipping: live adapter unreachable at {adapter_url} \
+                         — D-07 deferred to manual check"
+                    );
+                    return;
+                }
+                Err(e) => panic!("unexpected non-transport error probing adapter: {e:?}"),
+            }
+
+            // Reachable: drive the full end-to-end batch. run_batch enumerates the
+            // live keyspace, fetches kind-1 ~100 events/pubkey, scores, and persists.
+            let store = Arc::new(Store::open(&path).expect("open store"));
+            let run_id = match run_batch(store, &config, false).await {
+                Ok(rid) => rid,
+                // A mid-run transport blip on the live adapter degrades to a deferred
+                // manual check (D-07) — never a CI failure.
+                Err(RunError::Client(ClientError::Unavailable))
+                | Err(RunError::Client(ClientError::Transport(_)))
+                | Err(RunError::Enumerate(EnumerateError::Client(ClientError::Unavailable)))
+                | Err(RunError::Enumerate(EnumerateError::Client(ClientError::Transport(_)))) => {
+                    eprintln!(
+                        "live_run_self_skipping: live adapter blipped mid-run at {adapter_url} \
+                         — D-07 deferred to manual check"
+                    );
+                    return;
+                }
+                Err(e) => panic!("run_batch returned an unexpected error: {e:?}"),
+            };
+
+            // The live run scored ≥1 pubkey and is marked done.
+            let conn = rusqlite::Connection::open(&path).expect("reader");
+            let n_score: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM score WHERE run_id = ?1",
+                    [run_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                n_score >= 1,
+                "a reachable live run must score ≥1 pubkey (got {n_score})"
+            );
+            let status: String = conn
+                .query_row(
+                    "SELECT status FROM run WHERE run_id = ?1",
+                    [run_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(status, "done", "the live run is marked done");
+            eprintln!(
+                "live_run_self_skipping: live run {run_id} scored {n_score} pubkeys (D-07 OK)"
+            );
+        });
+    }
 }
