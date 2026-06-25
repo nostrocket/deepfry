@@ -31,3 +31,13 @@ pub mod enumerate;
 /// batch on a `413` (D-02), reusing `enumerate::retry` for `503`/transient
 /// backoff. This is the fetch path the Plan-02 bounded-channel pipeline consumes.
 pub mod fetch;
+
+/// The bounded-memory streaming pipeline (`pipeline::run_pipeline` +
+/// `pipeline::consume_noop`): the async↔sync concurrency heart of Phase 3
+/// (INGEST-03 / D-05). A tokio fetcher chunks the enumerated pubkeys and calls
+/// the Plan-01 `fetch_batch`, pushing `AuthorGroup`s into a **bounded** flume
+/// channel; a `std::thread`/rayon drain (CPU stage, OFF the tokio runtime)
+/// applies an injected consumer closure — Phase 3's no-op counter (D-06), the
+/// Phase-4 Layer/combiner seam. The bounded channel is the back-pressure point,
+/// so peak in-flight memory is capped by channel capacity, never the corpus size.
+pub mod pipeline;
