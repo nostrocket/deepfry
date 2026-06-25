@@ -13,3 +13,8 @@ pub mod model;
 /// Tests use a temp FILE (`tempfile::TempDir`), never an in-memory `:memory:` DB,
 /// because WAL sidecar (`-wal`/`-shm`) behavior differs in-memory.
 pub mod store;
+
+/// Hand-written GraphQL-over-HTTP client (`GraphQlClient`): the injectable-endpoint
+/// transport, the `{data, errors}` envelope, the `authors`/`stats` query documents
+/// + response structs, and the two-layer `ClientError` taxonomy (D-10/D-11).
+pub mod graphql;
