@@ -102,7 +102,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Verdicts are pubkey-level only (per-event signals are inputs, never the deliverable) and no enforcement action is taken; each layer can be independently enabled/disabled and has a tunable threshold/weight set from a config file without recompiling.
   5. Re-running the same corpus snapshot with the same weights produces identical verdicts (deterministic: seeded RNG, fixed layer-sum order, UPSERT on `(run_id, pubkey)`).
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Walking slice: TOML config + weight-table seed + Layer trait + ScoringStage logistic combiner + match_groups wiring (zero-event scored) + one trivial layer end-to-end, deterministic (DETECT-05, SCORE-01, SCORE-04, SCORE-05, OPS-02, OPS-03)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 04-02-PLAN.md — L1 near_duplicate (hand-rolled deterministic SimHash + Hamming ratio) + L3 content_entropy (Shannon + emoji/hashtag density) + WriteMsg::Fingerprints (DETECT-02, DETECT-03)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 04-03-PLAN.md — L0 whitelist_absence (reqwest GET /check/{pubkey}, per-run cache, fail-safe) + L4 link_mention (url-crate hosts) + multi-signal-agreement + config enable/disable + no-enforcement verification (DETECT-01, DETECT-04, SCORE-04, SCORE-05, OPS-03)
 
 ### Phase 5: CLI `run` + `export` (first shippable list)
 
@@ -140,7 +152,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 1. Persistence Foundation | 1/1 | Complete    | 2026-06-25 |
 | 2. GraphQL Client + Author Enumeration | 3/3 | Complete    | 2026-06-25 |
 | 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
-| 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
+| 4. Detection Layers + Logistic Combiner | 0/3 | Not started | - |
 | 5. CLI `run` + `export` | 0/TBD | Not started | - |
 | 6. Labeling + Logistic Tuner + Backtest Gate | 0/TBD | Not started | - |
 
