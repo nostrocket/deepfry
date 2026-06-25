@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard (completed 2026-06-24)
 - [x] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator (completed 2026-06-24)
-- [ ] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector
+- [x] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector (completed 2026-06-25)
 - [ ] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table
 
 ## Phase Details
@@ -108,7 +108,7 @@ the canonical bytes of any single event without bloating the list query.
   3. A kind-distribution breakdown shows the author's event-kind histogram, with out-of-safe-range `kind`/`createdAt` values flagged rather than silently mis-computed
   4. A raw-JSON inspector shows the canonical `raw` bytes for any selected event, fetched lazily on demand (never selected in list queries) and rendered as escaped plaintext — never executed as HTML/markdown
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **UI hint**: yes
 
 Plans:
@@ -119,7 +119,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 03-02-PLAN.md — Three stacked signal panels (dup clusters, tag fan-out, kind histogram) + lazy escaped raw-JSON inspector; `tags` added to `EventsDocument` + new `rawEvent.graphql.ts` + codegen, mounted in `AuthorDrillDown` (DRILL-02, DRILL-03, DRILL-04)
+- [x] 03-02-PLAN.md — Three stacked signal panels (dup clusters, tag fan-out, kind histogram) + lazy escaped raw-JSON inspector; `tags` added to `EventsDocument` + new `rawEvent.graphql.ts` + codegen, mounted in `AuthorDrillDown` (DRILL-02, DRILL-03, DRILL-04)
 
 ### Phase 4: Batch Triage
 
@@ -154,5 +154,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 3/3 | Complete    | 2026-06-24 |
-| 3. Remaining Spam Signals | 1/2 | In Progress|  |
+| 3. Remaining Spam Signals | 2/2 | Complete   | 2026-06-25 |
 | 4. Batch Triage | 0/2 | Not started | - |
