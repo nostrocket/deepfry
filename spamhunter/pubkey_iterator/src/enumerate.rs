@@ -160,7 +160,17 @@ pub async fn run(
             // INVALID_CURSOR (D-08, Pitfall 4): drop the cursor, restart page 1.
             // Distinct branch — NO abort, NO retry (the retry helper already
             // treats a coded Graphql error as non-retryable, so it surfaces here).
-            Err(ClientError::Graphql { code: Some(ref c), .. }) if c == "INVALID_CURSOR" => {
+            //
+            // Guarded by `after.is_some()` (MD-01): only a non-null cursor can be
+            // invalid, so a restart only makes sense when one was actually in
+            // play. An `INVALID_CURSOR` while `after` is already `None` (page 1)
+            // would otherwise reset `after = None` (no change) and re-issue the
+            // identical request forever — an un-sleeping, unbounded hot loop.
+            // Letting it fall through to the generic `Err(e)` arm turns that into
+            // a loud, bounded abort (cursor preserved) instead.
+            Err(ClientError::Graphql { code: Some(ref c), .. })
+                if c == "INVALID_CURSOR" && after.is_some() =>
+            {
                 after = None;
                 continue;
             }
@@ -465,6 +475,34 @@ mod tests {
         drop(dir);
     }
 
+    /// invalid_cursor_on_page1_aborts (MD-01 regression): an `INVALID_CURSOR`
+    /// while `after` is still `None` (page 1) must NOT spin — the `after.is_some()`
+    /// guard makes it fall through to a bounded abort instead of an un-sleeping
+    /// hot loop. Asserted via the run ending `aborted` with no extra requests.
+    #[test]
+    fn invalid_cursor_on_page1_aborts() {
+        let (dir, path) = temp_store();
+        let server = StubServer::start(vec![
+            Resp::ok(stats_body(100)),                                              // 1: start probe
+            Resp::ok(graphql_error_body("invalid cursor", Some("INVALID_CURSOR"))), // 2: page 1, after=None
+        ]);
+        let store = Store::open(&path).expect("open store");
+        let client = GraphQlClient::new(server.url());
+        let result = block_on(run(&store, &client, false));
+        assert!(result.is_err(), "INVALID_CURSOR on page 1 aborts, not spins");
+        store.close().expect("flush + join");
+
+        let run_id = latest_run_id(&path);
+        let (status, _c, _s, _e) = read_run(&path, run_id);
+        assert_eq!(status, "aborted", "page-1 INVALID_CURSOR is a bounded abort");
+        assert_eq!(
+            server.request_count(),
+            2,
+            "no restart loop — exactly start-probe + the single invalid page-1 request"
+        );
+        drop(dir);
+    }
+
     /// resume_from_last_cursor: a pre-seeded unfinished run with a stored cursor →
     /// the first `authors` call uses that cursor as `after` (no --run-id).
     #[test]
@@ -592,18 +630,23 @@ mod tests {
         drop(dir);
     }
 
-    /// invalid_cursor_restarts: an in-body INVALID_CURSOR once → after resets to
-    /// None, pagination restarts from page 1, no abort, no retry (asserted via the
-    /// request count: exactly start-probe + invalid + page1 + end-probe = 4, with
-    /// no retry sleeps inflating the count).
+    /// invalid_cursor_restarts: an in-body INVALID_CURSOR on a page whose `after`
+    /// is non-null (page 2, after a valid page-1 cursor was in play) → after
+    /// resets to None, pagination restarts from page 1, no abort, no retry
+    /// (asserted via the request count: exactly start-probe + page1 + invalid
+    /// page2 + restarted-page1 + end-probe = 5, with no retry sleeps inflating
+    /// the count). The MD-01 `after.is_some()` guard means the restart only fires
+    /// for a non-null cursor — see `invalid_cursor_on_page1_aborts` for the
+    /// page-1 (after=None) abort path.
     #[test]
     fn invalid_cursor_restarts() {
         let (dir, path) = temp_store();
         let server = StubServer::start(vec![
             Resp::ok(stats_body(100)),                                       // 1: start probe
-            Resp::ok(graphql_error_body("invalid cursor", Some("INVALID_CURSOR"))), // 2: invalid → restart
-            Resp::ok(authors_body(&[PK1, PK2], false, None)),                // 3: page 1 from scratch
-            Resp::ok(stats_body(100)),                                       // 4: end probe
+            Resp::ok(authors_body(&[PK1, PK2], true, Some(PK2))),            // 2: page 1 → cursor=PK2
+            Resp::ok(graphql_error_body("invalid cursor", Some("INVALID_CURSOR"))), // 3: page 2 (after=PK2) invalid → restart
+            Resp::ok(authors_body(&[PK1, PK2], false, None)),                // 4: page 1 from scratch (terminal)
+            Resp::ok(stats_body(100)),                                       // 5: end probe
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
@@ -616,8 +659,8 @@ mod tests {
         assert_eq!(status, "done", "INVALID_CURSOR restarts, never aborts");
         assert_eq!(
             server.request_count(),
-            4,
-            "no retry/sleep for INVALID_CURSOR — exactly start+invalid+page1+end requests"
+            5,
+            "no retry/sleep for INVALID_CURSOR — exactly start+page1+invalid+restarted-page1+end requests"
         );
         drop(dir);
     }
