@@ -32,6 +32,11 @@
 use crate::config::Config;
 use crate::detect::{self, BIAS_KEY, THRESHOLD_KEY};
 use crate::store::Store;
+use linfa::traits::Fit;
+use linfa::Dataset;
+use linfa_logistic::LogisticRegression;
+use ndarray::{Array1, Array2};
+use std::collections::BTreeMap;
 
 /// The fixed feature-column order — MUST match `detect::config_layer_keys()`
 /// exactly (L0, L1, L3, L4). This positional order is the OPS-02 determinism
@@ -59,7 +64,58 @@ pub fn labeled_features(
     run_id: i64,
     layers: &[&str],
 ) -> rusqlite::Result<Vec<(String, bool, Vec<f64>)>> {
-    todo!("Task 1 GREEN")
+    // 1. Run-independent labels: a parameterless constant SELECT (T-06-02).
+    let mut labels: BTreeMap<String, bool> = BTreeMap::new();
+    {
+        let mut stmt = conn.prepare("SELECT pubkey, is_spam FROM backpropagation")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
+        })?;
+        for row in rows {
+            let (pk, is_spam) = row?;
+            labels.insert(pk, is_spam);
+        }
+    }
+
+    // 2. Initialise each labeled pubkey's feature vec to all-0.0 (the sparse
+    // default — a layer that wrote no signal contributed nothing, Pitfall 4).
+    let mut feats: BTreeMap<String, Vec<f64>> = labels
+        .keys()
+        .map(|pk| (pk.clone(), vec![0.0; layers.len()]))
+        .collect();
+
+    // 3. Fill in this run's signals (binds only run_id — T-06-02). A signal row
+    // for an unlabeled pubkey is ignored (no entry in `feats`); a layer not in
+    // `layers` (e.g. an unknown EAV name) is skipped, leaving the 0.0 default.
+    {
+        let mut stmt =
+            conn.prepare("SELECT pubkey, layer, value FROM signal WHERE run_id = ?1")?;
+        let rows = stmt.query_map(rusqlite::params![run_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (pk, layer, value) = row?;
+            if let Some(v) = feats.get_mut(&pk) {
+                if let Some(j) = layers.iter().position(|l| *l == layer) {
+                    v[j] = value;
+                }
+            }
+        }
+    }
+
+    // 4. Emit one (pubkey, is_spam, features) per labeled pubkey, in pubkey
+    // order (the BTreeMap iteration order — deterministic, OPS-02).
+    Ok(labels
+        .into_iter()
+        .map(|(pk, is_spam)| {
+            let f = feats.remove(&pk).expect("every label has an initialised vec");
+            (pk, is_spam, f)
+        })
+        .collect())
 }
 
 /// A backtest regression: the labeled pubkeys whose STAGING-weight verdict
@@ -105,21 +161,145 @@ impl TuneReport {
 /// `(layer_weights, bias)` where `weights[j]` pairs with `LAYERS[j]` and `bias`
 /// is the intercept. Deterministic (no RNG). Errors on a degenerate fit.
 fn fit(
-    _labeled: &[(String, bool, Vec<f64>)],
-    _alpha: f64,
-    _max_iterations: u64,
+    labeled: &[(String, bool, Vec<f64>)],
+    alpha: f64,
+    max_iterations: u64,
 ) -> Result<(Vec<f64>, f64), String> {
-    todo!("Task 1 GREEN")
+    let n = labeled.len();
+    if n == 0 {
+        return Err("no labeled pubkeys to tune".to_string());
+    }
+    let n_features = labeled[0].2.len();
+
+    // Single-class guard (Pitfall 3): logistic regression has no decision
+    // boundary if every label is the same class. Surface a clear precondition
+    // BEFORE fitting (linfa would otherwise error or produce garbage).
+    let any_spam = labeled.iter().any(|(_, is_spam, _)| *is_spam);
+    let any_ham = labeled.iter().any(|(_, is_spam, _)| !*is_spam);
+    if !(any_spam && any_ham) {
+        return Err("need both spam and ham labels to tune (single-class label set)".to_string());
+    }
+
+    // Build the feature matrix (rows = labeled pubkeys, cols = LAYERS order) and
+    // the integer class target. Column order is the fixed positional order the
+    // caller passed to `labeled_features`, so params()[j] maps to LAYERS[j].
+    let mut x = Array2::<f64>::zeros((n, n_features));
+    let mut y = Array1::<usize>::zeros(n);
+    for (i, (_, is_spam, xs)) in labeled.iter().enumerate() {
+        for (j, v) in xs.iter().enumerate() {
+            x[[i, j]] = *v;
+        }
+        y[i] = *is_spam as usize; // 1 = spam (the positive class), 0 = ham
+    }
+    let dataset = Dataset::new(x, y);
+
+    // Deterministic L-BFGS (argmin + More–Thuente, no RNG): fixed hyperparameters
+    // + zero-initialised params → bit-reproducible (OPS-02 / D-08).
+    let model = LogisticRegression::default()
+        .alpha(alpha)
+        .max_iterations(max_iterations)
+        .with_intercept(true)
+        .fit(&dataset)
+        .map_err(|e| format!("logistic fit failed: {e}"))?;
+
+    let coeffs = model.params(); // &Array1<f64>, one per feature column, LAYERS order
+    let bias = model.intercept(); // f64 → the _bias sentinel
+    Ok((coeffs.to_vec(), bias))
+}
+
+/// STRICT backtest gate (Task 2 GREEN): re-score every labeled pubkey with the
+/// STAGING weights via the shared combiner; `Err` on ANY new FN or FP.
+fn backtest(
+    _labeled: &[(String, bool, Vec<f64>)],
+    _staging_w: &[f64],
+    _staging_b: f64,
+    _tau: f64,
+) -> Result<(), Regression> {
+    todo!("Task 2 GREEN")
+}
+
+/// Adopt the staging weights + bias into the `weight` table with provenance
+/// (Task 2 GREEN). Only called on a backtest PASS.
+fn write_weights(
+    _store: &Store,
+    _staging_w: &[f64],
+    _staging_b: f64,
+    _run_id: i64,
+) -> rusqlite::Result<()> {
+    todo!("Task 2 GREEN")
 }
 
 /// Re-fit layer weights from human labels and adopt them ONLY if the strict
 /// backtest passes. See module docs for the full contract.
 pub fn run_tune(
-    _store: &Store,
-    _config: &Config,
-    _run_id: Option<i64>,
+    store: &Store,
+    config: &Config,
+    run_id: Option<i64>,
 ) -> Result<TuneReport, String> {
-    todo!("Task 2 GREEN")
+    let conn = store.reader().map_err(|e| format!("open reader: {e}"))?;
+
+    // Resolve the run: explicit --run-id, else the latest `done` run (Pitfall 5 —
+    // train AND backtest on ONE run's signals, recorded as tuned_from_run).
+    let run_id = match run_id {
+        Some(rid) => rid,
+        None => crate::export::latest_done_run(&conn)
+            .map_err(|e| format!("resolve latest done run: {e}"))?
+            .ok_or_else(|| "no completed run to tune — run `pubkey_iterator run` first".to_string())?,
+    };
+
+    let layers: Vec<&str> = LAYERS.to_vec();
+    let labeled =
+        labeled_features(&conn, run_id, &layers).map_err(|e| format!("read labeled features: {e}"))?;
+
+    // Single-class / empty guard (Pitfall 3): a blocked-by-precondition is
+    // distinct from a backtest regression — nothing is fitted, nothing written.
+    let any_spam = labeled.iter().any(|(_, is_spam, _)| *is_spam);
+    let any_ham = labeled.iter().any(|(_, is_spam, _)| !*is_spam);
+    if labeled.is_empty() {
+        return Ok(TuneReport::BlockedByPrecondition(
+            "no labeled pubkeys for the chosen run — INSERT ground truth into backpropagation first"
+                .to_string(),
+        ));
+    }
+    if !(any_spam && any_ham) {
+        return Ok(TuneReport::BlockedByPrecondition(
+            "need both spam and ham labels to tune (single-class label set)".to_string(),
+        ));
+    }
+
+    // Fit the staging weights + bias (deterministic).
+    let (alpha, max_iterations) = (1.0_f64, 100_u64);
+    let (staging_w, staging_b) =
+        fit(&labeled, alpha, max_iterations).map_err(|e| e)?;
+
+    // τ is read from the live `_threshold` row and NEVER re-fit (Open Q1).
+    let live_weights =
+        detect::read_weights(&conn).map_err(|e| format!("read live weights: {e}"))?;
+    let tau = live_weights
+        .iter()
+        .find(|w| w.layer == THRESHOLD_KEY)
+        .and_then(|w| w.threshold)
+        .unwrap_or(config.tau);
+
+    // Backtest the STAGING weights against the full labeled set via the SHARED
+    // combiner (Task 2 implements `backtest` + the write-on-pass path).
+    match backtest(&labeled, &staging_w, staging_b, tau) {
+        Err(regression) => Ok(TuneReport::BlockedByRegression(regression)),
+        Ok(()) => {
+            write_weights(store, &staging_w, staging_b, run_id)
+                .map_err(|e| format!("write weights: {e}"))?;
+            let weights = LAYERS
+                .iter()
+                .zip(staging_w.iter())
+                .map(|(l, w)| (l.to_string(), *w))
+                .collect();
+            Ok(TuneReport::Adopted {
+                weights,
+                bias: staging_b,
+                run_id,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
