@@ -410,17 +410,17 @@ pub fn read_scores(conn: &Connection, run_id: i64) -> rusqlite::Result<Vec<(Stri
 
 **Note:** All schema/UPSERT/WAL *facts* are `[CITED: sqlite.org]` or `[VERIFIED: crates.io]`; the assumptions above are engineering defaults, not factual claims, and all are low-risk and tunable.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Evidence column vs. evidence table for SCORE-05.**
    - What we know: SCORE-05 (Phase 4) needs per-layer explanations persisted; the EAV `signal` row is the natural owner.
    - What's unclear: whether evidence must be *queryable* (→ child table) or just *stored & exported* (→ JSON `TEXT`).
-   - Recommendation: ship `signal.evidence TEXT` (JSON) now; it satisfies "persisted and exported." Revisit only if Phase 5/6 needs to filter on evidence contents.
+   - RESOLVED: ship `signal.evidence TEXT` (JSON) now; it satisfies "persisted and exported." Revisit only if Phase 5/6 needs to filter on evidence contents.
 
 2. **Whether to pre-wire `rusqlite_migration` now.**
    - What we know: v1 has one schema version; EAV absorbs most future change as rows.
    - What's unclear: team preference for having the migration harness present from the start.
-   - Recommendation: embedded DDL string for v1; adopt the lib at the first `ALTER TABLE`.
+   - RESOLVED: embedded DDL string for v1; adopt the lib at the first `ALTER TABLE`.
 
 ## Environment Availability
 
