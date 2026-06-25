@@ -57,9 +57,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `maxLevId` is recorded at run start and end as a snapshot-drift probe, and a corpus change mid-pagination does not abort the run.
 
 **Plans**: 3 plans
+**Wave 1**
 
 - [ ] 02-01-PLAN.md — Store run-state helpers + pubkey-only single-writer insert path (WriteMsg enum) for resume/abort/drift (INGEST-01, INGEST-04)
 - [ ] 02-02-PLAN.md — Reusable async GraphQL client: hand-written `authors`/`stats` queries + envelope with two-layer error dispatch (INGEST-01, INGEST-04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-03-PLAN.md — `authors` opaque-cursor walk + minimal `--resume` binary; bounded 503 retry, INVALID_CURSOR restart, drift probe, abort-preserves-cursor (INGEST-01, INGEST-04)
 
 ### Phase 3: Fetcher + Bounded Streaming Pipeline
