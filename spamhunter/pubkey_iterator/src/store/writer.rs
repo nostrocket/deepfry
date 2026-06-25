@@ -55,6 +55,10 @@ pub(crate) fn writer_loop(mut conn: Connection, rx: flume::Receiver<WriteMsg>) -
             }
         }
 
+        // Flush-barrier acks: any `Flush` message in this batch is acknowledged
+        // only AFTER `tx.commit()`, so every row enqueued before it is durable
+        // when the ack lands (D-07 flush-before-cursor ordering, Pitfall 2).
+        let mut flush_acks: Vec<flume::Sender<()>> = Vec::new();
         let tx = conn.transaction()?; // BEGIN
         {
             let mut up_pubkey = tx.prepare_cached(UPSERT_PUBKEY)?;
@@ -85,10 +89,17 @@ pub(crate) fn writer_loop(mut conn: Connection, rx: flume::Receiver<WriteMsg>) -
                             up_pubkey.execute([pk])?;
                         }
                     }
+                    // Defer the ack until after the commit below.
+                    WriteMsg::Flush(ack) => flush_acks.push(ack),
                 }
             }
         }
         tx.commit()?; // COMMIT (one fsync of the WAL at synchronous=NORMAL)
+        // Now every preceding row is durable — release the flush waiters. A
+        // dropped receiver (caller gave up) is harmless.
+        for ack in flush_acks {
+            let _ = ack.send(());
+        }
     }
     Ok(())
 }

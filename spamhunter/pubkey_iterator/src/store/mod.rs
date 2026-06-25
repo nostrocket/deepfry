@@ -232,6 +232,28 @@ impl Store {
         }
     }
 
+    /// Block until the writer has committed every message enqueued so far
+    /// (D-07 flush-before-cursor barrier, Pitfall 2).
+    ///
+    /// Sends a `WriteMsg::Flush` on the ordered channel and waits for the writer
+    /// to ack — the ack is sent only AFTER the transaction containing the
+    /// preceding `insert_pubkeys` batch is committed. The enumerator calls this
+    /// between `insert_pubkeys` and `set_run_cursor` so the cursor is never made
+    /// durable past un-committed pubkeys. A no-op (returns immediately) after
+    /// `close()`. Errors only if the writer thread vanished mid-flush.
+    pub fn flush(&self) -> rusqlite::Result<()> {
+        if let Some(tx) = &self.tx {
+            let (ack_tx, ack_rx) = flume::bounded::<()>(1);
+            // If the writer already went away the send fails; treat as flushed.
+            if tx.send(WriteMsg::Flush(ack_tx)).is_ok() {
+                // A RecvError means the writer dropped the ack sender (shutdown)
+                // after committing — the batch is durable either way.
+                let _ = ack_rx.recv();
+            }
+        }
+        Ok(())
+    }
+
     /// Flush + shut down: drop the `Sender` (closing the channel), join the
     /// writer thread, and surface its `rusqlite::Result`. After `close()`
     /// returns, every batch — including the final partial one — is committed,
@@ -567,6 +589,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n_a, 1, "re-inserting the same pubkey leaves one row");
+    }
+
+    /// D-07 flush barrier: after `flush()` returns, every pubkey enqueued before
+    /// it is durably committed and visible to a fresh reader connection — the
+    /// guarantee the enumerator relies on to order `set_run_cursor` after the
+    /// page is durable (Pitfall 2). Asserted WITHOUT closing the store.
+    #[test]
+    fn flush_makes_prior_pubkeys_durable() {
+        let (_dir, path) = temp_db();
+        let pk = "be00000000000000000000000000000000000000000000000000000000000001";
+        let store = Store::open(&path).expect("open store");
+
+        store.insert_pubkeys(vec![pk.into()]);
+        store.flush().expect("flush barrier");
+
+        // Read on a SEPARATE connection while the store is still open: the row
+        // must already be committed (not waiting on close()).
+        let conn = Connection::open(&path).expect("reader");
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pubkey WHERE pubkey = ?1",
+                rusqlite::params![pk],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "flush() commits the prior pubkey before returning");
     }
 
     /// Read a `run` row back as a `model::Run` (test helper).

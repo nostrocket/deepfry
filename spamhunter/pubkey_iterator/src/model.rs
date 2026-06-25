@@ -108,7 +108,7 @@ pub struct Persist {
 /// single-writer extension point (D-11): every variant is committed by the one
 /// writer thread, preserving message ordering. Phase 3 adds variants additively
 /// (e.g. a fetch/run-update message) without disturbing existing paths.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum WriteMsg {
     /// The Phase-1 score/signal write path — wraps `Persist` unchanged so no
     /// Phase-1 field moves.
@@ -117,4 +117,10 @@ pub enum WriteMsg {
     /// INSERT OR IGNORE via the existing `UPSERT_PUBKEY` const), carrying no
     /// score/signal payload.
     Pubkeys(Vec<String>),
+    /// A flush barrier (D-07 / Pitfall 2): the writer commits every message
+    /// enqueued before this one, then acks on the channel. The enumerator awaits
+    /// the ack before advancing the run cursor, so the cursor is never made
+    /// durable past un-committed pubkeys (flush-before-cursor ordering). Carries
+    /// no row data; the writer never `format!`s anything into SQL for it.
+    Flush(flume::Sender<()>),
 }

@@ -13,12 +13,25 @@
 //! are plain synchronous calls inside the async fn; the walk is never wrapped in
 //! a `tokio::sync::Mutex` nor spawned across tasks.
 
+use std::time::Duration;
+
+use crate::graphql::queries::AuthorsPage;
 use crate::graphql::{ClientError, GraphQlClient};
 use crate::store::Store;
 
-// RED stub — Task 1 GREEN fills this in.
-#[allow(dead_code)]
-const RED_PLACEHOLDER: () = ();
+/// Page size: the contract §6.4 ceiling. `authors` enumeration is O(distinct
+/// authors) seek-skip, so round-trips dominate — 500 minimizes them (Discretion
+/// A4); a 500×64-hex response (~35 KB) is far under the 256 KiB request limit.
+const LIMIT: i64 = 500;
+
+/// Bounded-retry ceiling: 1 initial attempt + 2 retries (fail-fast, D-06).
+const MAX_ATTEMPTS: u32 = 3;
+
+/// Backoff base; doubles per attempt, capped at `BACKOFF_CAP`.
+const BACKOFF_BASE: Duration = Duration::from_millis(250);
+
+/// Backoff cap (250ms → 500ms → 1s … never exceeds this).
+const BACKOFF_CAP: Duration = Duration::from_secs(2);
 
 /// The walk's error taxonomy: a transport/in-body client error or a store error.
 #[derive(Debug, thiserror::Error)]
@@ -33,16 +46,152 @@ pub enum EnumerateError {
     Store(#[from] rusqlite::Error),
 }
 
+/// Whether a client error is worth a bounded backoff-retry (D-06/D-08).
+///
+/// Retryable: `Unavailable` (HTTP 503 — adapter still booting), `Transport`
+/// (connection refused / timeout — 503-equivalent), and a codeless `Graphql`
+/// ("internal error" — contract §7 says retry with backoff).
+///
+/// NON-retryable: `PayloadTooLarge` (413 — a client bug for the tiny `authors`
+/// body), and any coded `Graphql` error (`INVALID_CURSOR` is handled by the
+/// restart branch before this is reached; `TOO_MANY_AUTHORS`/validation are bugs
+/// retry won't fix).
+fn is_retryable(e: &ClientError) -> bool {
+    match e {
+        ClientError::Unavailable => true,
+        ClientError::Transport(_) => true,
+        ClientError::Graphql { code: None, .. } => true,
+        ClientError::PayloadTooLarge => false,
+        ClientError::Graphql { code: Some(_), .. } => false,
+    }
+}
+
+/// Fetch one `authors` page with bounded exponential backoff (RESEARCH §"Bounded
+/// Retry"). Returns the first success, or the terminal error after the ceiling /
+/// on the first non-retryable error. An `INVALID_CURSOR` is non-retryable here
+/// (coded `Graphql`) and surfaces immediately so the caller's restart branch
+/// handles it — never burning a retry/sleep (Pitfall 4).
+async fn fetch_page_with_retry(
+    client: &GraphQlClient,
+    after: Option<&str>,
+) -> Result<AuthorsPage, ClientError> {
+    let mut delay = BACKOFF_BASE;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match client.authors(after, LIMIT).await {
+            Ok(p) => return Ok(p),
+            Err(e) if is_retryable(&e) && attempt < MAX_ATTEMPTS => {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(BACKOFF_CAP);
+            }
+            Err(e) => return Err(e), // non-retryable, or ceiling reached
+        }
+    }
+    unreachable!("loop returns on the final attempt")
+}
+
+/// `true` when `pk` is the contract-guaranteed shape: 64 lowercase-hex chars
+/// (defense-in-depth before the DB write, T-02-08 / V5). The contract guarantees
+/// this (§5/§6.4); we validate at the trust boundary anyway.
+fn is_valid_pubkey(pk: &str) -> bool {
+    pk.len() == 64 && pk.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Run the `authors` opaque-cursor walk against `client`, persisting through
 /// `store`. When `resume` is true, continue the latest unfinished run from its
 /// stored `last_cursor` (D-01); otherwise (or when none exists) start fresh
-/// (D-02). RED stub — unimplemented until Task 1 GREEN.
+/// (D-02).
+///
+/// Loop invariants (load-bearing):
+/// - flush-before-cursor (Pitfall 2 / D-07): `insert_pubkeys` precedes
+///   `set_run_cursor` in every iteration, so the cursor never advances past
+///   unwritten pubkeys.
+/// - `INVALID_CURSOR` resets `after=None` and restarts page 1 — no abort, no
+///   retry (Pitfall 4, distinct branch before the retry helper's policy).
+/// - retry exhaustion / non-retryable → `mark_run_aborted` (cursor untouched)
+///   then return the error (D-06/D-07).
+/// - clean termination on `endCursor==null` records the end drift probe and
+///   marks the run done (INGEST-01 / D-09).
+///
+/// The store is the sync boundary (Pitfall 1): store calls are plain synchronous
+/// calls inside this async fn; never wrap the store in a `tokio::sync::Mutex`.
 pub async fn run(
-    _store: &Store,
-    _client: &GraphQlClient,
-    _resume: bool,
+    store: &Store,
+    client: &GraphQlClient,
+    resume: bool,
 ) -> Result<(), EnumerateError> {
-    unimplemented!("Task 1 GREEN")
+    // Resume selection (D-01/D-02/D-03).
+    let (run_id, mut after, existing_start) = if resume {
+        match store.latest_unfinished_run()? {
+            Some(run) => (run.run_id, run.last_cursor.clone(), run.max_lev_id_start),
+            None => (store.begin_run("{}")?, None, None),
+        }
+    } else {
+        (store.begin_run("{}")?, None, None)
+    };
+
+    // Drift probe start (D-09). On resume keep the original `max_lev_id_start`
+    // when already set (RESEARCH Open Q2); only record it when null.
+    let max_start = client.stats().await?.max_lev_id;
+    if existing_start.is_none() {
+        store.set_run_max_lev_start(run_id, max_start)?;
+    }
+
+    let mut count: u64 = 0;
+    loop {
+        let page = match fetch_page_with_retry(client, after.as_deref()).await {
+            // INVALID_CURSOR (D-08, Pitfall 4): drop the cursor, restart page 1.
+            // Distinct branch — NO abort, NO retry (the retry helper already
+            // treats a coded Graphql error as non-retryable, so it surfaces here).
+            Err(ClientError::Graphql { code: Some(ref c), .. }) if c == "INVALID_CURSOR" => {
+                after = None;
+                continue;
+            }
+            // Retry exhausted / non-retryable: abort with the cursor preserved
+            // (D-06/D-07), report the error, return it.
+            Err(e) => {
+                store.mark_run_aborted(run_id)?;
+                eprintln!("enumerate: aborting run {run_id} after error: {e}");
+                return Err(EnumerateError::Client(e));
+            }
+            Ok(page) => page,
+        };
+
+        // V5 / T-02-08 defense-in-depth: validate shape before the DB write.
+        // The contract guarantees 64-char lowercase hex; drop anything else
+        // rather than persist a malformed pubkey.
+        let valid: Vec<String> = page
+            .authors
+            .iter()
+            .filter(|pk| is_valid_pubkey(pk))
+            .cloned()
+            .collect();
+
+        // Flush-before-cursor (Pitfall 2 / D-07): enqueue the page's pubkeys
+        // through the single writer FIRST.
+        store.insert_pubkeys(valid.clone());
+        count += valid.len() as u64;
+        eprintln!("enumerate: run {run_id} enumerated {count} distinct pubkeys");
+
+        // ONLY after the pubkeys are DURABLE, advance the cursor. The flush
+        // barrier (D-07 / Pitfall 2) blocks until the writer has committed the
+        // batch just enqueued, so `set_run_cursor` (a separate short-lived
+        // connection) can never make the cursor durable past un-committed
+        // pubkeys — closing the async-writer-vs-cursor-connection race.
+        match page.end_cursor {
+            Some(c) => {
+                store.flush()?;
+                store.set_run_cursor(run_id, &c)?;
+                after = Some(c);
+            }
+            // endCursor==null ⇒ end of the keyspace (canonical termination signal).
+            None => break,
+        }
+    }
+
+    // Clean termination (INGEST-01): end drift probe + mark done (D-09).
+    let max_end = client.stats().await?.max_lev_id;
+    store.mark_run_done(run_id, max_end)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -431,7 +580,7 @@ mod tests {
     #[test]
     fn resume_boundary_union_complete() {
         // Full ordered corpus.
-        let full = vec![PK1, PK2, PK3, PK4, PK5, PK6];
+        let full = [PK1, PK2, PK3, PK4, PK5, PK6];
 
         // (page sizes, cut after this many pages on the first leg)
         let cases: &[(&[usize], usize)] = &[
