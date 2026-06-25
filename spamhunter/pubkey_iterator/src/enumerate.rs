@@ -77,7 +77,7 @@ fn is_retryable(e: &ClientError) -> bool {
 /// this single helper (D-06/D-08), so a transient `503`/transport blip on a
 /// probe gets the same bounded backoff as a page fetch rather than aborting the
 /// run on the first failure (MD-02).
-async fn retry<T, F, Fut>(mut op: F) -> Result<T, ClientError>
+pub(crate) async fn retry<T, F, Fut>(mut op: F) -> Result<T, ClientError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, ClientError>>,

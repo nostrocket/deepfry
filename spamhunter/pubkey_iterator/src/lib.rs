@@ -24,3 +24,10 @@ pub mod graphql;
 /// composes the store (plan 01) and the GraphQL client (plan 02) into the
 /// connectivity-proving vertical slice (INGEST-01 / INGEST-04).
 pub mod enumerate;
+
+/// The `latestPerAuthor` batched fetch policy (`fetch::fetch_batch` +
+/// `fetch::match_groups`): match response groups back to the requested authors
+/// by `author` (D-04, the INGEST-04 landmine defuser) and recursively shrink a
+/// batch on a `413` (D-02), reusing `enumerate::retry` for `503`/transient
+/// backoff. This is the fetch path the Plan-02 bounded-channel pipeline consumes.
+pub mod fetch;
