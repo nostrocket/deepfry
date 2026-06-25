@@ -10,8 +10,10 @@
 //! `envelope` (the `{data, errors}` shape), `queries` (the query documents +
 //! response structs), `client` (the transport + two-layer error dispatch).
 
+mod client;
 mod envelope;
 pub mod queries;
 
+pub use client::{ClientError, GraphQlClient};
 pub use envelope::{Extensions, GraphQlError, GraphQlResponse};
 pub use queries::{AuthorsPage, StatsResult, AUTHORS_QUERY, STATS_QUERY};
