@@ -447,4 +447,124 @@ mod tests {
         );
         store.close().expect("close");
     }
+
+    /// A clean separable fixture passes the backtest and the new weights are
+    /// adopted with provenance: the four layer rows + the `_bias` row carry
+    /// tuned_at != NULL and tuned_from_run == the run; `_threshold` (τ) is
+    /// unchanged (NOT re-fit, Open Q1).
+    #[test]
+    fn tune_writes_weights_with_provenance() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let config = sample_config();
+        detect::seed_weights_if_empty(&store, &config).expect("seed weights");
+        let run_id = store.begin_run("{\"tau\":0.5}").expect("begin_run");
+        store.mark_run_done(run_id, 100).expect("mark done");
+
+        // Cleanly separable: the current conservative weights ALREADY classify
+        // these correctly, and the fit also separates them → backtest PASSES.
+        // Spam fires content layers high; ham stays at 0.0 across the board.
+        seed_labeled(&store, run_id, &pk("s1"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0), ("L4_link_mention", 1.0)]);
+        seed_labeled(&store, run_id, &pk("s2"), true, &[("L1_near_duplicate", 0.95), ("L3_content_entropy", 0.95), ("L4_link_mention", 0.9)]);
+        seed_labeled(&store, run_id, &pk("h1"), false, &[("L1_near_duplicate", 0.0), ("L3_content_entropy", 0.0)]);
+        seed_labeled(&store, run_id, &pk("h2"), false, &[("L1_near_duplicate", 0.02), ("L3_content_entropy", 0.01)]);
+
+        let report = super::run_tune(&store, &config, None).expect("run_tune");
+        match &report {
+            TuneReport::Adopted { run_id: r, .. } => assert_eq!(*r, run_id, "adopted from the run"),
+            other => panic!("expected Adopted, got {other:?}"),
+        }
+
+        let conn = store.reader().expect("reader");
+        let weights = detect::read_weights(&conn).expect("read weights");
+        // Each of the four layer rows + the _bias row carries provenance.
+        for layer in LAYERS.iter().chain(std::iter::once(&BIAS_KEY)) {
+            let w = weights.iter().find(|w| w.layer == *layer).expect("row present");
+            assert!(w.tuned_at.is_some(), "{layer} carries tuned_at after adopt");
+            assert_eq!(w.tuned_from_run, Some(run_id), "{layer} records tuned_from_run");
+        }
+        // τ row is UNCHANGED (never re-fit) — tuned_at still NULL, threshold 0.5.
+        let tau_row = weights.iter().find(|w| w.layer == THRESHOLD_KEY).expect("threshold row");
+        assert!(tau_row.tuned_at.is_none(), "_threshold is NOT re-fit (tuned_at still NULL)");
+        assert_eq!(tau_row.threshold, Some(0.5), "_threshold (τ) value unchanged");
+        store.close().expect("close");
+    }
+
+    /// A clean separable fixture → backtest PASSES → adopted (TUNE-05 pass case).
+    #[test]
+    fn backtest_passes_and_adopts() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let config = sample_config();
+        detect::seed_weights_if_empty(&store, &config).expect("seed weights");
+        let run_id = store.begin_run("{\"tau\":0.5}").expect("begin_run");
+        store.mark_run_done(run_id, 100).expect("mark done");
+
+        // Strongly separable classes.
+        seed_labeled(&store, run_id, &pk("a1"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0)]);
+        seed_labeled(&store, run_id, &pk("a2"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 0.9)]);
+        seed_labeled(&store, run_id, &pk("a3"), true, &[("L1_near_duplicate", 0.9), ("L3_content_entropy", 1.0)]);
+        seed_labeled(&store, run_id, &pk("b1"), false, &[("L1_near_duplicate", 0.0), ("L3_content_entropy", 0.0)]);
+        seed_labeled(&store, run_id, &pk("b2"), false, &[("L1_near_duplicate", 0.0), ("L3_content_entropy", 0.05)]);
+        seed_labeled(&store, run_id, &pk("b3"), false, &[("L1_near_duplicate", 0.05), ("L3_content_entropy", 0.0)]);
+
+        let report = super::run_tune(&store, &config, None).expect("run_tune");
+        assert!(
+            matches!(report, TuneReport::Adopted { .. }),
+            "separable fixture is adopted, got {report:?}"
+        );
+        assert!(report.summary().contains("adopt"), "summary names the adoption: {}", report.summary());
+        store.close().expect("close");
+    }
+
+    /// A known-regression fixture: a labeled-ham pubkey whose signals are high on
+    /// a layer the new fit up-weights so the STAGING score crosses τ → a new FP →
+    /// the strict gate BLOCKS. Assert the weight rows still carry their PRE-tune
+    /// values (tuned_at still NULL) — a blocked adoption is a no-op on live state.
+    #[test]
+    fn backtest_blocks_regression_and_leaves_weights() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let config = sample_config();
+        detect::seed_weights_if_empty(&store, &config).expect("seed weights");
+        let run_id = store.begin_run("{\"tau\":0.5}").expect("begin_run");
+        store.mark_run_done(run_id, 100).expect("mark done");
+
+        // Construct a fit that necessarily produces a new FP. Make the classes
+        // NON-separable in a way that drags a ham over τ: most spam AND one ham
+        // share an identical high feature vector, but carry opposite labels. The
+        // fit must up-weight that layer to catch the spam, which then pushes the
+        // identically-featured ham above τ → a new false positive → BLOCK.
+        seed_labeled(&store, run_id, &pk("sp1"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0)]);
+        seed_labeled(&store, run_id, &pk("sp2"), true, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0)]);
+        seed_labeled(&store, run_id, &pk("sp3"), true, &[("L1_near_duplicate", 0.95), ("L3_content_entropy", 0.95)]);
+        // The adversarial ham: identical strong signals to the spam, labeled ham.
+        seed_labeled(&store, run_id, &pk("hm1"), false, &[("L1_near_duplicate", 1.0), ("L3_content_entropy", 1.0)]);
+        // A clearly-negative ham to keep both classes present.
+        seed_labeled(&store, run_id, &pk("hm2"), false, &[("L1_near_duplicate", 0.0), ("L3_content_entropy", 0.0)]);
+
+        let report = super::run_tune(&store, &config, None).expect("run_tune");
+        match &report {
+            TuneReport::BlockedByRegression(reg) => {
+                assert!(
+                    !reg.new_false_positives.is_empty() || !reg.new_false_negatives.is_empty(),
+                    "regression names at least one regressed pubkey"
+                );
+            }
+            other => panic!("expected BlockedByRegression, got {other:?}"),
+        }
+        assert!(report.summary().contains("BLOCKED"), "summary says BLOCKED: {}", report.summary());
+
+        // The live weight rows are a NO-OP: never tuned (tuned_at still NULL),
+        // and they still hold the seeded conservative values.
+        let conn = store.reader().expect("reader");
+        let weights = detect::read_weights(&conn).expect("read weights");
+        assert!(
+            weights.iter().all(|w| w.tuned_at.is_none() && w.tuned_from_run.is_none()),
+            "a blocked adoption leaves every weight row untouched (tuned_at/tuned_from_run NULL)"
+        );
+        let l1 = weights.iter().find(|w| w.layer == "L1_near_duplicate").expect("L1 row");
+        assert_eq!(l1.weight, 2.0, "L1 still holds its pre-tune seeded value");
+        store.close().expect("close");
+    }
 }
