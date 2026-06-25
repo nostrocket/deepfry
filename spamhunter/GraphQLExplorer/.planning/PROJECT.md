@@ -19,20 +19,22 @@ by seeing their events and spam signals in one place. If everything else fails, 
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Accept a suspect pubkey by paste (npub/nprofile/64-hex) and open its drill-down — v1.0
+- ✓ Import a batch list of pubkeys (paste/file/corpus-enumeration; npub or hex) and triage authors together — v1.0
+- ✓ Normalize npub/bech32 ↔ hex; query the API in hex, display both forms (single `parseIdentifier` site, rejecting note/nsec) — v1.0
+- ✓ Author drill-down: newest-first event timeline with asymmetric posting-rate / burst indicators — v1.0
+- ✓ Author drill-down: near-duplicate / repeated-text highlighting (two-stage hash→Jaccard) — v1.0
+- ✓ Author drill-down: tag/mention aggregation (p/e/t) surfacing mass-mention & hashtag stuffing — v1.0
+- ✓ Author drill-down: kind-distribution breakdown + lazy raw-JSON inspector — v1.0
+- ✓ Corpus stats dashboard (eventCount, maxLevId, dbVersion, pinnedStrfryVersion), polled for change — v1.0
+- ✓ Robust API access: cursor pagination, limit clamping, `errors[]`-on-200 handling, `/ready` gating — v1.0
+- ✓ Non-removable window-honesty denominator on every signal surface (asymmetric: absence ≠ clean) — v1.0 (emergent core principle)
+- ✓ Dual-axis batch chunking (≤1000-author cap + 256 KiB body, 413 halve-retry), match-by-author — v1.0
+- ✓ Direct connection to the lens via wildcard CORS (no proxy) — v1.0 (superseded the planned dev-proxy; see note)
 
 ### Active
 
-- [ ] Accept a suspect pubkey by paste/lookup (npub or 64-char hex) and open its drill-down
-- [ ] Import a batch list of pubkeys (paste or file; npub or hex) and review authors together
-- [ ] Normalize npub/bech32 ↔ hex; query the API in hex, display human-friendly forms
-- [ ] Author drill-down: event timeline (newest-first) with posting-rate / burst indicators
-- [ ] Author drill-down: content view with near-duplicate / repeated-text highlighting
-- [ ] Author drill-down: tag/mention aggregation (p/e/t) to surface mass-mention & hashtag stuffing
-- [ ] Author drill-down: kind distribution breakdown + raw-JSON inspector for any event
-- [ ] Corpus stats dashboard (eventCount, maxLevId, dbVersion, pinnedStrfryVersion), polled for change
-- [ ] Robust API access: cursor pagination, limit clamping awareness, GraphQL `errors[]` handling, `/ready` gating
-- [ ] Local-dev run with a Vite dev proxy to `127.0.0.1:8080` (solves the unconfigured CORS)
+(None yet — define with `/gsd-new-milestone` for the next milestone)
 
 ### Out of Scope
 
@@ -59,7 +61,9 @@ by seeing their events and spam signals in one place. If everything else fails, 
   `kind`/`createdAt` are 64-bit. Ordering fixed: `createdAt` DESC, `levId` DESC (no `orderBy`).
   `createdAt` is author-claimed (matters for rate analysis). `raw` is canonical; typed fields derived.
   Expired (NIP-40) events filtered server-side.
-- **CORS is not configured** — a cross-origin browser app is blocked. v1 uses a same-origin dev proxy.
+- **CORS is wildcard-open** (`Access-Control-Allow-Origin: *`, contract v1.2) — a cross-origin browser
+  app connects DIRECTLY to the lens with no proxy. (Superseded the original v1 plan of a same-origin Vite
+  dev proxy; FND-02 was reworked accordingly.) Base URL via the required `VITE_GRAPHQL_URL` env var.
 - **Monorepo placement:** lives at `spamhunter/GraphQLExplorer/` inside the DeepFry monorepo. Scoped
   to this directory only (monorepo project-boundary rule). `.planning/` tracks to the outer deepfry repo.
 
@@ -76,11 +80,29 @@ by seeing their events and spam signals in one place. If everything else fails, 
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Author-centric, no firehose | Analyst's chosen workflow; entry is always a known pubkey | — Pending |
-| React + Vite + TS + urql + Codegen | Typed client from live introspection; contract's documented CORS fix is a Vite proxy | — Pending |
-| Accept npub + hex, query in hex | Humans paste npub from clients; API speaks hex only | — Pending |
-| Client-side duplicate detection | API has no content-search/dedup; must compute on fetched events | — Pending |
-| Local-dev-first deployment | Unauthenticated API + analyst-only tool; production hardening deferred | — Pending |
+| Author-centric, no firehose | Analyst's chosen workflow; entry is always a known pubkey | ✓ Good — shipped, drill-down is the spine of all 4 phases |
+| React + Vite + TS + urql + Codegen | Typed client from live introspection | ✓ Good — codegen-typed reads across all phases, build clean |
+| Accept npub + hex, query in hex | Humans paste npub from clients; API speaks hex only | ✓ Good — single `parseIdentifier` site; note/nsec rejected |
+| Client-side duplicate detection | API has no content-search/dedup; must compute on fetched events | ✓ Good — pure two-stage near-dup analyzer, unit-tested |
+| Local-dev-first deployment | Unauthenticated API + analyst-only tool; production hardening deferred | ✓ Good — v1 runs via `vite dev` against the lens |
+| Direct connection (wildcard CORS), no proxy | Contract v1.2 confirmed `ACAO: *`; a proxy was unnecessary | ✓ Good — superseded the planned dev proxy (FND-02 reworked) |
+| Window-honesty denominator + asymmetric framing | A partial fetch window must never read as exoneration | ✓ Good — became the project's defining principle, on every signal |
+
+## Current State
+
+**Shipped: v1.0 MVP — Spam Investigation Explorer (2026-06-25).** All 4 phases complete and
+human-validated; 18/18 requirements satisfied; ~5,800 LOC TypeScript; 128 tests; cross-phase
+integration verified WIRED end-to-end. Runs via `vite dev` against the lens (`VITE_GRAPHQL_URL`,
+wildcard CORS, no proxy). The four MVP slices: (1) typed transport + stats dashboard, (2) suspect
+drill-down with the window-honesty denominator + asymmetric burst, (3) near-dup / tag-fan-out /
+kind-distribution panels + lazy raw inspector, (4) chunked batch triage matched by author.
+
+**Known tech debt (non-blocking, see v1.0-MILESTONE-AUDIT.md):** orphaned `accumulatePages`
+scaffold export; `BatchIndicator` not literally sharing the `WindowIndicator` component (semantics
+correct); near-dup/tag thresholds are documented sane defaults pending live-corpus tuning.
+
+**Deferred to a future milestone:** saved/persisted suspect lists, multi-kind batch triage, CSV
+export of triage results, cross-author duplicate detection, server-side analysis.
 
 ## Evolution
 
@@ -100,4 +122,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-24 after initialization*
+*Last updated: 2026-06-25 after v1.0 milestone*
