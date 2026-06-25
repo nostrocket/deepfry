@@ -79,34 +79,34 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INGEST-01 | TBD | Pending |
-| INGEST-02 | TBD | Pending |
-| INGEST-03 | TBD | Pending |
-| INGEST-04 | TBD | Pending |
-| DETECT-01 | TBD | Pending |
-| DETECT-02 | TBD | Pending |
-| DETECT-03 | TBD | Pending |
-| DETECT-04 | TBD | Pending |
-| DETECT-05 | TBD | Pending |
-| SCORE-01 | TBD | Pending |
-| SCORE-02 | TBD | Pending |
-| SCORE-03 | TBD | Pending |
-| SCORE-04 | TBD | Pending |
-| SCORE-05 | TBD | Pending |
-| TUNE-01 | TBD | Pending |
-| TUNE-02 | TBD | Pending |
-| TUNE-03 | TBD | Pending |
-| TUNE-04 | TBD | Pending |
-| TUNE-05 | TBD | Pending |
-| OPS-01 | TBD | Pending |
-| OPS-02 | TBD | Pending |
-| OPS-03 | TBD | Pending |
+| INGEST-01 | Phase 2 | Mapped |
+| INGEST-02 | Phase 3 | Mapped |
+| INGEST-03 | Phase 3 | Mapped |
+| INGEST-04 | Phase 2 | Mapped |
+| DETECT-01 | Phase 4 | Mapped |
+| DETECT-02 | Phase 4 | Mapped |
+| DETECT-03 | Phase 4 | Mapped |
+| DETECT-04 | Phase 4 | Mapped |
+| DETECT-05 | Phase 4 | Mapped |
+| SCORE-01 | Phase 4 | Mapped |
+| SCORE-02 | Phase 1 | Mapped |
+| SCORE-03 | Phase 5 | Mapped |
+| SCORE-04 | Phase 4 | Mapped |
+| SCORE-05 | Phase 4 | Mapped |
+| TUNE-01 | Phase 6 | Mapped |
+| TUNE-02 | Phase 6 | Mapped |
+| TUNE-03 | Phase 6 | Mapped |
+| TUNE-04 | Phase 6 | Mapped |
+| TUNE-05 | Phase 6 | Mapped |
+| OPS-01 | Phase 5 | Mapped |
+| OPS-02 | Phase 4 | Mapped |
+| OPS-03 | Phase 4 | Mapped |
 
 **Coverage:**
 - v1 requirements: 22 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 22 ⚠️ (resolved by roadmap)
+- Mapped to phases: 22 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-25*
-*Last updated: 2026-06-25 after initial definition*
+*Last updated: 2026-06-25 after roadmap creation*
