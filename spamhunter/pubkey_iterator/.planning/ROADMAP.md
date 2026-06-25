@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Fetcher + Bounded Streaming Pipeline** - tokio → bounded channel → rayon; fetch ~100 events/pubkey at corpus scale with proven bounded memory (completed 2026-06-25)
 - [x] **Phase 4: Detection Layers + Logistic Combiner (first end-to-end verdict)** - Layer trait + L7 combiner + P1 layers (L0/L1/L3/L4) → first per-pubkey spam score with per-layer evidence (completed 2026-06-25)
 - [x] **Phase 5: CLI `run` + `export` (first shippable list)** - Drive a full batch and export the reviewable suspected-spammer list with per-layer reasons (completed 2026-06-25)
-- [ ] **Phase 6: Labeling + Logistic Tuner + Backtest Gate** - Capture human labels, re-fit weights from labels, and gate adoption on a no-regression backtest
+- [x] **Phase 6: Labeling + Logistic Tuner + Backtest Gate** - Capture human labels, re-fit weights from labels, and gate adoption on a no-regression backtest (completed 2026-06-25)
 
 ## Phase Details
 
@@ -155,19 +155,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each run reads the latest weights at startup and snapshots them into run metadata, so any past score can be traced to the exact weights that produced it.
   4. New weights are backtested against the full human-labeled set before adoption: confirmed-spam pubkeys must remain flagged (no new false negatives) and confirmed-non-spam pubkeys must remain unflagged (no new false positives); a regression is surfaced and blocks/flags adoption of the new weights.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans complete
 
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — Foundation slice: rename `label`→`backpropagation` (+ 4 ref sites) + `review_queue` DDL, add linfa/linfa-logistic/ndarray=0.16 deps, extract shared `detect::combine()` from ScoringStage::score (TUNE-01)
+- [x] 06-01-PLAN.md — Foundation slice: rename `label`→`backpropagation` (+ 4 ref sites) + `review_queue` DDL, add linfa/linfa-logistic/ndarray=0.16 deps, extract shared `detect::combine()` from ScoringStage::score (TUNE-01)
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 06-02-PLAN.md — Tune slice: `src/tune.rs` deterministic linfa-logistic fit over signal×backpropagation + STRICT backtest gate (zero new FN/FP, τ un-refit) writing weights+bias with provenance only on PASS + sync `tune` clap arm (TUNE-02, TUNE-05)
+- [x] 06-02-PLAN.md — Tune slice: `src/tune.rs` deterministic linfa-logistic fit over signal×backpropagation + STRICT backtest gate (zero new FN/FP, τ un-refit) writing weights+bias with provenance only on PASS + sync `tune` clap arm (TUNE-02, TUNE-05)
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-03-PLAN.md — Negative-sampling + traceability: deterministic `review_queue` sample of unflagged pubkeys (no RNG) + confirming test that a retuned weight set appears in the next run's `config_json` snapshot (TUNE-04, TUNE-03)
+- [x] 06-03-PLAN.md — Negative-sampling + traceability: deterministic `review_queue` sample of unflagged pubkeys (no RNG) + confirming test that a retuned weight set appears in the next run's `config_json` snapshot (TUNE-04, TUNE-03)
 
 ## Progress
 
@@ -178,7 +178,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 3/3 | Complete    | 2026-06-25 |
 | 5. CLI `run` + `export` | 3/3 | Complete    | 2026-06-25 |
-| 6. Labeling + Logistic Tuner + Backtest Gate | 0/3 | Not started | - |
+| 6. Labeling + Logistic Tuner + Backtest Gate | 3/3 | Complete   | 2026-06-25 |
 
 ## Coverage
 

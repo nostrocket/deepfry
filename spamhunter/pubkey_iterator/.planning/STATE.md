@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 06
-current_phase_name: Labeling + Logistic Tuner + Backtest Gate
+current_phase_name: labeling-tuner-backtest
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-25T18:00:53.632Z"
+last_updated: "2026-06-25T18:00:53.909Z"
 last_activity: 2026-06-25
-last_activity_desc: Phase 05 complete, transitioned to Phase 06
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 12
+  total_plans: 15
   completed_plans: 12
-  percent: 83
+  percent: 80
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Produce an accurate, low-false-positive list of suspected spammer pubkeys as fast as possible, with every layer independently tunable and the whole system correctable from human-labeled false positives.
-**Current focus:** Phase 05 — cli-run-export
+**Current focus:** Phase 06 — labeling-tuner-backtest
 
 ## Current Position
 
-Phase: 06 — Labeling + Logistic Tuner + Backtest Gate
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-25 — Phase 05 complete, transitioned to Phase 06
+Phase: 06 (labeling-tuner-backtest) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 06
+Last activity: 2026-06-25 — Phase 06 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
