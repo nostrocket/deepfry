@@ -160,4 +160,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 3/3 | Complete    | 2026-06-24 |
 | 3. Remaining Spam Signals | 2/2 | Complete    | 2026-06-25 |
-| 4. Batch Triage | 2/2 | Complete   | 2026-06-25 |
+| 4. Batch Triage | 2/2 | Complete    | 2026-06-25 |
