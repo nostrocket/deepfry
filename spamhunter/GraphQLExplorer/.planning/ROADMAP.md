@@ -25,7 +25,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation + Stats Dashboard** - Typed urql client connecting directly to the lens (wildcard CORS) with robust transport, proven by a polled corpus-stats dashboard (completed 2026-06-24)
 - [x] **Phase 2: Suspect Entry + Drill-Down Core** - Paste an npub/hex suspect and judge them from a timeline with burst signal and a non-removable window-honesty indicator (completed 2026-06-24)
 - [x] **Phase 3: Remaining Spam Signals** - Duplicate-content, tag/mention fan-out, and kind-distribution panels plus a lazy raw-JSON inspector (completed 2026-06-25)
-- [ ] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table
+- [x] **Phase 4: Batch Triage** - Import a pubkey list/file and triage many authors in one chunked, match-by-author table (completed 2026-06-25)
 
 ## Phase Details
 
@@ -137,7 +137,7 @@ overloading the backend.
   4. Clicking a triage row opens that author's full Phase 2/3 drill-down for deeper investigation
   5. As an alternative to pasting/uploading, the user can enumerate the corpus's distinct authors via the paginated `authors` query (opaque cursor, byte-ascending, loop until `hasMore` is false) and feed the discovered pubkeys into the same chunked triage pipeline — with the window-honesty posture applied (the enumerated set is a live snapshot, shown with its count)
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **UI hint**: yes
 
 Plans:
@@ -148,7 +148,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 04-02-PLAN.md — `#/batch` route + neutral nav; BatchImport view (paste/file/enumerate + import summary + accent Triage submit + large-set warning) + sortable TriageTable (transparent per-signal chips, explicit "0 events" rows, batch window-honesty denominators, per-chunk error+retry) with row drill-in to existing `#/a/<hex>` (BATCH-01, BATCH-02, BATCH-03, BATCH-04)
+- [x] 04-02-PLAN.md — `#/batch` route + neutral nav; BatchImport view (paste/file/enumerate + import summary + accent Triage submit + large-set warning) + sortable TriageTable (transparent per-signal chips, explicit "0 events" rows, batch window-honesty denominators, per-chunk error+retry) with row drill-in to existing `#/a/<hex>` (BATCH-01, BATCH-02, BATCH-03, BATCH-04)
 
 ## Progress
 
@@ -160,4 +160,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 3/3 | Complete    | 2026-06-24 |
 | 3. Remaining Spam Signals | 2/2 | Complete    | 2026-06-25 |
-| 4. Batch Triage | 1/2 | In Progress|  |
+| 4. Batch Triage | 2/2 | Complete   | 2026-06-25 |
