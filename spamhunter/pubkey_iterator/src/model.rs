@@ -65,7 +65,10 @@ pub struct Fingerprint {
     pub minhash: Option<Vec<u8>>,
 }
 
-/// A human-supplied ground-truth label — mirrors the `label` table.
+/// A human-supplied ground-truth label — mirrors the `backpropagation` table
+/// (renamed from `label` in Phase 6, D-01). Operators INSERT rows directly with
+/// any SQLite client (TUNE-01 / D-02); the struct name stays `Label` (internal,
+/// no SQL depends on it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Label {
     pub pubkey: String,

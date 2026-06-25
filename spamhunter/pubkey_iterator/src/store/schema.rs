@@ -1,12 +1,15 @@
 //! Embedded schema DDL.
 //!
-//! `SCHEMA_DDL` is the 8 `CREATE TABLE IF NOT EXISTS` (run, pubkey, score,
-//! signal, fingerprint, label, weight, suspected_spammer) plus `idx_signal_layer`,
-//! `idx_fp_chash`, and `idx_suspected_run`. The first 7 tables + 2 indexes were
-//! lifted verbatim from `01-RESEARCH.md` "Code Examples → Schema creation"; the
-//! 8th table (`suspected_spammer`) + `idx_suspected_run` are the Phase-5 export
-//! materialization (05-RESEARCH §"suspected_spammer schema"). Every table uses
-//! `IF NOT EXISTS` so `Store::open` is idempotent.
+//! `SCHEMA_DDL` is the 9 `CREATE TABLE IF NOT EXISTS` (run, pubkey, score,
+//! signal, fingerprint, backpropagation, weight, suspected_spammer, review_queue)
+//! plus `idx_signal_layer`, `idx_fp_chash`, and `idx_suspected_run`. The first 7
+//! tables + 2 indexes were lifted verbatim from `01-RESEARCH.md` "Code Examples →
+//! Schema creation"; the `suspected_spammer` table + `idx_suspected_run` are the
+//! Phase-5 export materialization (05-RESEARCH §"suspected_spammer schema"). The
+//! `backpropagation` table is the Phase-1 operator-label table renamed in Phase 6
+//! (D-01, self-explanatory name); `review_queue` is the Phase-6 negative-sampling
+//! slice (Plan 03 populates it). Every table uses `IF NOT EXISTS` so `Store::open`
+//! is idempotent.
 //!
 //! The `signal` table is intentionally EAV (`run_id, pubkey, layer, value,
 //! evidence`): a brand-new detection layer is a new ROW, never a schema
@@ -17,7 +20,7 @@
 //! reviewer reads the verdict without joining `config_json`; per-layer evidence
 //! is NOT duplicated here (it stays in `signal`, JOINed at read time).
 
-/// The full schema: 8 tables + 3 indexes, run once via `conn.execute_batch`.
+/// The full schema: 9 tables + 3 indexes, run once via `conn.execute_batch`.
 pub const SCHEMA_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS run (
   run_id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +66,13 @@ CREATE TABLE IF NOT EXISTS fingerprint (
 );
 CREATE INDEX IF NOT EXISTS idx_fp_chash ON fingerprint(run_id, content_hash);
 
-CREATE TABLE IF NOT EXISTS label (
+-- Operator ground-truth labels (renamed from `label` in Phase 6, D-01: the
+-- self-explanatory project name). Humans INSERT rows directly with any SQLite
+-- client (TUNE-01 / D-02 — intentionally NO `label` subcommand); the tuner reads
+-- them JOINed against `signal`. `source`/`note` retained for a leakage/poisoning
+-- audit trail. Columns unchanged from the Phase-1 `label` table (CREATE-rename,
+-- no data migration: the old table was empty in every real DB).
+CREATE TABLE IF NOT EXISTS backpropagation (
   pubkey     TEXT PRIMARY KEY REFERENCES pubkey(pubkey),
   is_spam    INTEGER NOT NULL,                          -- 1 spam, 0 ham
   labeled_at INTEGER NOT NULL,
@@ -89,4 +98,15 @@ CREATE TABLE IF NOT EXISTS suspected_spammer (
   PRIMARY KEY (run_id, pubkey)
 );
 CREATE INDEX IF NOT EXISTS idx_suspected_run ON suspected_spammer(run_id, rank);
+
+-- Negative-sampling review queue (Phase 6, TUNE-04). Per-run sampled pubkeys a
+-- reviewer triages into `backpropagation` ground truth. This plan only CREATEs
+-- it; Plan 03 populates it from a run's scored-but-unlabeled tail.
+CREATE TABLE IF NOT EXISTS review_queue (
+  run_id     INTEGER NOT NULL REFERENCES run(run_id),
+  pubkey     TEXT    NOT NULL REFERENCES pubkey(pubkey),
+  score      REAL    NOT NULL,                          -- the run's sigmoid score
+  sampled_at INTEGER NOT NULL,                          -- sampling timestamp
+  PRIMARY KEY (run_id, pubkey)
+);
 "#;
