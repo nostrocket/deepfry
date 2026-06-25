@@ -92,6 +92,20 @@ labeling/tuning/backtest (Phase 6), and all v2 layers (L2/L5/L6/L8).
 ### Output medium
 - **D-13:** **SQLite only.** No flat-file output anywhere in this phase.
 
+### Carry-forward from Phase 3 (resolve here)
+- **D-15:** Phase 3 built `fetch::match_groups` (zero-event authors → empty
+  groups, no index-shift) but did **not** wire it into `fetch_batch`/the
+  pipeline (Phase-3 review MD-01). Resolve it here: **every enumerated pubkey
+  gets a verdict, including zero-event pubkeys.** A pubkey with zero kind-1
+  events still flows through the layers — L0 (whitelist absence) and the
+  content layers simply emit their zero/absent sub-scores. So `fetch_batch`
+  (or the pipeline's fetch stage) MUST use `match_groups` against the requested
+  pubkey list so omitted (zero-event) authors become empty groups that reach
+  the Layer/combiner stage, rather than silently vanishing. Add a test proving
+  a zero-event pubkey still gets a `score` row. If, in planning, scoring
+  zero-event pubkeys proves undesirable, the alternative is to delete the unused
+  `match_groups` — but the default decision is **score every pubkey**.
+
 ### Verification posture
 - **D-14:** Layer unit tests use **synthetic event fixtures** (deterministic).
   L0 has an integration test against the **live whitelist**
