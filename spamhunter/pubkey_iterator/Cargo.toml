@@ -39,6 +39,15 @@ thiserror = "2"
 # owned add). The bounded flume channel feeds a rayon/std::thread drain so CPU work
 # runs off the tokio reactor (D-05); Phase 4 fans out per-group scoring here.
 rayon = "1.12"
+# unicode-segmentation (Phase-4-owned): grapheme/word tokenization for SimHash
+# shingles, entropy, and emoji counting over multilingual Nostr content (L1/L3).
+unicode-segmentation = "1.13"
+# url (Phase-4-owned): WHATWG-correct URL/host parsing for L4 link & mention
+# scoring (repeated-domain concentration, URL density) — beats a regex.
+url = "2.5"
+# toml (Phase-4-owned): parse pubkey_iterator_config.toml into serde structs
+# (OPS-03 — retune without recompile). Plain toml + serde, not figment (Phase 5).
+toml = "1.1"
 
 [dev-dependencies]
 # tempfile: temp-FILE-backed DB so tests exercise real WAL on-disk behavior

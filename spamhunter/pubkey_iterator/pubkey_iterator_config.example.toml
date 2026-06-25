@@ -1,0 +1,52 @@
+# pubkey_iterator configuration (OPS-03 / D-09) — committed example.
+#
+# Production reads this shape from ~/deepfry/pubkey_iterator_config.toml
+# (the only file under ~/deepfry/ this tool is granted to write). Copy this
+# example there and edit. Config-loading TESTS use a temp dir, never the real
+# file. Every magnitude below is a conservative, false-positive-averse default
+# (D-08); all are retunable without recompile and are seeded into the `weight`
+# table on first run (Phase 6's tuner later overwrites them).
+
+# The LMDB2GraphQL adapter endpoint.
+adapter_url   = "http://192.168.149.21:8080/graphql"
+# The whitelist-plugin base URL for the L0 GET /check/{pubkey} lookup.
+whitelist_url = "http://127.0.0.1:8081"
+# Flag threshold τ: suspected = score > tau.
+tau           = 0.5
+# Logistic combiner bias b (baseline sigmoid(-4.0) ≈ 0.018).
+bias          = -4.0
+
+# L0 — whitelist absence. Absence emits absence_subscore (weak weight); presence
+# clears ONLY this layer (never a gate or exemption, D-03).
+[layers.L0_whitelist_absence]
+enabled          = true
+weight           = 0.8
+absence_subscore = 1.0
+
+# L1 — within-pubkey near-duplicate (SimHash + Hamming distance).
+[layers.L1_near_duplicate]
+enabled           = true
+weight            = 2.0
+hamming_threshold = 3      # max Hamming distance (of 64 bits) for a near-dup
+shingle_size      = 3      # word-shingle size for SimHash
+min_events        = 5      # below this, the layer emits 0.0 (FP-averse)
+
+# L3 — content entropy (low = templated, high = gibberish) + emoji/hashtag density.
+[layers.L3_content_entropy]
+enabled              = true
+weight               = 1.5
+entropy_low          = 2.0   # bits/char; below → templated
+entropy_high         = 5.5   # bits/char; above → gibberish
+min_len_for_low      = 200   # only apply low-entropy flag past this length
+emoji_density_knee   = 0.5   # emoji-graphemes / graphemes → 1.0 at/above
+hashtag_density_knee = 0.3   # #tags / words → 1.0 at/above
+
+# L4 — link & mention (URL ratio, repeated domains, mass p-tags, hashtag stuffing).
+[layers.L4_link_mention]
+enabled                   = true
+weight                    = 1.5
+url_ratio_knee            = 0.8   # events-with-URL / total → 1.0 at/above
+domain_concentration_knee = 0.7   # max-host-share / events-with-URL → 1.0 at/above
+mean_ptags_knee           = 10.0  # mean p-tags/event → 1.0 at/above
+mean_ttags_knee           = 8.0   # mean t-tags/event → 1.0 at/above
+min_events                = 5     # below this, the layer emits 0.0 (FP-averse)

@@ -7,6 +7,13 @@
 /// `Weight`) plus the `Persist` writer-channel payload.
 pub mod model;
 
+/// TOML configuration (OPS-03 / D-09): the path-argument `config::load` parses
+/// `pubkey_iterator_config.toml` into typed serde structs (adapter/whitelist
+/// URLs, combiner τ + bias, and the four per-layer enable/weight/threshold
+/// entries). Config-loading tests use a temp dir, never the real `~/deepfry`
+/// file. The committed `pubkey_iterator_config.example.toml` documents the shape.
+pub mod config;
+
 /// SQLite store: schema DDL, PRAGMA-first `open`, the single-writer actor, and
 /// the prepared-statement read helpers.
 ///
