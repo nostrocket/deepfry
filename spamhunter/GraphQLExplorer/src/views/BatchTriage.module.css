@@ -1,0 +1,455 @@
+/*
+ * BatchTriage — the shared CSS Module for the two Phase-4 surfaces (BatchImport +
+ * TriageTable), consuming src/styles/tokens.css ONLY (no new tokens, no chart/table/grid
+ * library). Mirrors RatePanel.module.css for the card shape and the amber-on-signal chip.
+ *
+ * COLOR DISCIPLINE (load-bearing, UI-SPEC §Color):
+ *  - Teal (--accent) appears on EXACTLY ONE element this phase — `.triageSubmit` (the
+ *    batch view's single "go" action, the multi-author analog of "Inspect author"). It
+ *    appears NOWHERE else: textarea, file picker, drop zone, enumerate, Stop, retry,
+ *    sort headers, rows are all NEUTRAL chrome.
+ *  - A tripped per-signal indicator and the unparseable segment are AMBER (--recoverable),
+ *    always paired with a dot (shape) + a text label — color is never the sole signal.
+ *  - There is NO green / success / "clean" color anywhere — a quiet or 0-events row is
+ *    neutral muted, never exoneration.
+ */
+
+/* ── View shell ───────────────────────────────────────────────────────────── */
+.view {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xl);
+  font-family: var(--font-sans);
+  color: var(--text);
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+/* Persistent first-pass-screen / honesty framing — muted body, never an error tone. */
+.framing {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── Import card + the three source blocks ────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.sourceBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.sourceLabel {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* Neutral paste textarea — input surface, never accent. */
+.textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-md);
+}
+
+.textarea:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+/* Neutral file drop zone + picker — input surface, never accent. */
+.dropZone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: flex-start;
+  padding: var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.dropZoneOver {
+  border-color: var(--text-muted);
+}
+
+.dropHint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Neutral button base — shared by file picker, enumerate, Stop, retry, sort headers. */
+.neutralButton {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.neutralButton:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.neutralButton:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+.neutralButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Enumeration running row ──────────────────────────────────────────────── */
+.enumRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.enumCount {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Working/connecting (info-blue) — the live enumeration dot, never an error tone. */
+.connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--connecting);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ── Import summary ───────────────────────────────────────────────────────── */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.summaryLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.summaryCount {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--text);
+}
+
+.summaryLabel {
+  font-weight: 600;
+}
+
+/* Unparseable segment — neutral-with-amber-emphasis (a thing to see and act on, not a
+   hard failure). Paired with a dot (shape) + the "unparseable" label. */
+.unparseableSeg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--recoverable);
+  font-weight: 600;
+}
+
+.unparseableHeading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.unparseableList {
+  margin: 0;
+  padding: var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.unparseableToken {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeroValid {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ── Submit row + the SINGLE accent action ────────────────────────────────── */
+.submitRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+/* THE ONE ACCENT ELEMENT THIS PHASE — the batch "Triage" go-action. Accent-bordered
+   submit (not accent-border AND accent-focus — one treatment). Teal appears nowhere
+   else in this module. */
+.triageSubmit {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.triageSubmit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.triageSubmit:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+.triageSubmit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Large-set warning + file error — amber recoverable, paired with a dot. Non-blocking. */
+.note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.recoverable {
+  color: var(--recoverable);
+}
+
+.hardFail {
+  color: var(--hard-fail);
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
+
+/* ── Triage table ─────────────────────────────────────────────────────────── */
+.tableSurface {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* Batch window-honesty denominator — mirrors WindowIndicator's mono + amber-on-partial. */
+.batchIndicator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.th {
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Neutral clickable sort header — never accent. */
+.sortHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sortHeader:hover {
+  color: var(--text);
+}
+
+.sortHeader:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
+.sortCaret {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* Whole-row clickable drill-in — neutral surface hover, never accent. */
+.row {
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:hover {
+  background: color-mix(in srgb, var(--text-muted) 8%, var(--surface));
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: -2px;
+}
+
+.td {
+  padding: var(--space-md);
+  vertical-align: middle;
+}
+
+/* Author hex — mono, truncated; neutral data. */
+.authorHex {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Event count — neutral mono data; a higher count is NOT "worse" colored. */
+.eventCount {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Explicit "0 events" — muted data, distinct from a quiet non-empty row. Not amber,
+   not green: a fact about the corpus window, never an omission and never "clean". */
+.zeroEvents {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Neutral absence dash — a signal NOT tripped. Never green, never "clean". */
+.absent {
+  color: var(--text-muted);
+}
+
+/* Amber-on-signal chip — a TRIPPED indicator. Mirrors RatePanel's .burstBadge: amber,
+   paired with a dot (shape) + the verbatim label. Never red (not a verdict), never green. */
+.signalChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--recoverable);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+}
+
+/* ── Centered / empty / error states ──────────────────────────────────────── */
+.emptyState {
+  padding: var(--space-2xl);
+  text-align: center;
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.chunkErrors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.chunkErrorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
