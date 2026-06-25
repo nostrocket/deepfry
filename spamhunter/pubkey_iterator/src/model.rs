@@ -77,7 +77,13 @@ pub struct Label {
 }
 
 /// A tuned (or hand-set) layer weight — mirrors the `weight` table.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serializes into the `run.config_json` reproducibility snapshot (D-04/D-06):
+/// `run_batch` reads the seeded `weight` rows and embeds the `Vec<Weight>` under
+/// the snapshot's `weights` key, so the canonical run records the exact weight set
+/// it scored with. `Deserialize` lets a later phase (or `export`) parse the
+/// snapshot back into typed rows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Weight {
     /// Layer name, or `_bias` / `_threshold`.
     pub layer: String,

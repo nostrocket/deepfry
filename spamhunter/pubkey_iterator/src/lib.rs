@@ -57,3 +57,13 @@ pub mod pipeline;
 /// real layers (L0/L1/L3/L4) plug into this same registry in Plans 02–03.
 /// Deterministic: positional `Vec` sum, zero RNG (OPS-02).
 pub mod detect;
+
+/// The end-to-end batch orchestration (`run::run_batch`, Phase 5 / MD-02 fix):
+/// composes the four existing subsystems — `enumerate::run` (the resumable
+/// `authors` walk), `pipeline::run_pipeline` + `production_fetch_with_whitelist`
+/// (the bounded tokio→flume→std::thread fetch + L0 stage), `detect::ScoringStage`
+/// (the combiner), and the `Store` single writer — into ONE batch on ONE run_id.
+/// It snapshots τ + the weight set into `run.config_json` for reproducibility
+/// (D-04/D-06), drives scoring in PRODUCTION (not only tests — the MD-02 fix),
+/// then marks the run `done`. The `export` module is added in Plan 03.
+pub mod run;
