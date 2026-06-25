@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 
 export type Route =
   | { name: 'home' }
+  | { name: 'batch' }
   | { name: 'author'; hex: string }
   | { name: 'notfound' }
 
@@ -23,6 +24,8 @@ const AUTHOR_HASH = /^#\/a\/([0-9a-f]{64})$/
 /** Pure hash → Route mapping (no React) so the matcher is trivially testable. */
 export function parseHash(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/') return { name: 'home' }
+  // Exact match — the batch view is a single top-level route (no params).
+  if (hash === '#/batch') return { name: 'batch' }
   const m = AUTHOR_HASH.exec(hash)
   if (m) return { name: 'author', hex: m[1] }
   return { name: 'notfound' }

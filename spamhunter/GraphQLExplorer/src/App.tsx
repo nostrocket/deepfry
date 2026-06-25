@@ -3,6 +3,7 @@ import { waitForReady } from './transport/readiness'
 import { useHashRoute } from './router/hashRouter'
 import { StatsDashboard } from './views/StatsDashboard'
 import { AuthorDrillDown } from './views/AuthorDrillDown'
+import { BatchImport } from './views/BatchImport'
 import { SuspectEntryBar } from './views/SuspectEntryBar'
 import { ConnectingShell } from './views/ConnectingShell'
 import styles from './App.module.css'
@@ -50,9 +51,21 @@ export function App() {
         <div className={styles.entrySlot}>
           <SuspectEntryBar />
         </div>
+        {/* Neutral nav to the batch view — NOT accent (accent stays on the two "go"
+            submits: "Inspect author" and the batch "Triage"). UI-SPEC App-shell nav. */}
+        <nav className={styles.shellNav}>
+          <button
+            type="button"
+            className={styles.navLink}
+            onClick={() => (window.location.hash = '#/batch')}
+          >
+            Batch triage
+          </button>
+        </nav>
       </header>
       <div className={styles.routeOutlet}>
         {route.name === 'home' && <StatsDashboard />}
+        {route.name === 'batch' && <BatchImport />}
         {route.name === 'author' && <AuthorDrillDown hex={route.hex} />}
         {route.name === 'notfound' && <NotFound />}
       </div>

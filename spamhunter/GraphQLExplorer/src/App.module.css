@@ -30,6 +30,36 @@
   flex: 1 1 auto;
 }
 
+/* ── Neutral shell nav (to #/batch) ───────────────────────────────────────────
+   Neutral chrome only — never accent. Matches the .notFoundButton / .loadMore
+   neutral-button treatment; accent (teal) is reserved for the two "go" submits. */
+.shellNav {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.navLink {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.navLink:hover {
+  border-color: var(--text-muted);
+}
+
+.navLink:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
 /* ── Not-found block (neutral, muted) ─────────────────────────────────────── */
 .notFound {
   max-width: 880px;
