@@ -830,6 +830,64 @@ mod tests {
         );
     }
 
+    /// D-04/D-06: `set_run_config_json` overwrites a run's `config_json` (the
+    /// τ + weight snapshot lands on the canonical run, replacing the placeholder).
+    #[test]
+    fn set_run_config_json_roundtrip() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        // Placeholder snapshot at begin_run.
+        assert_eq!(read_run(&path, run_id).config_json, "{}");
+
+        store
+            .set_run_config_json(run_id, "{\"tau\":0.5}")
+            .expect("set config_json");
+        assert_eq!(
+            read_run(&path, run_id).config_json,
+            "{\"tau\":0.5}",
+            "set_run_config_json overwrites the placeholder snapshot"
+        );
+    }
+
+    /// T-05-03: `export_write_conn` yields a Connection that can INSERT into
+    /// `suspected_spammer` (FK targets seeded via begin_run + insert_pubkeys/flush)
+    /// and a fresh reader sees the row — proving the conn writes the materialization
+    /// table without violating the single-writer invariant for the actor's tables.
+    #[test]
+    fn export_write_conn_can_write_suspected() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+        let pk = "ae00000000000000000000000000000000000000000000000000000000000000";
+
+        // Seed the FK targets: the pubkey row must be durable before the
+        // foreign_keys=ON INSERT references it.
+        store.insert_pubkeys(vec![pk.into()]);
+        store.flush().expect("flush pubkey durable");
+
+        let conn = store.export_write_conn().expect("export write conn");
+        conn.execute(
+            "INSERT INTO suspected_spammer (run_id, pubkey, score, tau, rank, exported_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![run_id, pk, 0.9_f64, 0.5_f64, 1_i64, 1_700_000_000_i64],
+        )
+        .expect("insert suspected row");
+
+        let reader = Connection::open(&path).expect("fresh reader");
+        let (got_score, got_tau, got_rank): (f64, f64, i64) = reader
+            .query_row(
+                "SELECT score, tau, rank FROM suspected_spammer WHERE run_id = ?1 AND pubkey = ?2",
+                params![run_id, pk],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("read suspected row");
+        assert_eq!(got_score, 0.9, "score round-trips");
+        assert_eq!(got_tau, 0.5, "tau round-trips");
+        assert_eq!(got_rank, 1, "rank round-trips");
+    }
+
     /// D-07: `set_run_cursor` round-trips the opaque cursor string.
     #[test]
     fn set_run_cursor_roundtrip() {
