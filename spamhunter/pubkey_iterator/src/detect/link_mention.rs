@@ -18,9 +18,11 @@
 //! UNTRUSTED and treated as opaque text (V5).
 //!
 //! Determinism (OPS-02): every component is a pure, order-independent reduction
-//! over the events (counts + means + a single max-share scan); no RNG, no
-//! HashMap iteration feeds the score (the host-count HashMap is only summed /
-//! max-reduced, never iterated for the value).
+//! over the events (counts + means + a single max-share scan); no RNG. The
+//! host-count HashMap is summed for the value and max-reduced for the persisted
+//! `top_domain` evidence — that max-reduction uses a TOTAL order (highest count,
+//! ties broken by the smallest host string), so neither the score nor the
+//! evidence depends on HashMap iteration order (MD-01).
 
 use crate::config::L4Config;
 use crate::detect::{Layer, LayerOutput};
@@ -115,10 +117,18 @@ impl Layer for LinkMentionLayer {
         }
         let url_ratio = events_with_url as f64 / n as f64;
         // Concentration = (max events sharing one host) / events-with-URLs.
-        // Only summed/max-reduced — never iterated for the value (OPS-02).
+        // The count feeds the value; the host STRING feeds `signal.evidence`.
+        // `max_by_key` on the count alone resolves ties by HashMap iteration
+        // order, which is unstable across runs — so the persisted `top_domain`
+        // could differ between byte-identical re-runs (OPS-02 hazard, MD-01).
+        // Use a TOTAL order: highest count wins, ties broken by the smallest
+        // host string lexicographically. `max_by` keeps the LAST maximal
+        // element, so to make the smallest host the winner on a tie we invert
+        // the host comparison (`hb.cmp(ha)`) — the count comparison stays
+        // ascending so the highest count still wins.
         let (top_host, top_host_events) = host_event_counts
             .iter()
-            .max_by_key(|(_, c)| **c)
+            .max_by(|(ha, ca), (hb, cb)| ca.cmp(cb).then_with(|| hb.cmp(ha)))
             .map(|(h, c)| (h.clone(), *c))
             .unwrap_or_default();
         let domain_concentration = if events_with_url > 0 {
@@ -248,6 +258,47 @@ mod tests {
         );
         // Concentration component (share/0.7) is well below the url_ratio one.
         assert!(share < 0.7, "diverse hosts stay below the concentration knee");
+    }
+
+    /// Determinism (OPS-02 / MD-01): the persisted `top_domain` evidence must be
+    /// byte-identical across repeated calls on the same input, AND on a host
+    /// count-tie the tie-break is total-ordered (smallest host string wins), so
+    /// the winner does not depend on HashMap iteration order.
+    #[test]
+    fn top_domain_tie_break_is_deterministic() {
+        // 6 events: 3 link host "bbb.example", 3 link host "aaa.example" → a
+        // 3-vs-3 count tie. The documented winner is the lexicographically
+        // smallest host string, "aaa.example".
+        let mut events = Vec::new();
+        for i in 0..3 {
+            events.push(ev(i, "buy https://bbb.example/x", &[]));
+        }
+        for i in 3..6 {
+            events.push(ev(i, "buy https://aaa.example/x", &[]));
+        }
+
+        // Repeated calls on identical input yield the SAME top_domain.
+        let first = layer().score(&events, false);
+        for _ in 0..20 {
+            let again = layer().score(&events, false);
+            assert_eq!(
+                again.evidence["top_domain"], first.evidence["top_domain"],
+                "top_domain must be deterministic across repeated calls"
+            );
+        }
+
+        // The tie is broken toward the smallest host string (documented winner).
+        assert_eq!(
+            first.evidence["top_domain"], "aaa.example",
+            "count-tie must pick the lexicographically smallest host (got {})",
+            first.evidence["top_domain"]
+        );
+        // Both hosts tied at 3 of 6 events → share is 3/6 = 0.5 regardless.
+        assert!(
+            (first.evidence["top_domain_share"].as_f64().unwrap() - 0.5).abs() < 1e-9,
+            "tied hosts → top_domain_share 0.5 (got {})",
+            first.evidence["top_domain_share"]
+        );
     }
 
     /// Mass p-tags: events with many `p` tags ramp the mean_p_tags component.
