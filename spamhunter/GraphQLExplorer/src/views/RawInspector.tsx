@@ -92,6 +92,9 @@ export function RawInspector({ id }: { id: string }) {
     )
   }
 
+  // WR-01: the error state is NOT a dead end. Both tones expose a real Retry (re-invokes
+  // the lazy fetch) and a Close (back to idle) so the analyst is never stuck. The verbatim
+  // retryable copy ("— retrying.") is now honest: Retry is the mechanism behind it.
   if (state.phase === 'error') {
     const toneClass = state.tone === 'recoverable' ? styles.recoverable : styles.hardFail
     return (
@@ -102,6 +105,16 @@ export function RawInspector({ id }: { id: string }) {
             ? 'Couldn’t load raw bytes — retrying.'
             : 'Couldn’t load the raw bytes for this event.'}
         </span>
+        <button type="button" className={styles.trigger} onClick={() => void fetchRaw()}>
+          Retry
+        </button>
+        <button
+          type="button"
+          className={styles.trigger}
+          onClick={() => setState({ phase: 'idle' })}
+        >
+          Close
+        </button>
       </div>
     )
   }
