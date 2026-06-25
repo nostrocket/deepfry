@@ -66,7 +66,7 @@ describe('triageAuthor (4 analyzers → 4 indicators)', () => {
   })
 
   it('carries NO clean/ok/safe/score field on the result', () => {
-    const result = triageAuthor([ev({})]) as Record<string, unknown>
+    const result = triageAuthor([ev({})]) as unknown as Record<string, unknown>
     expect(Object.keys(result).sort()).toEqual(['burst', 'eventCount', 'nearDup', 'tagFanOut'])
     expect(result.clean).toBeUndefined()
     expect(result.safe).toBeUndefined()
