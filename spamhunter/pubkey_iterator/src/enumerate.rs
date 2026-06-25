@@ -206,6 +206,18 @@ pub async fn run(
         }
     }
 
+    // Terminal page's pubkeys must be durable BEFORE the run is marked done
+    // (BL-01). The loop's `None` arm `break`s with the terminal page's
+    // `insert_pubkeys` still only enqueued — no per-iteration flush fires for
+    // it. `mark_run_done` commits `status='done'` on a separate short-lived
+    // connection synchronously, and a `done` run is never re-enumerated by
+    // `--resume` (`latest_unfinished_run` filters `status != 'done'`). Without
+    // this barrier a crash between the `done` commit and the writer actor's
+    // final batch would silently lose the terminal page. Flushing here (after
+    // the loop, before `mark_run_done`) restores flush-before-cursor for the
+    // last page regardless of how the loop exited with a pending enqueue.
+    store.flush()?;
+
     // Clean termination (INGEST-01): end drift probe + mark done (D-09). The
     // end probe is routed through `retry` (MD-02) so a transient `503`/transport
     // blip does not discard the `done` mark for a run whose entire keyspace was
@@ -411,6 +423,45 @@ mod tests {
         assert_eq!(status, "done", "clean termination marks run done");
         assert_eq!(start, Some(100));
         assert_eq!(end, Some(100));
+        drop(dir);
+    }
+
+    /// terminal_page_flushed_before_done (BL-01 regression): a `done` run must
+    /// have ALL pages' pubkeys — including the terminal page — durably committed
+    /// BEFORE the run is marked `done`. Asserted WITHOUT `close()`: the run-row
+    /// `done` mark commits on a separate connection, so if the terminal page's
+    /// pubkeys are visible to a fresh reader the instant `run()` returns (before
+    /// any join), the flush barrier provably preceded `mark_run_done`. A
+    /// regression of the missing terminal flush would leave PK3/PK4 sitting in
+    /// the writer channel — visible only after `close()` joins the writer —
+    /// while the run already reads `done`, the silent data-loss window.
+    #[test]
+    fn terminal_page_flushed_before_done() {
+        let (dir, path) = temp_store();
+        let server = StubServer::start(vec![
+            Resp::ok(stats_body(100)),                            // start drift probe
+            Resp::ok(authors_body(&[PK1, PK2], true, Some(PK2))), // page 1 (non-terminal)
+            Resp::ok(authors_body(&[PK3, PK4], false, None)),     // page 2 (terminal, endCursor=null)
+            Resp::ok(stats_body(100)),                            // end drift probe
+        ]);
+        let store = Store::open(&path).expect("open store");
+        let client = GraphQlClient::new(server.url());
+        block_on(run(&store, &client, false)).expect("walk completes");
+
+        // Read on a SEPARATE connection BEFORE close(): mark_run_done committed
+        // `done` on its own connection, so the terminal page's pubkeys must
+        // already be durable here — the flush barrier ran before the done mark.
+        let run_id = latest_run_id(&path);
+        let (status, _c, _s, _e) = read_run(&path, run_id);
+        assert_eq!(status, "done", "clean termination marks run done");
+        assert_eq!(
+            read_pubkeys(&path),
+            vec![PK1, PK2, PK3, PK4],
+            "terminal page's pubkeys are durable BEFORE the run is marked done \
+             (flush precedes mark_run_done — no reliance on close())"
+        );
+
+        store.close().expect("flush + join");
         drop(dir);
     }
 
