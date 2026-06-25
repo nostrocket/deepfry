@@ -1,0 +1,169 @@
+/*
+ * TagsPanel — hand-rolled CSS Module consuming src/styles/tokens.css only (no new
+ * tokens). Mirrors RatePanel.module.css.
+ *
+ * Color discipline (load-bearing asymmetry): the top-N lists are NEUTRAL by default. A
+ * per-event outlier is marked with the recoverable (amber) badge — always paired with a
+ * text label (high tag count / high mention fan-out / hashtag stuffing) + the dot shape,
+ * so color is never the sole signal. Only neutral + amber tokens appear here: no
+ * positive/exoneration color and no highlight accent. A benign window must never read as
+ * exonerating.
+ */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
+
+.lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.listHeading {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-top: 1px solid var(--border);
+}
+
+.rowValue {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowCount {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.refLine {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.outliers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.outlierRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.outlierId {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.outlierFlags {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+/* Amber outlier marker — paired with a dot (shape) + a text label. */
+.flagBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--recoverable);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+}
+
+/* Neutral muted fact — zero result / N=0 / malformed-rows note; NEVER amber, never exonerating. */
+.fact {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Permanent epistemic disclaimer — muted body text, never an error tone. */
+.caveat {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

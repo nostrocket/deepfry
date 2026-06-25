@@ -1,0 +1,158 @@
+/*
+ * DuplicatePanel — hand-rolled CSS Module consuming src/styles/tokens.css only (no new
+ * tokens, no chart library). Mirrors RatePanel.module.css.
+ *
+ * Color discipline (load-bearing asymmetry): the panel is NEUTRAL by default. A detected
+ * cluster is marked with the recoverable (amber) badge — always paired with the
+ * "near-duplicate"/"exact duplicate" text label + the dot shape, so color is never the
+ * sole signal. Only neutral + amber tokens appear here: no positive/exoneration color and
+ * no highlight accent (reserved for the suspect-entry submit). A zero result must never
+ * read as exonerating.
+ */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+}
+
+/* "X of N fetched" summary — mono data, framed against the denominator. */
+.summary {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.clusters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cluster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-sm);
+}
+
+.clusterHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+/* Amber cluster marker — paired with a dot (shape) + the duplicate-kind label. */
+.clusterBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--recoverable);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+}
+
+.clusterCount {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.memberList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.memberRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-top: 1px solid var(--border);
+}
+
+.memberKind {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.memberContent {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Neutral muted fact — zero result / N=0; NEVER amber, never an exoneration color. */
+.fact {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Permanent epistemic disclaimer — muted body text, never an error tone. */
+.caveat {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
