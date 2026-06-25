@@ -517,6 +517,94 @@ mod tests {
         }
     }
 
+    /// TUNE-03 / D-04 (RESEARCH §TUNE-03: "already satisfied … Phase 6 adds a
+    /// confirming test"): a RETUNED weight set propagates into the NEXT run's
+    /// `config_json` snapshot, proving every past verdict is traceable to the exact
+    /// weights that produced it. `run_batch` reads the live `weight` rows at startup
+    /// (`read_weights`) and snapshots them BEFORE scoring; `seed_weights_if_empty`
+    /// declines to overwrite stored rows, so an adopted retune survives.
+    ///
+    /// Construction: run a first `run_batch` so the six combiner rows exist, then
+    /// simulate a Plan-02 ADOPTED retune by UPDATEing L1_near_duplicate's `weight`
+    /// to a distinct sentinel (7.5) with provenance on `weight_write_conn` — exactly
+    /// the write `tune::run_tune` performs on a backtest PASS. Run a SECOND
+    /// `run_batch`, parse that run's `config_json`, and assert the snapshot's L1
+    /// weight entry now carries 7.5 (the retuned value the second run consumed).
+    /// A glue/wiring confirmation of existing behaviour — no production change.
+    #[test]
+    fn retuned_weights_appear_in_next_run_snapshot() {
+        let (_dir, path) = temp_store();
+
+        // First run: seeds the weight table (conservative config defaults) and
+        // snapshots them. A fresh stub per run (each serves a bounded conn count).
+        let run1 = {
+            let store = Arc::new(Store::open(&path).expect("open store"));
+            store.insert_pubkeys(vec![PK0.to_string()]);
+            store.flush().expect("flush pubkeys");
+            let adapter = adapter_stub("none".to_string());
+            let wl = whitelist_stub(false, 8);
+            let config = stub_config(adapter, wl);
+            block_on(run_batch(store, &config, false)).expect("run_batch 1")
+        };
+
+        // Simulate an adopted retune: UPDATE L1_near_duplicate's weight to a
+        // distinct sentinel on the weight_write_conn (the exact write run_tune
+        // performs on a PASS — params-bound, weight-table only, T-06-07).
+        const SENTINEL: f64 = 7.5;
+        {
+            let store = Store::open(&path).expect("reopen store for retune");
+            let now = 1_700_000_000_i64;
+            let conn = store.weight_write_conn().expect("weight write conn");
+            let n = conn
+                .execute(
+                    "UPDATE weight SET weight = ?2, tuned_at = ?3, tuned_from_run = ?4 \
+                     WHERE layer = ?1",
+                    rusqlite::params!["L1_near_duplicate", SENTINEL, now, run1],
+                )
+                .expect("update L1 weight");
+            assert_eq!(n, 1, "the L1 weight row was retuned");
+            store.close().expect("close after retune");
+        }
+
+        // Second run: reads the live (now-retuned) weights at startup and snapshots
+        // them. seed_weights_if_empty is a no-op (rows already exist), so the
+        // sentinel survives into this run's reproducibility snapshot.
+        let run2 = {
+            let store = Arc::new(Store::open(&path).expect("reopen store for run 2"));
+            let adapter = adapter_stub("none".to_string());
+            let wl = whitelist_stub(false, 8);
+            let config = stub_config(adapter, wl);
+            block_on(run_batch(store, &config, false)).expect("run_batch 2")
+        };
+        assert_ne!(run1, run2, "the second run is a distinct run_id");
+
+        // The second run's config_json snapshot carries the RETUNED L1 weight.
+        let conn = rusqlite::Connection::open(&path).expect("reader");
+        let config_json: String = conn
+            .query_row(
+                "SELECT config_json FROM run WHERE run_id = ?1",
+                [run2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&config_json).expect("config_json parses as JSON");
+        let weights = snapshot
+            .get("weights")
+            .and_then(|w| w.as_array())
+            .expect("weights array");
+        let l1 = weights
+            .iter()
+            .find(|w| w.get("layer").and_then(|l| l.as_str()) == Some("L1_near_duplicate"))
+            .expect("L1 weight entry in snapshot");
+        let l1_weight = l1.get("weight").and_then(|w| w.as_f64()).expect("L1 weight");
+        assert!(
+            (l1_weight - SENTINEL).abs() < 1e-12,
+            "the next run's snapshot carries the RETUNED L1 weight ({SENTINEL}), got {l1_weight} \
+             — proving run-to-weight traceability (TUNE-03/D-04)"
+        );
+    }
+
     /// OPS-01 (live, must_have) / D-07 — the live end-to-end `run` proof, SELF-
     /// SKIPPING. Builds a `Config` pointing `adapter_url` at the live LMDB2GraphQL
     /// adapter (`LMDB2GRAPHQL_URL`, default the CONTEXT host) and `whitelist_url` at
