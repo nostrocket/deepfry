@@ -72,8 +72,26 @@ fn read_tau_from_run_snapshot(conn: &Connection, run_id: i64) -> rusqlite::Resul
 ///
 /// Every value is `params![]`-bound; the SELECT predicate is the constant
 /// `suspected = 1` — nothing is `format!`-interpolated into SQL (T-05-09).
-pub fn materialize_suspected(_conn: &mut Connection, _run_id: i64) -> rusqlite::Result<usize> {
-    unimplemented!("RED: implemented in the GREEN step")
+pub fn materialize_suspected(conn: &mut Connection, run_id: i64) -> rusqlite::Result<usize> {
+    // τ snapshot for this run (the D-06 point-in-time threshold).
+    let tau: f64 = read_tau_from_run_snapshot(conn, run_id)?;
+
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM suspected_spammer WHERE run_id = ?1",
+        params![run_id],
+    )?;
+    let n = tx.execute(
+        "INSERT INTO suspected_spammer (run_id, pubkey, score, tau, rank, exported_at)
+         SELECT run_id, pubkey, score, ?2,
+                ROW_NUMBER() OVER (ORDER BY score DESC) AS rank,
+                ?3
+         FROM score
+         WHERE run_id = ?1 AND suspected = 1",
+        params![run_id, tau, now_epoch_secs()],
+    )?;
+    tx.commit()?;
+    Ok(n)
 }
 
 /// Default run selection: the latest COMPLETED run (Pitfall 4 — `max(run_id)`
@@ -81,8 +99,12 @@ pub fn materialize_suspected(_conn: &mut Connection, _run_id: i64) -> rusqlite::
 ///
 /// `max()` over an empty set is SQL NULL → `None` (no completed run yet); the CLI
 /// turns that into a clear "no completed run to export" error.
-pub fn latest_done_run(_conn: &Connection) -> rusqlite::Result<Option<i64>> {
-    unimplemented!("RED: implemented in the GREEN step")
+pub fn latest_done_run(conn: &Connection) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT max(run_id) FROM run WHERE status = 'done'",
+        [],
+        |r| r.get::<_, Option<i64>>(0),
+    )
 }
 
 #[cfg(test)]
