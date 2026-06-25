@@ -33,7 +33,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = pubkey_iterator::store::Store::open(Path::new(DB_PATH))?;
     let client = pubkey_iterator::graphql::GraphQlClient::new(endpoint);
 
-    pubkey_iterator::enumerate::run(&store, &client, resume).await?;
+    // `enumerate::run` no longer owns the run lifecycle (run-lifecycle
+    // unification, A5): it returns the run_id and leaves the `done` mark to the
+    // scoring caller. This minimal `--resume` binary has no scoring stage yet
+    // (Plan 02 replaces main.rs wholesale with the clap `run`/`export` surface
+    // and the real end value), so it marks the run done with a placeholder end
+    // (0) to preserve the Phase-2 binary's done-marking behavior until then. The
+    // config_json snapshot is the `"{}"` placeholder for the same interim reason.
+    let run_id = pubkey_iterator::enumerate::run(&store, &client, resume, "{}").await?;
+    store.mark_run_done(run_id, 0)?;
 
     // Flush the writer + final cursor/done update durably before exit.
     store.close()?;

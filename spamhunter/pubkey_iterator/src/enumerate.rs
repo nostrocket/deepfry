@@ -114,7 +114,14 @@ fn is_valid_pubkey(pk: &str) -> bool {
 /// Run the `authors` opaque-cursor walk against `client`, persisting through
 /// `store`. When `resume` is true, continue the latest unfinished run from its
 /// stored `last_cursor` (D-01); otherwise (or when none exists) start fresh
-/// (D-02).
+/// (D-02). Returns the `run_id` so the SCORING caller can score into the SAME
+/// run and own its terminal `done` mark (run-lifecycle unification, RESEARCH
+/// Open Q1 / A5).
+///
+/// `config_json` is the τ + weight reproducibility snapshot (D-04/D-06): it is
+/// passed to `begin_run` on a fresh/`None` run and refreshed via
+/// `set_run_config_json` onto a continued run, so the canonical scoring run
+/// always carries the snapshot the operator named.
 ///
 /// Loop invariants (load-bearing):
 /// - flush-before-cursor (Pitfall 2 / D-07): `insert_pubkeys` precedes
@@ -123,9 +130,12 @@ fn is_valid_pubkey(pk: &str) -> bool {
 /// - `INVALID_CURSOR` resets `after=None` and restarts page 1 — no abort, no
 ///   retry (Pitfall 4, distinct branch before the retry helper's policy).
 /// - retry exhaustion / non-retryable → `mark_run_aborted` (cursor untouched)
-///   then return the error (D-06/D-07).
-/// - clean termination on `endCursor==null` records the end drift probe and
-///   marks the run done (INGEST-01 / D-09).
+///   then return the error (D-06/D-07). An aborted enumeration is terminal — the
+///   caller does not score into it.
+/// - clean termination on `endCursor==null` records the end drift probe via
+///   `set_run_max_lev_end` and returns the `run_id` WITHOUT marking the run done.
+///   The scoring caller (Plan 02 `run_batch`) owns `mark_run_done` so one run_id
+///   spans enumerate + score (Pitfall 1/2; INGEST-01 / D-09).
 ///
 /// The store is the sync boundary (Pitfall 1): store calls are plain synchronous
 /// calls inside this async fn; never wrap the store in a `tokio::sync::Mutex`.
@@ -133,15 +143,21 @@ pub async fn run(
     store: &Store,
     client: &GraphQlClient,
     resume: bool,
-) -> Result<(), EnumerateError> {
-    // Resume selection (D-01/D-02/D-03).
+    config_json: &str,
+) -> Result<i64, EnumerateError> {
+    // Resume selection (D-01/D-02/D-03). The snapshot lands on the canonical run:
+    // fresh/`None` → `begin_run(config_json)`; continued run → refresh via
+    // `set_run_config_json` so a resume re-stamps the snapshot the operator named.
     let (run_id, mut after, existing_start) = if resume {
         match store.latest_unfinished_run()? {
-            Some(run) => (run.run_id, run.last_cursor.clone(), run.max_lev_id_start),
-            None => (store.begin_run("{}")?, None, None),
+            Some(run) => {
+                store.set_run_config_json(run.run_id, config_json)?;
+                (run.run_id, run.last_cursor.clone(), run.max_lev_id_start)
+            }
+            None => (store.begin_run(config_json)?, None, None),
         }
     } else {
-        (store.begin_run("{}")?, None, None)
+        (store.begin_run(config_json)?, None, None)
     };
 
     // Drift probe start (D-09). On resume keep the original `max_lev_id_start`
@@ -221,25 +237,30 @@ pub async fn run(
         }
     }
 
-    // Terminal page's pubkeys must be durable BEFORE the run is marked done
-    // (BL-01). The loop's `None` arm `break`s with the terminal page's
-    // `insert_pubkeys` still only enqueued — no per-iteration flush fires for
-    // it. `mark_run_done` commits `status='done'` on a separate short-lived
-    // connection synchronously, and a `done` run is never re-enumerated by
+    // Terminal page's pubkeys must be durable BEFORE the run is handed to the
+    // scoring caller (BL-01). The loop's `None` arm `break`s with the terminal
+    // page's `insert_pubkeys` still only enqueued — no per-iteration flush fires
+    // for it. The scoring caller will later `mark_run_done` (status='done') on a
+    // separate short-lived connection, and a `done` run is never re-enumerated by
     // `--resume` (`latest_unfinished_run` filters `status != 'done'`). Without
     // this barrier a crash between the `done` commit and the writer actor's
-    // final batch would silently lose the terminal page. Flushing here (after
-    // the loop, before `mark_run_done`) restores flush-before-cursor for the
-    // last page regardless of how the loop exited with a pending enqueue.
+    // final batch would silently lose the terminal page. Flushing here (after the
+    // loop) restores flush-before-cursor for the last page regardless of how the
+    // loop exited with a pending enqueue. KEEP this barrier (BL-01).
     store.flush()?;
 
-    // Clean termination (INGEST-01): end drift probe + mark done (D-09). The
-    // end probe is routed through `retry` (MD-02) so a transient `503`/transport
-    // blip does not discard the `done` mark for a run whose entire keyspace was
-    // already enumerated and cursor-advanced.
+    // Clean termination (INGEST-01): record the end drift probe (D-09) and return
+    // the run_id — but do NOT mark the run done. The scoring caller (Plan 02
+    // `run_batch`) owns `mark_run_done` so a single run_id spans enumerate +
+    // score (run-lifecycle unification, A5). The end probe is routed through
+    // `retry` (MD-02) so a transient `503`/transport blip does not discard the
+    // end-drift record for a run whose keyspace was fully enumerated. (Note:
+    // `mark_run_done` also stamps `max_lev_id_end`; recording it here close to
+    // where it is read, then the caller overwriting it with the same value, is
+    // harmless.)
     let max_end = retry(|| client.stats()).await?.max_lev_id;
-    store.mark_run_done(run_id, max_end)?;
-    Ok(())
+    store.set_run_max_lev_end(run_id, max_end)?;
+    Ok(run_id)
 }
 
 #[cfg(test)]
@@ -431,28 +452,64 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, false)).expect("walk completes");
+        // The run-lifecycle unification: `run` returns the run_id and records the
+        // end drift but no longer marks the run done — the scoring CALLER owns
+        // that. The test plays the caller's role with the returned run_id so the
+        // done-semantics assertions below still hold (no coverage weakened).
+        let run_id = block_on(run(&store, &client, false, "{}")).expect("walk completes");
+        store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
 
         let pks = read_pubkeys(&path);
         assert_eq!(pks, vec![PK1, PK2, PK3, PK4, PK5, PK6], "all pubkeys persisted once");
-        let run_id = latest_run_id(&path);
+        assert_eq!(run_id, latest_run_id(&path), "the only run");
         let (status, _cursor, start, end) = read_run(&path, run_id);
-        assert_eq!(status, "done", "clean termination marks run done");
+        assert_eq!(status, "done", "caller marks run done after a clean walk");
         assert_eq!(start, Some(100));
-        assert_eq!(end, Some(100));
+        assert_eq!(end, Some(100), "end drift recorded by set_run_max_lev_end");
         drop(dir);
     }
 
-    /// terminal_page_flushed_before_done (BL-01 regression): a `done` run must
-    /// have ALL pages' pubkeys — including the terminal page — durably committed
-    /// BEFORE the run is marked `done`. Asserted WITHOUT `close()`: the run-row
-    /// `done` mark commits on a separate connection, so if the terminal page's
+    /// fresh_run_persists_config_json_snapshot (D-04/D-06): a fresh enumeration
+    /// begun with a non-`"{}"` config_json persists that exact snapshot in
+    /// `run.config_json` (passed through to `begin_run`), proving the τ + weight
+    /// snapshot lands on the canonical run the scoring caller will reuse.
+    #[test]
+    fn fresh_run_persists_config_json_snapshot() {
+        let (dir, path) = temp_store();
+        let server = StubServer::start(vec![
+            Resp::ok(stats_body(100)),                        // start drift probe
+            Resp::ok(authors_body(&[PK1, PK2], false, None)), // terminal page
+            Resp::ok(stats_body(100)),                        // end drift probe
+        ]);
+        let store = Store::open(&path).expect("open store");
+        let client = GraphQlClient::new(server.url());
+        let snapshot = "{\"tau\":0.42,\"weights\":{\"L1\":2.0}}";
+        let run_id = block_on(run(&store, &client, false, snapshot)).expect("walk completes");
+        store.close().expect("flush + join");
+
+        let conn = rusqlite::Connection::open(&path).expect("reader");
+        let got: String = conn
+            .query_row(
+                "SELECT config_json FROM run WHERE run_id = ?1",
+                rusqlite::params![run_id],
+                |r| r.get(0),
+            )
+            .expect("read config_json");
+        assert_eq!(got, snapshot, "fresh run persists the config_json snapshot");
+        drop(dir);
+    }
+
+    /// terminal_page_flushed_before_done (BL-01 regression): all pages' pubkeys —
+    /// including the terminal page — must be durably committed BEFORE the run is
+    /// marked `done`. `run` ends with the BL-01 flush barrier and returns the
+    /// run_id WITHOUT marking done; the caller (here, the test) then marks done on
+    /// a separate connection. Asserted WITHOUT `close()`: if the terminal page's
     /// pubkeys are visible to a fresh reader the instant `run()` returns (before
-    /// any join), the flush barrier provably preceded `mark_run_done`. A
-    /// regression of the missing terminal flush would leave PK3/PK4 sitting in
-    /// the writer channel — visible only after `close()` joins the writer —
-    /// while the run already reads `done`, the silent data-loss window.
+    /// any join), the in-`run` flush barrier provably preceded the caller's
+    /// `mark_run_done`. A regression of the missing terminal flush would leave
+    /// PK3/PK4 sitting in the writer channel — visible only after `close()` joins
+    /// the writer — while the run already reads `done`, the silent data-loss window.
     #[test]
     fn terminal_page_flushed_before_done() {
         let (dir, path) = temp_store();
@@ -464,19 +521,22 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, false)).expect("walk completes");
+        let run_id = block_on(run(&store, &client, false, "{}")).expect("walk completes");
+        // Caller marks done AFTER run returns; run's BL-01 flush barrier already
+        // ran inside run() before this point.
+        store.mark_run_done(run_id, 100).expect("caller marks run done");
 
         // Read on a SEPARATE connection BEFORE close(): mark_run_done committed
         // `done` on its own connection, so the terminal page's pubkeys must
         // already be durable here — the flush barrier ran before the done mark.
-        let run_id = latest_run_id(&path);
+        assert_eq!(run_id, latest_run_id(&path));
         let (status, _c, _s, _e) = read_run(&path, run_id);
-        assert_eq!(status, "done", "clean termination marks run done");
+        assert_eq!(status, "done", "clean termination + caller done mark");
         assert_eq!(
             read_pubkeys(&path),
             vec![PK1, PK2, PK3, PK4],
             "terminal page's pubkeys are durable BEFORE the run is marked done \
-             (flush precedes mark_run_done — no reliance on close())"
+             (run's flush barrier precedes the caller's mark_run_done — no reliance on close())"
         );
 
         store.close().expect("flush + join");
@@ -496,7 +556,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let result = block_on(run(&store, &client, false));
+        let result = block_on(run(&store, &client, false, "{}"));
         assert!(result.is_err(), "INVALID_CURSOR on page 1 aborts, not spins");
         store.close().expect("flush + join");
 
@@ -535,16 +595,33 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("reopen store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, true)).expect("resume walk completes");
+        // A resume re-stamps the snapshot onto the continued run via
+        // set_run_config_json — assert it lands below.
+        let run_id = block_on(run(&store, &client, true, "{\"resumed\":true}"))
+            .expect("resume walk completes");
+        assert_eq!(run_id, seed_run, "resume returns the existing run id");
+        store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
 
         // Same run continued (no new run row), all pubkeys present, done.
         assert_eq!(latest_run_id(&path), seed_run, "resume reuses the existing run id");
         let pks = read_pubkeys(&path);
         assert_eq!(pks, vec![PK1, PK2, PK3, PK4]);
-        let (status, _c, start, _e) = read_run(&path, seed_run);
-        assert_eq!(status, "done");
-        assert_eq!(start, Some(100), "resume keeps the original max_lev_id_start (D-09 Open Q2)");
+        let run = {
+            let conn = rusqlite::Connection::open(&path).expect("reader");
+            conn.query_row(
+                "SELECT status, max_lev_id_start, config_json FROM run WHERE run_id = ?1",
+                rusqlite::params![seed_run],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?)),
+            )
+            .expect("read run")
+        };
+        assert_eq!(run.0, "done");
+        assert_eq!(run.1, Some(100), "resume keeps the original max_lev_id_start (D-09 Open Q2)");
+        assert_eq!(
+            run.2, "{\"resumed\":true}",
+            "resume refreshes config_json onto the continued run (set_run_config_json)"
+        );
         drop(dir);
     }
 
@@ -572,7 +649,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("reopen store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, true)).expect("resume walk completes");
+        block_on(run(&store, &client, true, "{}")).expect("resume walk completes");
         store.close().expect("flush + join");
 
         let _ = seed_run;
@@ -594,12 +671,14 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, false)).expect("retry then success completes");
+        let run_id = block_on(run(&store, &client, false, "{}"))
+            .expect("retry then success completes");
+        store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
 
         let pks = read_pubkeys(&path);
         assert_eq!(pks, vec![PK1, PK2], "page persisted after the retry");
-        let run_id = latest_run_id(&path);
+        assert_eq!(run_id, latest_run_id(&path));
         let (status, _c, _s, _e) = read_run(&path, run_id);
         assert_eq!(status, "done");
         drop(dir);
@@ -621,7 +700,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let result = block_on(run(&store, &client, false));
+        let result = block_on(run(&store, &client, false, "{}"));
         assert!(result.is_err(), "exhausted retries → walk returns an error");
         store.close().expect("flush + join");
 
@@ -658,11 +737,13 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, false)).expect("invalid_cursor restart completes");
+        let run_id = block_on(run(&store, &client, false, "{}"))
+            .expect("invalid_cursor restart completes");
+        store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
 
         assert_eq!(read_pubkeys(&path), vec![PK1, PK2]);
-        let run_id = latest_run_id(&path);
+        assert_eq!(run_id, latest_run_id(&path));
         let (status, _c, _s, _e) = read_run(&path, run_id);
         assert_eq!(status, "done", "INVALID_CURSOR restarts, never aborts");
         assert_eq!(
@@ -685,10 +766,13 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, false)).expect("drift run completes");
+        let run_id = block_on(run(&store, &client, false, "{}")).expect("drift run completes");
+        // run records the end drift (150) via set_run_max_lev_end; the caller
+        // marks done with the SAME end value (harmless overwrite, D-09 note).
+        store.mark_run_done(run_id, 150).expect("caller marks run done");
         store.close().expect("flush + join");
 
-        let run_id = latest_run_id(&path);
+        assert_eq!(run_id, latest_run_id(&path));
         let (status, _c, start, end) = read_run(&path, run_id);
         assert_eq!(status, "done", "drift does not abort the run (D-09)");
         assert_eq!(start, Some(100), "max_lev_id_start recorded");
@@ -744,7 +828,7 @@ mod tests {
                 let server = StubServer::start(script);
                 let store = Store::open(&path).expect("open store");
                 let client = GraphQlClient::new(server.url());
-                let _ = block_on(run(&store, &client, false)); // aborts; cursor preserved
+                let _ = block_on(run(&store, &client, false, "{}")); // aborts; cursor preserved
                 store.close().expect("flush");
             }
 
@@ -758,7 +842,7 @@ mod tests {
                 let server = StubServer::start(script);
                 let store = Store::open(&path).expect("reopen store");
                 let client = GraphQlClient::new(server.url());
-                block_on(run(&store, &client, true)).expect("resume completes");
+                block_on(run(&store, &client, true, "{}")).expect("resume completes");
                 store.close().expect("flush");
             }
 
