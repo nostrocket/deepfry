@@ -159,6 +159,36 @@ impl Store {
         Ok(())
     }
 
+    /// Overwrite a run's `config_json` with the τ + weight snapshot (D-04/D-06).
+    ///
+    /// Mirrors `set_run_cursor`: opens the short-lived `run_write_conn` and runs a
+    /// parameter-bound UPDATE touching only the `run` row, so it does not race the
+    /// writer actor (T-05-01: `params!`-bound, never `format!` into SQL). Used by
+    /// the scoring caller to land the reproducibility snapshot on the canonical run
+    /// (overwriting the `begin_run`/resume `"{}"` placeholder).
+    pub fn set_run_config_json(&self, run_id: i64, config_json: &str) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET config_json = ?2 WHERE run_id = ?1",
+            params![run_id, config_json],
+        )?;
+        Ok(())
+    }
+
+    /// Record the corpus high-water mark observed at clean run end (D-09 drift
+    /// probe). Mirrors `set_run_max_lev_start`. `mark_run_done` also stamps
+    /// `max_lev_id_end`; enumerate records it early (close to where the end probe
+    /// is read) and the caller's `mark_run_done` overwriting it with the same
+    /// value is harmless.
+    pub fn set_run_max_lev_end(&self, run_id: i64, v: i64) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET max_lev_id_end = ?2 WHERE run_id = ?1",
+            params![run_id, v],
+        )?;
+        Ok(())
+    }
+
     /// Mark a run `aborted` and stamp `finished_at` (D-07). MUST NOT touch
     /// `last_cursor` — the cursor already points at the last fully-persisted
     /// page, so a resume continues from there.
@@ -202,6 +232,20 @@ impl Store {
     /// never writes — so it does not race the single-writer invariant for the
     /// actor's `score`/`signal`/`pubkey` tables. NOT a second writer for those.
     pub fn weight_write_conn(&self) -> rusqlite::Result<Connection> {
+        let conn = Connection::open(&self.path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(conn)
+    }
+
+    /// Open a short-lived write connection for `suspected_spammer` materialization
+    /// (the Phase-5 `export` INSERT…SELECT). Follows the `weight_write_conn`
+    /// template (PRAGMA `foreign_keys=ON` + `busy_timeout(5s)`). Like the other
+    /// short-lived writers, this conn touches ONLY the `suspected_spammer` table —
+    /// which the writer actor never writes — so it does NOT violate the
+    /// single-writer invariant for the actor's `score`/`signal`/`pubkey` tables.
+    /// NOT a second writer for those (T-05-03).
+    pub fn export_write_conn(&self) -> rusqlite::Result<Connection> {
         let conn = Connection::open(&self.path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(Duration::from_secs(5))?;
@@ -917,6 +961,19 @@ mod tests {
         let run = read_run(&path, run_id);
         assert_eq!(run.max_lev_id_start, Some(42));
         assert_eq!(run.max_lev_id_end, Some(99));
+    }
+
+    /// D-09: `set_run_max_lev_end` records the end high-water mark independently
+    /// (enumerate now records the end drift here, leaving the `done` mark to the
+    /// scoring caller — the run-lifecycle unification).
+    #[test]
+    fn set_run_max_lev_end_roundtrip() {
+        let (_dir, path) = temp_db();
+        let store = Store::open(&path).expect("open store");
+        let run_id = store.begin_run("{}").expect("begin_run");
+
+        store.set_run_max_lev_end(run_id, 4242).expect("set end");
+        assert_eq!(read_run(&path, run_id).max_lev_id_end, Some(4242));
     }
 
     /// D-07: `mark_run_aborted` sets status + finished_at but MUST leave
