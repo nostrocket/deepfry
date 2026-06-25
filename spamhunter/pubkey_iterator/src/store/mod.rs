@@ -19,13 +19,22 @@ mod schema;
 pub mod queries;
 mod writer;
 
-use crate::model::{Persist, WriteMsg};
-use rusqlite::{params, Connection};
+use crate::model::{self, Persist, WriteMsg};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use schema::SCHEMA_DDL;
+
+/// Current Unix time in whole seconds (the `run` table's time unit). Saturates
+/// to 0 on a pre-epoch clock, matching `begin_run`'s original behavior.
+fn now_epoch_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 /// Apply the PRAGMAs (in load-bearing order) then create the schema. Shared by
 /// the writer connection at `open` time. PRAGMAs MUST precede any schema/DML.
@@ -88,15 +97,112 @@ impl Store {
         let conn = Connection::open(&self.path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(Duration::from_secs(5))?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
         conn.execute(
             "INSERT INTO run (started_at, config_json, status) VALUES (?1, ?2, 'running')",
-            params![now, config_json],
+            params![now_epoch_secs(), config_json],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Return the most-recent run whose status is not `done`, or `None` when
+    /// every run has finished (D-01/D-02). Used by `--resume` to pick the run
+    /// to continue; `None` → start fresh.
+    ///
+    /// Reads via `reader()` (WAL allows reads without blocking the writer) and
+    /// maps all 8 `run` columns into `model::Run`.
+    pub fn latest_unfinished_run(&self) -> rusqlite::Result<Option<model::Run>> {
+        let conn = self.reader()?;
+        conn.query_row(
+            "SELECT run_id, started_at, finished_at, max_lev_id_start, max_lev_id_end, \
+             last_cursor, config_json, status \
+             FROM run WHERE status != 'done' ORDER BY run_id DESC LIMIT 1",
+            [],
+            |r| {
+                Ok(model::Run {
+                    run_id: r.get::<_, i64>(0)?,
+                    started_at: r.get::<_, i64>(1)?,
+                    finished_at: r.get::<_, Option<i64>>(2)?,
+                    max_lev_id_start: r.get::<_, Option<i64>>(3)?,
+                    max_lev_id_end: r.get::<_, Option<i64>>(4)?,
+                    last_cursor: r.get::<_, Option<String>>(5)?,
+                    config_json: r.get::<_, String>(6)?,
+                    status: r.get::<_, String>(7)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// Persist `last_cursor` after a page's pubkeys are fully written (D-07).
+    /// Follows the `begin_run` short-lived-write template (PRAGMA + busy_timeout
+    /// + parameterized binds). The cursor is bound as an opaque string.
+    ///
+    /// Ordering caveat (RESEARCH Pitfall 2): the enumerator (plan 02) MUST flush
+    /// a page's pubkeys through the writer before calling this, so the cursor
+    /// never advances past unwritten pubkeys.
+    pub fn set_run_cursor(&self, run_id: i64, cursor: &str) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET last_cursor = ?2 WHERE run_id = ?1",
+            params![run_id, cursor],
+        )?;
+        Ok(())
+    }
+
+    /// Record the corpus high-water mark observed at run start (D-09 drift probe).
+    pub fn set_run_max_lev_start(&self, run_id: i64, v: i64) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET max_lev_id_start = ?2 WHERE run_id = ?1",
+            params![run_id, v],
+        )?;
+        Ok(())
+    }
+
+    /// Record the corpus high-water mark observed at clean termination (D-09).
+    pub fn set_run_max_lev_end(&self, run_id: i64, v: i64) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET max_lev_id_end = ?2 WHERE run_id = ?1",
+            params![run_id, v],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a run `aborted` and stamp `finished_at` (D-07). MUST NOT touch
+    /// `last_cursor` — the cursor already points at the last fully-persisted
+    /// page, so a resume continues from there.
+    pub fn mark_run_aborted(&self, run_id: i64) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET status = 'aborted', finished_at = ?2 WHERE run_id = ?1",
+            params![run_id, now_epoch_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a run `done`, stamp `finished_at`, and record the final
+    /// `max_lev_id_end` (D-09 drift end).
+    pub fn mark_run_done(&self, run_id: i64, max_lev_id_end: i64) -> rusqlite::Result<()> {
+        let conn = self.run_write_conn()?;
+        conn.execute(
+            "UPDATE run SET status = 'done', finished_at = ?2, max_lev_id_end = ?3 \
+             WHERE run_id = ?1",
+            params![run_id, now_epoch_secs(), max_lev_id_end],
+        )?;
+        Ok(())
+    }
+
+    /// Open the sanctioned short-lived write connection for `run`-row UPDATEs
+    /// (the `begin_run` template: PRAGMA `foreign_keys=ON` + `busy_timeout(5s)`).
+    /// These touch only the `run` row, never `pubkey`/`score`/`signal`, so they
+    /// do not race the writer actor on overlapping rows. NOT a second writer for
+    /// the actor's tables — the single-writer invariant for those is preserved.
+    fn run_write_conn(&self) -> rusqlite::Result<Connection> {
+        let conn = Connection::open(&self.path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(conn)
     }
 
     /// Enqueue a `Persist` payload to the writer actor.
