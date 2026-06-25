@@ -50,4 +50,9 @@ export const TRIAGE = {
   largeSetWarn: 1000, // non-blocking warning threshold above this many input authors
   enumLimit: 500, // authors() page-size ceiling (contract §12)
   maxFileBytes: 5 * 1024 * 1024, // in-browser upload bound (V12) — files are never sent anywhere
+  maxEnumPages: 10000, // WR-03 hard page ceiling — bound the enumeration loop so a stuck
+  // cursor / pathological backend cannot spin forever. At enumLimit=500 this admits up to
+  // ~5,000,000 distinct authors before bailing — far above any realistic corpus, while still
+  // guaranteeing termination. The no-progress detector (an empty page with hasMore:true, or a
+  // non-advancing cursor) bails much sooner; this ceiling is the last-resort backstop.
 } as const

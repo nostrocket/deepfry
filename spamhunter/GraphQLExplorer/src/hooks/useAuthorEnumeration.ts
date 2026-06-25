@@ -24,6 +24,21 @@ import { TRIAGE } from '../analysis/thresholds'
  *  inference from going circular inside the enumeration loop. */
 type FetchOutcome = OperationResult | 'THREW'
 
+/** Pure no-progress detector (WR-03), extracted for unit testing (shouldNudge convention).
+ *  The enumeration loop only ever advances when a page either adds NEW distinct authors or
+ *  ADVANCES the opaque cursor. A page that does neither while the backend still claims
+ *  hasMore:true is a stuck cursor / pathological keyspace — continuing would spin forever.
+ *  Returns true when the loop MUST terminate to stay bounded.
+ *
+ *  @param grewSeen    did `seen` gain at least one new author on this page?
+ *  @param cursorMoved did the opaque `after` cursor change from the value we just queried?
+ *  @param hasMore     does the backend still claim more pages?
+ */
+export function isStuckPage(grewSeen: boolean, cursorMoved: boolean, hasMore: boolean): boolean {
+  if (!hasMore) return false // a final page is allowed to add nothing — that's a clean end
+  return !grewSeen && !cursorMoved // no new authors AND the cursor did not advance → stuck
+}
+
 export interface UseAuthorEnumeration {
   /** The distinct authors discovered so far (snapshot; feeds useLatestPerAuthor). */
   authors: string[]
@@ -73,6 +88,9 @@ export function useAuthorEnumeration(): UseAuthorEnumeration {
       const seen = new Set<string>()
       // Bounded INVALID_CURSOR restart budget: exactly one cursor-drop retry.
       let cursorRetry = 0
+      // WR-03: bound the loop. A hard page ceiling is the last-resort backstop; the
+      // no-progress detector (isStuckPage) terminates a stuck cursor far sooner.
+      let pages = 0
 
       // Fetch one page; returns the typed page on success, or an ApiError sentinel the loop
       // branches on. Extracted so the awaited result has an explicit type — keeping TS
@@ -123,14 +141,36 @@ export function useAuthorEnumeration(): UseAuthorEnumeration {
           return
         }
 
+        const sizeBefore = seen.size
+        const cursorBefore = after
         for (const pk of outcome.authors) seen.add(pk)
         cursorRetry = 0 // a clean page resets the restart budget
         setAuthors([...seen])
         setRunningCount(seen.size)
         after = outcome.endCursor // opaque — stored verbatim
+        pages += 1
 
         if (!after || !outcome.hasMore) {
           setComplete(true)
+          setEnumerating(false)
+          running = false
+          continue
+        }
+
+        // WR-03: terminate on a stuck cursor (empty/repeating page with hasMore:true and a
+        // non-advancing cursor) — surface it rather than spinning forever. The partial
+        // snapshot is retained, consistent with every other early-exit in this loop.
+        if (isStuckPage(seen.size > sizeBefore, after !== cursorBefore, outcome.hasMore)) {
+          setError({ kind: 'NETWORK' })
+          setEnumerating(false)
+          running = false
+          continue
+        }
+
+        // WR-03: last-resort page ceiling — a backstop in case isStuckPage is somehow evaded
+        // (e.g. a cursor that advances every page but never reports hasMore:false).
+        if (pages >= TRIAGE.maxEnumPages) {
+          setError({ kind: 'NETWORK' })
           setEnumerating(false)
           running = false
         }
