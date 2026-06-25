@@ -26,7 +26,7 @@ Requirements for the initial release. Each maps to a roadmap phase.
 
 - [x] **SCORE-01**: A combiner fuses per-layer sub-scores into a per-pubkey spam score via weighted logistic combination (`sigmoid(Σwᵢxᵢ + b)`)
 - [x] **SCORE-02**: Per-pubkey scores, per-layer sub-scores (EAV signal table), and run metadata persist to SQLite (WAL, batched writes), idempotent on `(run_id, pubkey)`
-- [ ] **SCORE-03**: Engine produces the suspected-spammer list (pubkeys above a tunable threshold τ) with per-layer evidence, exportable from SQLite
+- [x] **SCORE-03**: Engine produces the suspected-spammer list (pubkeys above a tunable threshold τ) with per-layer evidence, exportable from SQLite
 - [x] **SCORE-04**: Output is pubkey-level only — per-event signals are inputs, never the deliverable; no live enforcement
 - [x] **SCORE-05**: Every flagged pubkey carries a per-layer explanation — which layers fired, each layer's sub-score, and the contributing evidence (e.g. matched duplicate clusters, offending URLs/domains, entropy values) — persisted and exported so reviewers understand *why* and the feedback loop can consume the reasons
 
@@ -40,7 +40,7 @@ Requirements for the initial release. Each maps to a roadmap phase.
 
 ### Operations
 
-- [ ] **OPS-01**: A CLI drives the engine — full batch `run`, `export`, `label`, and `tune` subcommands
+- [x] **OPS-01**: A CLI drives the engine — full batch `run`, `export`, `label`, and `tune` subcommands
 - [x] **OPS-02**: Scoring is deterministic — same corpus snapshot + same weights → identical verdicts
 - [x] **OPS-03**: Layer weights and thresholds are configurable without recompiling (config file)
 
