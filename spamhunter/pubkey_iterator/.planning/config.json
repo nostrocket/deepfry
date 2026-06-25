@@ -25,8 +25,8 @@
     "auto_advance": false,
     "node_repair": true,
     "node_repair_budget": 2,
-    "ui_phase": true,
-    "ui_safety_gate": true,
+    "ui_phase": false,
+    "ui_safety_gate": false,
     "ai_integration_phase": true,
     "human_verify_mode": "end-of-phase",
     "text_mode": false,
@@ -44,7 +44,8 @@
     "post_planning_gaps": true,
     "security_enforcement": true,
     "security_asvs_level": 1,
-    "security_block_on": "high"
+    "security_block_on": "high",
+    "_auto_chain_active": false
   },
   "ship": {
     "pr_body_sections": [
