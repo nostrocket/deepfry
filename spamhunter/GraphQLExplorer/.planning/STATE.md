@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4
-current_phase_name: Batch Triage
+current_phase: 04
+current_phase_name: batch-triage
 status: executing
 stopped_at: Phase 3 UI-SPEC approved
-last_updated: "2026-06-25T04:40:10.688Z"
+last_updated: "2026-06-25T04:49:29.301Z"
 last_activity: 2026-06-25
-last_activity_desc: Phase 03 complete, transitioned to Phase 4
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 10
+  completed_plans: 9
   percent: 75
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-24)
 
 **Core value:** An analyst can take a suspect pubkey and quickly judge whether the author is a spammer.
-**Current focus:** Phase 03 — remaining-spam-signals
+**Current focus:** Phase 04 — batch-triage
 
 ## Current Position
 
-Phase: 4 — Batch Triage
-Plan: Not started
+Phase: 04 (batch-triage) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-06-25 — Phase 03 complete, transitioned to Phase 4
+Last activity: 2026-06-25 — Phase 04 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -65,6 +65,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02 P03 | 7min | 3 tasks | 6 files |
 | Phase 03 P01 | 6m | 3 tasks | 8 files |
 | Phase 03 P02 | 25m | 3 tasks | 15 files |
+| Phase 04 P04-01 | 20min | 3 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,9 @@ Recent decisions affecting current work:
 - [Phase 02]: [02-03]: analyzeRate asymmetric + bounds-checked — RateResult has no clean/ok/safe field; isSaneTs filters forged 64-bit createdAt into rejectedCount; sort-ascending so tightestIntervalSec never negative
 - [Phase 02]: [02-03]: BURST defaults (windowSec 60 / minEvents 5 / binSec 3600) literature-grounded; corpus-validation deferred to Phase 3; honesty posture holds regardless of thresholds
 - [Phase 02]: [02-03]: RatePanel mounted in loaded timeline branch only; amber burst tint paired with 'burst' label + spike shape; no positive/teal color; persistent forgeable caveat + co-located WindowIndicator (DRILL-05)
+- [Phase ?]: Batch chunk size resolves to 500 (TRIAGE.chunkAuthors); the <=1000-author cap binds before the 256 KiB body budget at perAuthor=5
+- [Phase ?]: mergeByAuthor left-joins keyed strictly by author (never index-zip); zero-match authors render as explicit 0-events rows
+- [Phase ?]: TriageIndicators carry no clean/ok/safe/score field; suspicious-when-present asymmetry inherited from Phases 2-3
 
 ### Pending Todos
 
@@ -108,6 +112,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-25T03:42:36.111Z
+Last session: 2026-06-25T04:49:03.812Z
 Stopped at: Phase 3 UI-SPEC approved
 Resume file: .planning/phases/03-remaining-spam-signals/03-UI-SPEC.md

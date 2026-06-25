@@ -30,10 +30,10 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Batch triage
 
-- [ ] **BATCH-01**: User can import a batch of pubkeys (paste a list or upload a file; mixed npub/hex accepted and normalized)
-- [ ] **BATCH-02**: Batch queries are chunked to respect both the ≤1000-authors cap and the 256 KiB body limit (avoiding `TOO_MANY_AUTHORS` / `413`), using a small `perAuthor` for triage
-- [ ] **BATCH-03**: User sees a triage table of authors with at-a-glance spam indicators; results are matched by `author` (not zipped by index), and authors with zero matching events are shown as such
-- [ ] **BATCH-04**: User can discover the corpus's author set by enumerating all distinct pubkeys via the paginated `authors` query (opaque cursor, byte-ascending, `hasMore`) as an alternative batch-import source, feeding discovered pubkeys into the same chunked triage pipeline (reusing the BATCH-02 ≤1000 / 256 KiB chunking)
+- [x] **BATCH-01**: User can import a batch of pubkeys (paste a list or upload a file; mixed npub/hex accepted and normalized)
+- [x] **BATCH-02**: Batch queries are chunked to respect both the ≤1000-authors cap and the 256 KiB body limit (avoiding `TOO_MANY_AUTHORS` / `413`), using a small `perAuthor` for triage
+- [x] **BATCH-03**: User sees a triage table of authors with at-a-glance spam indicators; results are matched by `author` (not zipped by index), and authors with zero matching events are shown as such
+- [x] **BATCH-04**: User can discover the corpus's author set by enumerating all distinct pubkeys via the paginated `authors` query (opaque cursor, byte-ascending, `hasMore`) as an alternative batch-import source, feeding discovered pubkeys into the same chunked triage pipeline (reusing the BATCH-02 ≤1000 / 256 KiB chunking)
 
 ### Stats dashboard
 
@@ -92,10 +92,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DRILL-04 | Phase 3 | Complete |
 | DRILL-05 | Phase 2 | Complete |
 | DRILL-06 | Phase 2 | Complete |
-| BATCH-01 | Phase 4 | Pending |
-| BATCH-02 | Phase 4 | Pending |
-| BATCH-03 | Phase 4 | Pending |
-| BATCH-04 | Phase 4 | Pending |
+| BATCH-01 | Phase 4 | Complete |
+| BATCH-02 | Phase 4 | Complete |
+| BATCH-03 | Phase 4 | Complete |
+| BATCH-04 | Phase 4 | Complete |
 | STATS-01 | Phase 1 | Complete |
 | STATS-02 | Phase 1 | Complete |
 

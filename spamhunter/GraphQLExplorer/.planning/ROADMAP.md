@@ -137,14 +137,14 @@ overloading the backend.
   4. Clicking a triage row opens that author's full Phase 2/3 drill-down for deeper investigation
   5. As an alternative to pasting/uploading, the user can enumerate the corpus's distinct authors via the paginated `authors` query (opaque cursor, byte-ascending, loop until `hasMore` is false) and feed the discovered pubkeys into the same chunked triage pipeline — with the window-honesty posture applied (the enumerated set is a live snapshot, shown with its count)
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **UI hint**: yes
 
 Plans:
 
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Pure core + transport: `chunk.ts` (dual-axis sizing), `mergeByAuthor.ts` (left-join, never index-zip), `triage.ts` (4-analyzer adapter), `batchImport.ts` (tokenize/dedupe/count), `TRIAGE` thresholds, `latestPerAuthor`/`authors` graphql() docs + [BLOCKING] codegen, `useLatestPerAuthor` (chunk loop + 413 halve-retry) + `useAuthorEnumeration` (Stop + bounded INVALID_CURSOR restart) (BATCH-01, BATCH-02, BATCH-03, BATCH-04)
+- [x] 04-01-PLAN.md — Pure core + transport: `chunk.ts` (dual-axis sizing), `mergeByAuthor.ts` (left-join, never index-zip), `triage.ts` (4-analyzer adapter), `batchImport.ts` (tokenize/dedupe/count), `TRIAGE` thresholds, `latestPerAuthor`/`authors` graphql() docs + [BLOCKING] codegen, `useLatestPerAuthor` (chunk loop + 413 halve-retry) + `useAuthorEnumeration` (Stop + bounded INVALID_CURSOR restart) (BATCH-01, BATCH-02, BATCH-03, BATCH-04)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -160,4 +160,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation + Stats Dashboard | 3/3 | Complete    | 2026-06-24 |
 | 2. Suspect Entry + Drill-Down Core | 3/3 | Complete    | 2026-06-24 |
 | 3. Remaining Spam Signals | 2/2 | Complete    | 2026-06-25 |
-| 4. Batch Triage | 0/2 | Planned | - |
+| 4. Batch Triage | 1/2 | In Progress|  |
