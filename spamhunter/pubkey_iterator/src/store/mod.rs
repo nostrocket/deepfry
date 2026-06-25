@@ -274,6 +274,87 @@ mod tests {
         assert_eq!(sig_val, 0.9, "second signal write wins");
     }
 
+    /// Hardens SCORE-02 criterion #2: idempotency holds even when the two
+    /// writes land in SEPARATE committed transactions (a flush/close boundary
+    /// between them), not just within one batch. First write is committed by a
+    /// `close()`, the store is reopened, the second write is committed by a
+    /// second `close()`. Exactly one row survives with the second value.
+    #[test]
+    fn upsert_idempotent_across_batches() {
+        let (_dir, path) = temp_db();
+        let pk = "ad00000000000000000000000000000000000000000000000000000000000000";
+
+        // Batch 1: open → begin_run → persist 0.3 → close (commit #1).
+        let run_id = {
+            let store = Store::open(&path).expect("open store");
+            let run_id = store.begin_run("{}").expect("begin_run");
+            store.persist(Persist {
+                run_id,
+                pubkey: pk.into(),
+                score: 0.3,
+                whitelisted: false,
+                suspected: false,
+                subscores: vec![SubScore { layer: "L1_near_dup".into(), value: 0.3, evidence: None }],
+            });
+            store.close().expect("flush + join writer (batch 1)");
+            run_id
+        };
+
+        // Sanity: the first value is durably committed before the second write.
+        {
+            let conn = Connection::open(&path).expect("reader");
+            let v: f64 = conn
+                .query_row(
+                    "SELECT score FROM score WHERE run_id = ?1 AND pubkey = ?2",
+                    rusqlite::params![run_id, pk],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(v, 0.3, "first batch committed before second");
+        }
+
+        // Batch 2: reopen the SAME db → persist 0.8 for the same key → close (commit #2).
+        {
+            let store = Store::open(&path).expect("reopen store");
+            store.persist(Persist {
+                run_id,
+                pubkey: pk.into(),
+                score: 0.8,
+                whitelisted: false,
+                suspected: true,
+                subscores: vec![SubScore { layer: "L1_near_dup".into(), value: 0.8, evidence: None }],
+            });
+            store.close().expect("flush + join writer (batch 2)");
+        }
+
+        let conn = Connection::open(&path).expect("reader");
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM score WHERE run_id = ?1 AND pubkey = ?2",
+                rusqlite::params![run_id, pk],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "exactly one row across two committed batches");
+        let v: f64 = conn
+            .query_row(
+                "SELECT score FROM score WHERE run_id = ?1 AND pubkey = ?2",
+                rusqlite::params![run_id, pk],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(v, 0.8, "second batch's value wins across the flush boundary");
+
+        let nsig: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM signal WHERE run_id = ?1 AND pubkey = ?2 AND layer = ?3",
+                rusqlite::params![run_id, pk, "L1_near_dup"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(nsig, 1, "exactly one signal row across two committed batches");
+    }
+
     /// Proves SCORE-02 criterion #3: a `signal` row with a brand-new `layer`
     /// name persists and reads back with NO schema migration (EAV).
     #[test]
@@ -338,7 +419,9 @@ mod tests {
     /// yields row-set + value-equal score and signal tables.
     #[test]
     fn rerun_is_deterministic() {
-        let read_both = || -> (Vec<(String, f64)>, Vec<(String, String, f64)>) {
+        // (scores ordered by pubkey, signals ordered by (pubkey, layer)).
+        type RunTables = (Vec<(String, f64)>, Vec<(String, String, f64)>);
+        let read_both = || -> RunTables {
             let (_dir, path) = temp_db();
             let store = Store::open(&path).expect("open store");
             let run_id = store.begin_run("{}").expect("begin_run");

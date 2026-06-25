@@ -44,12 +44,10 @@ pub(crate) const UPSERT_PUBKEY: &str =
 /// before any post-close read.
 pub(crate) fn writer_loop(mut conn: Connection, rx: flume::Receiver<Persist>) -> rusqlite::Result<()> {
     let mut buf: Vec<Persist> = Vec::with_capacity(BATCH);
-    loop {
-        // Block for one, then greedily drain up to BATCH.
-        match rx.recv() {
-            Ok(p) => buf.push(p),
-            Err(_) => break, // all senders dropped → channel closed
-        }
+    // Block for one message (loop exits when all senders drop → channel closed),
+    // then greedily drain up to BATCH and commit the batch in one transaction.
+    while let Ok(first) = rx.recv() {
+        buf.push(first);
         while buf.len() < BATCH {
             match rx.try_recv() {
                 Ok(p) => buf.push(p),
