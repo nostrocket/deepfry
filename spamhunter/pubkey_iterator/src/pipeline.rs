@@ -58,9 +58,12 @@ pub fn consume_noop(input: &ScoredInput, count: &AtomicU64) {
 /// number of events the consumer observed.
 ///
 /// - `fetch`: the injected fetch source. Production passes a closure that calls
-///   `crate::fetch::fetch_batch(&client, kind, per_author, &batch)`; tests pass a
-///   cheap synthetic generator. `F: Fn(Vec<String>) -> Fut`, `Fut:
-///   Future<Output = Result<Vec<AuthorGroup>, ClientError>>`.
+///   [`production_fetch_with_whitelist`] (event fetch + L0 membership resolution
+///   in the SAME tokio stage); tests pass a cheap synthetic generator. `F:
+///   Fn(Vec<String>) -> Fut`, `Fut: Future<Output = Result<Vec<ScoredInput>,
+///   ClientError>>` — the source yields the [`ScoredInput`] carrier directly, so
+///   the fetch stage is the single place that resolves whitelist membership
+///   (Plan 03 / RESEARCH note A; Pitfall 5 — the CPU consumer never does HTTP).
 /// - `consumer`: the injected drain-side closure (the Phase-4 seam). Phase 3
 ///   passes a [`consume_noop`] wrapper; Phase 4 passes the Layer stage. Must be
 ///   `Send + Sync + 'static` because it runs on the dedicated consumer thread.
@@ -71,11 +74,14 @@ pub fn consume_noop(input: &ScoredInput, count: &AtomicU64) {
 /// - `authors_per_call`: the batch size handed to `fetch`. Pass
 ///   [`DEFAULT_AUTHORS_PER_CALL`] for the standard sizing.
 ///
-/// The `fetch` source yields `Vec<AuthorGroup>`; the producer wraps each group
-/// in a [`ScoredInput`] before it crosses the channel. In this Plan-01 slice the
-/// `whitelisted` bool is `false` (Plan 03 resolves the real L0 membership in the
-/// fetch stage and sets it — this is the ONLY plumbing change; the carrier
-/// already reaches the consumer).
+/// The `fetch` source yields the [`ScoredInput`] carrier (group + resolved
+/// whitelist bool) directly; the producer sends each across the bounded channel
+/// unchanged. Plan 03 moved whitelist resolution INTO the fetch stage (note A),
+/// so the carrier's `whitelisted` is the real L0 membership — no placeholder, no
+/// new channel/payload/consumer plumbing (the carrier, channel type, and
+/// consumer signature are unchanged from Plan 01). The per-run no-TTL whitelist
+/// cache lives in the fetch stage, NOT the consumer, preserving OPS-02
+/// determinism (no HashMap in the score path).
 ///
 /// The consumer's `recv()` runs on a `std::thread` (off the tokio runtime,
 /// Pitfall 4) joined after `drop(tx)` (Pitfall 3). The producer uses
@@ -90,7 +96,7 @@ pub async fn run_pipeline<F, Fut, C>(
 ) -> Result<u64, ClientError>
 where
     F: Fn(Vec<String>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<AuthorGroup>, ClientError>>,
+    Fut: std::future::Future<Output = Result<Vec<ScoredInput>, ClientError>>,
     C: Fn(&ScoredInput) + Send + Sync + 'static,
 {
     // BOUNDED is load-bearing: copying the store's unbounded writer channel here
@@ -114,14 +120,10 @@ where
     // below so the drain thread is never left dangling (Pitfall 3).
     let fetch_result: Result<(), ClientError> = async {
         for batch in pubkeys.chunks(authors_per_call) {
-            let groups = fetch(batch.to_vec()).await?;
-            for g in groups {
-                // Wrap the fetched group in the carrier. whitelisted=false is the
-                // Plan-01 placeholder; Plan 03 resolves it in the fetch stage.
-                let input = ScoredInput {
-                    group: g,
-                    whitelisted: false,
-                };
+            // The fetch source yields the carrier directly (group + resolved
+            // whitelist bool) — Plan 03 resolved membership in the fetch stage.
+            let inputs = fetch(batch.to_vec()).await?;
+            for input in inputs {
                 // send_async (NOT the blocking tx.send) keeps the reactor alive
                 // while awaiting channel room — this await is the back-pressure.
                 if tx.send_async(input).await.is_err() {
@@ -156,7 +158,7 @@ pub async fn run_pipeline_noop<F, Fut>(
 ) -> Result<u64, ClientError>
 where
     F: Fn(Vec<String>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<AuthorGroup>, ClientError>>,
+    Fut: std::future::Future<Output = Result<Vec<ScoredInput>, ClientError>>,
 {
     let count = Arc::new(AtomicU64::new(0));
     let c2 = Arc::clone(&count);
@@ -167,36 +169,49 @@ where
     Ok(count.load(Ordering::Relaxed))
 }
 
-/// The production fetch stage that closes the Phase-3 `match_groups` seam (D-15).
+/// The production fetch stage that closes the Phase-3 `match_groups` seam (D-15)
+/// AND resolves L0 whitelist membership (Plan 03 / RESEARCH note A).
 ///
 /// Fetches a batch via [`crate::fetch::fetch_batch`], then wires
 /// [`crate::fetch::match_groups`] so the response (which OMITS zero-event
-/// authors, contract §5) is re-expanded to ONE [`AuthorGroup`] per REQUESTED
-/// pubkey — an adapter-omitted author becomes an empty-`events` group rather
-/// than being dropped. Every enumerated pubkey therefore reaches the consumer
-/// and gets a `score` row (Pitfall 3 / D-15).
+/// authors, contract §5) is re-expanded to ONE entry per REQUESTED pubkey — an
+/// adapter-omitted author becomes an empty-`events` group rather than being
+/// dropped. Every enumerated pubkey therefore reaches the consumer and gets a
+/// `score` row (Pitfall 3 / D-15).
 ///
-/// In this Plan-01 slice the whitelist bool is set later (in [`run_pipeline`]'s
-/// producer wrap, `whitelisted=false`); Plan 03 moves the real async L0 lookup
-/// here so the resolved bool rides the carrier. This keeps the whitelist HTTP
-/// OUT of the CPU consumer (Pitfall 5).
-pub async fn production_fetch(
+/// For each REQUESTED pubkey (incl. zero-event ones — they still get an L0
+/// sub-score) it resolves whitelist membership via
+/// [`crate::detect::whitelist::WhitelistClient::is_whitelisted`] in this SAME
+/// tokio stage, attaching the resolved bool to the [`ScoredInput`] carrier
+/// BEFORE it crosses the channel. This keeps the whitelist HTTP OUT of the CPU
+/// consumer (Pitfall 5) and the per-run no-TTL cache out of the score path
+/// (OPS-02). On a whitelist outage `is_whitelisted` fails toward not-flagging
+/// (Pitfall 2), so the L0 layer clears rather than emitting a mass false-positive.
+pub async fn production_fetch_with_whitelist(
     client: &crate::graphql::GraphQlClient,
+    whitelist: &crate::detect::whitelist::WhitelistClient,
     kind: i64,
     per_author: i64,
     batch: &[String],
-) -> Result<Vec<AuthorGroup>, ClientError> {
+) -> Result<Vec<ScoredInput>, ClientError> {
     let groups = crate::fetch::fetch_batch(client, kind, per_author, batch).await?;
     // match_groups attributes by author (never index) and yields one entry per
     // REQUESTED pubkey, empty for omitted authors — D-15.
-    let rebuilt = crate::fetch::match_groups(batch, groups)
-        .into_iter()
-        .map(|(pk, events)| AuthorGroup {
-            author: pk.to_string(),
-            events,
-        })
-        .collect();
-    Ok(rebuilt)
+    let matched = crate::fetch::match_groups(batch, groups);
+    let mut out = Vec::with_capacity(matched.len());
+    for (pk, events) in matched {
+        // Resolve L0 membership in the fetch stage (note A); the cache keeps a
+        // repeated pubkey a single round-trip and a stable value (OPS-02).
+        let whitelisted = whitelist.is_whitelisted(pk).await;
+        out.push(ScoredInput {
+            group: AuthorGroup {
+                author: pk.to_string(),
+                events,
+            },
+            whitelisted,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -239,18 +254,24 @@ mod tests {
         }
     }
 
-    /// A cheap mock `fetch`: for each requested author, fabricate a group with
-    /// `events_per_author` events. No HTTP — the injection seam the watermark
-    /// proof relies on.
+    /// A cheap mock `fetch`: for each requested author, fabricate a carrier with
+    /// `events_per_author` events and `whitelisted=false` (the synthetic default;
+    /// the L0-resolution path is exercised by `production_fetch_with_whitelist`
+    /// tests, not the watermark/seam tests). No HTTP — the injection seam the
+    /// watermark proof relies on. The source yields the [`ScoredInput`] carrier
+    /// directly (matching `run_pipeline`'s `F` contract since Plan 03).
     fn mock_fetch(
         batch: Vec<String>,
         events_per_author: usize,
-    ) -> Result<Vec<AuthorGroup>, ClientError> {
+    ) -> Result<Vec<ScoredInput>, ClientError> {
         Ok(batch
             .into_iter()
             .map(|a| {
                 let events = (0..events_per_author).map(|i| ev(&a, i)).collect();
-                AuthorGroup { author: a, events }
+                ScoredInput {
+                    group: AuthorGroup { author: a, events },
+                    whitelisted: false,
+                }
             })
             .collect())
     }
@@ -324,7 +345,7 @@ mod tests {
                     if_f.store(now, Ordering::SeqCst);
                     bump(&wm_f, now);
                 }
-                Ok::<Vec<AuthorGroup>, ClientError>(groups)
+                Ok::<Vec<ScoredInput>, ClientError>(groups)
             }
         };
 
@@ -626,12 +647,47 @@ mod tests {
         );
     }
 
-    /// D-15 integration: drive `run_pipeline` via `production_fetch` over a
-    /// requested list where the mock adapter OMITS one pubkey (zero events).
-    /// After the run, the omitted pubkey HAS a `score` row — proving match_groups
-    /// wiring scores every enumerated pubkey.
+    /// A loopback whitelist stub that always replies `{"whitelisted":body}`,
+    /// serving up to `max_conns` connections (one GET per requested pubkey, minus
+    /// cache hits). Mirrors the `omitting_stub` idiom; returns the base URL.
+    fn whitelist_stub(body_whitelisted: bool, max_conns: usize) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        let url = format!("http://{addr}");
+        std::thread::spawn(move || {
+            for (i, conn) in listener.incoming().enumerate() {
+                if i >= max_conns {
+                    break;
+                }
+                use std::io::{Read, Write};
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf);
+                let resp_body = format!(r#"{{"whitelisted":{body_whitelisted}}}"#);
+                let bytes = resp_body.as_bytes();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = sock.write_all(head.as_bytes());
+                let _ = sock.write_all(bytes);
+                let _ = sock.flush();
+            }
+        });
+        url
+    }
+
+    /// D-15 integration: drive `run_pipeline` via `production_fetch_with_whitelist`
+    /// over a requested list where the mock adapter OMITS one pubkey (zero
+    /// events). After the run, the omitted pubkey HAS a `score` row — proving
+    /// match_groups wiring scores every enumerated pubkey, AND the fetch stage
+    /// resolved (a non-whitelisted) L0 membership for it.
     #[test]
     fn zero_event_pubkey_gets_score_row() {
+        use crate::detect::whitelist::WhitelistClient;
         let (_dir, path) = temp_store();
         let store = Arc::new(Store::open(&path).expect("open store"));
         let run_id = store.begin_run("{}").expect("begin_run");
@@ -649,6 +705,12 @@ mod tests {
 
         let url = omitting_stub(omitted.clone());
         let client = Arc::new(GraphQlClient::new(url));
+        // Whitelist stub: all three requested pubkeys resolve to NOT whitelisted
+        // (one GET each → 3 connections). The zero-event omitted pubkey is still
+        // resolved (it gets an L0 sub-score), proving the fetch stage resolves
+        // membership for zero-event authors too.
+        let wl_url = whitelist_stub(false, 8);
+        let whitelist = Arc::new(WhitelistClient::new(wl_url));
 
         let stage = Arc::new(trivial_stage());
         let store_c = Arc::clone(&store);
@@ -659,9 +721,13 @@ mod tests {
         };
 
         let client_f = Arc::clone(&client);
+        let wl_f = Arc::clone(&whitelist);
         let fetch = move |batch: Vec<String>| {
             let client_f = Arc::clone(&client_f);
-            async move { production_fetch(&client_f, 1, 5, &batch).await }
+            let wl_f = Arc::clone(&wl_f);
+            async move {
+                production_fetch_with_whitelist(&client_f, &wl_f, 1, 5, &batch).await
+            }
         };
 
         block_on(run_pipeline(

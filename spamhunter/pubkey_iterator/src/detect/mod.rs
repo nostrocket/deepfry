@@ -24,6 +24,7 @@ use rusqlite::{params, Connection};
 
 pub mod content_entropy;
 pub mod near_duplicate;
+pub mod whitelist;
 
 /// Sentinel `weight.layer` key holding the combiner bias `b`.
 pub const BIAS_KEY: &str = "_bias";
@@ -130,6 +131,20 @@ impl ScoringStage {
         // plan (04-02) registers the L1 and L3 content layers in the fixed slots.
         let mut layers: Vec<Box<dyn Layer>> = Vec::new();
         let mut weights: Vec<f64> = Vec::new();
+
+        // L0 — whitelist absence (DETECT-01). Membership is pre-resolved in the
+        // fetch stage and handed to `score` as the `whitelisted` bool; this layer
+        // is CPU-only (Pitfall 5). Absence emits the sub-score; presence clears
+        // ONLY this layer (D-03).
+        if config.layers.l0_whitelist_absence.enabled {
+            layers.push(Box::new(whitelist::WhitelistAbsenceLayer::new(
+                &config.layers.l0_whitelist_absence,
+            )));
+            weights.push(weight_of(
+                "L0_whitelist_absence",
+                config.layers.l0_whitelist_absence.weight,
+            ));
+        }
 
         // L1 — within-pubkey near-duplicate (DETECT-02).
         if config.layers.l1_near_duplicate.enabled {
@@ -561,26 +576,36 @@ mod tests {
         let stage = ScoringStage::from_config(&config, &weights);
         // τ comes from the _threshold sentinel row.
         assert_eq!(stage.tau(), 0.5);
-        // Plan 04-02 registers the enabled L1 + L3 content layers (the example
-        // config enables both). Scoring a ZERO-event pubkey: both emit 0.0
-        // (below min_events / no content), so the sum reduces to sigmoid(bias)
-        // and exactly two subscore rows are present, in fixed declaration order.
-        let p = stage.score(1, "pk", &[], false);
-        assert_eq!(p.subscores.len(), 2, "L1 + L3 registered (example config)");
+        // Plan 04-03 Task 1 registers the enabled L0 layer in front of the
+        // Plan-02 L1 + L3 content layers (the example config enables them all;
+        // L4 registers in Task 2). Scoring a ZERO-event WHITELISTED pubkey: L0
+        // clears (whitelisted→0.0) and the content layers emit 0.0 (no content /
+        // below min_events), so the sum reduces to sigmoid(bias) and the subscore
+        // rows are present in fixed declaration order L0, L1, L3.
+        let p = stage.score(1, "pk", &[], true);
+        assert_eq!(
+            p.subscores.len(),
+            3,
+            "L0 + L1 + L3 registered (example config; L4 lands in Task 2)"
+        );
         assert!(
             p.subscores.iter().all(|s| s.value == 0.0),
-            "both content layers emit 0.0 on a zero-event pubkey"
+            "every layer emits 0.0 on a zero-event whitelisted pubkey"
         );
         let layer_names: Vec<&str> = p.subscores.iter().map(|s| s.layer.as_str()).collect();
         assert_eq!(
             layer_names,
-            vec!["L1_near_duplicate", "L3_content_entropy"],
-            "fixed declaration order L1 then L3 (OPS-02)"
+            vec![
+                "L0_whitelist_absence",
+                "L1_near_duplicate",
+                "L3_content_entropy"
+            ],
+            "fixed declaration order L0, L1, L3 (OPS-02)"
         );
         let expected = 1.0 / (1.0 + (-(-4.0_f64)).exp());
         assert!(
             (p.score - expected).abs() < 1e-12,
-            "score = sigmoid(seeded bias) when both layers emit 0.0"
+            "score = sigmoid(seeded bias) when all layers emit 0.0"
         );
         store.close().expect("close");
     }
