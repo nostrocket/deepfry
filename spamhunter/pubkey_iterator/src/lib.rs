@@ -67,3 +67,14 @@ pub mod detect;
 /// (D-04/D-06), drives scoring in PRODUCTION (not only tests — the MD-02 fix),
 /// then marks the run `done`. The `export` module is added in Plan 03.
 pub mod run;
+
+/// The `export` materialization (SCORE-03 / D-05): `materialize_suspected` turns a
+/// completed run's `score WHERE suspected=1` rows into the reviewable
+/// `suspected_spammer` table (keyed (run_id, pubkey), τ + score-DESC rank stamped
+/// inline, idempotent DELETE-then-INSERT), and `latest_done_run` selects the
+/// default export target (the latest `status='done'` run, never a half-finished
+/// one). Per-layer evidence is NOT duplicated — it stays JOINable from `signal`
+/// USING (run_id, pubkey) (D-05). Runs on a short-lived `Store::export_write_conn`
+/// touching only `suspected_spammer`, preserving the actor's single-writer
+/// invariant. Pure SQLite (D-05: no flat-file export).
+pub mod export;
