@@ -15,8 +15,13 @@
 //   - the persistent asymmetry note is always rendered (absence ≠ exoneration).
 //
 // PERF / SELF-DoS BOUND: nearDup is O(n²) over the window. It is wrapped in useMemo keyed
-// on the `events` array identity so it only recomputes when the window actually widens
-// (Load more), not on unrelated parent re-renders.
+// on a CHEAP content signature (id + content-length per row) — NOT the `events` array
+// reference. Keying on the reference would bound the recompute only "by luck of current
+// parent behavior" (WR-02): the moment any future parent derives/filters `events` inline
+// and hands a fresh array every render, a reference key silently re-arms the O(n²) pass on
+// every render. The O(n) signature scan is cheap and recomputes the expensive pass ONLY
+// when the actual content set changes (Load more appends rows), bounding the self-DoS by
+// construction regardless of array identity.
 //
 // SECURITY: every value — counts and escaped single-line content previews — is rendered as
 // a JSX text node (React default escaping); no raw-HTML injection sink is used.
@@ -84,9 +89,19 @@ export function DuplicatePanel({
   events: WindowEvent[]
   windowMeta: WindowMeta
 }) {
-  // O(n²) — memoized on the events array identity so it only re-runs when the window
-  // widens (Load more appends a new array), not on unrelated re-renders.
-  const dup = useMemo(() => nearDup(events.map((e) => ({ id: e.id, content: e.content }))), [events])
+  // O(n²) — memoized on a cheap content signature (WR-02) so the expensive pass re-runs
+  // ONLY when the actual content set changes, never merely because the parent handed a
+  // fresh `events` array reference on an unrelated re-render. id + content length is enough
+  // to detect Load more (new rows) and any in-place content change without an O(n²) hash.
+  const sig = useMemo(() => events.map((e) => `${e.id}:${e.content?.length ?? 0}`).join('|'), [events])
+  // Keyed on `sig` (a primitive string), NOT `events`: when the parent hands a fresh array
+  // whose content is unchanged, `sig` is the same string and the O(n²) pass is skipped. The
+  // factory reads `events`, but `sig` is derived purely from `events` so it can never go
+  // stale relative to what the factory consumes — the bound holds by construction.
+  const dup = useMemo(
+    () => nearDup(events.map((e) => ({ id: e.id, content: e.content }))),
+    [sig],
+  )
   const n = windowMeta.count
 
   return (
