@@ -323,6 +323,82 @@ fn write_weights(
     Ok(())
 }
 
+/// FNV-1a 64-bit over the pubkey string — the codebase's existing deterministic,
+/// zero-dep feature hash (mirrors `detect::near_duplicate`'s `fnv1a64`; NOT a
+/// cryptographic hash, ASVS V6). Used purely as a STABLE ordering key for the
+/// negative sample so the selection is reproducible WITHOUT a `rand` dependency
+/// (D-08/OPS-02): the same run + same `review_sample_size` → identical rows.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// TUNE-04 / D-05 (RESEARCH §Pattern 3, Pitfall 2): populate `review_queue` with
+/// a DETERMINISTIC sample of UNFLAGGED (`suspected = 0`) pubkeys for `run_id`, so
+/// the next labeling round draws real negatives — not only the flagged export —
+/// and the logistic fit isn't biased toward "everything is spam".
+///
+/// Selection (no RNG, no `rand` dep): read every `suspected = 0` scored pubkey for
+/// the run, order them by a stable FNV-1a hash of the pubkey string (tie-broken by
+/// the pubkey itself for total order), and take the first `sample_size`. Re-running
+/// over the same run + same sample size yields the identical set (D-08/OPS-02).
+///
+/// Write path (T-06-06): a short-lived `review_queue_write_conn` that touches ONLY
+/// the `review_queue` table — never the writer actor's tables — so the
+/// single-writer invariant holds. Idempotent: in ONE transaction, `DELETE` the
+/// run's rows then `INSERT` the fresh sample (never duplicates). Every value is
+/// bound with `params![]`/`?N`; nothing is `format!`-interpolated into SQL (V5).
+fn populate_review_queue(
+    store: &Store,
+    reader: &rusqlite::Connection,
+    run_id: i64,
+    sample_size: usize,
+) -> rusqlite::Result<usize> {
+    // 1. Read the UNFLAGGED scored pubkeys for the run (binds only run_id — V5).
+    let mut unflagged: Vec<(String, f64)> = {
+        let mut stmt =
+            reader.prepare("SELECT pubkey, score FROM score WHERE run_id = ?1 AND suspected = 0")?;
+        let rows = stmt.query_map(rusqlite::params![run_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    // 2. Deterministic order by a stable pubkey hash (no RNG); pubkey breaks ties
+    //    so the total order is reproducible regardless of SELECT row order.
+    unflagged.sort_by(|a, b| {
+        fnv1a64(a.0.as_bytes())
+            .cmp(&fnv1a64(b.0.as_bytes()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    unflagged.truncate(sample_size);
+
+    // 3. Idempotent replace on the short-lived non-actor conn, in one transaction.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut conn = store.review_queue_write_conn()?;
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM review_queue WHERE run_id = ?1",
+        rusqlite::params![run_id],
+    )?;
+    for (pubkey, score) in &unflagged {
+        tx.execute(
+            "INSERT INTO review_queue (run_id, pubkey, score, sampled_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![run_id, pubkey, score, now],
+        )?;
+    }
+    tx.commit()?;
+    Ok(unflagged.len())
+}
+
 /// Re-fit layer weights from human labels and adopt them ONLY if the strict
 /// backtest passes. See module docs for the full contract.
 pub fn run_tune(
@@ -340,6 +416,14 @@ pub fn run_tune(
             .map_err(|e| format!("resolve latest done run: {e}"))?
             .ok_or_else(|| "no completed run to tune — run `pubkey_iterator run` first".to_string())?,
     };
+
+    // Negative sampling (TUNE-04 / D-05): surface a deterministic sample of this
+    // run's UNFLAGGED pubkeys into review_queue for the NEXT labeling round. This
+    // runs regardless of whether the backtest below adopts new weights — the queue
+    // exists to counter selection bias (Pitfall 2), not to gate adoption. Done on
+    // the short-lived review_queue_write_conn (single-writer invariant preserved).
+    populate_review_queue(store, &conn, run_id, config.tune.review_sample_size)
+        .map_err(|e| format!("populate review_queue: {e}"))?;
 
     let layers: Vec<&str> = LAYERS.to_vec();
     let labeled =
