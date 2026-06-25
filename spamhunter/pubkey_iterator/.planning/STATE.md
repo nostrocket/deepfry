@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 04
-current_phase_name: first end-to-end verdict
+current_phase_name: detection-layers-logistic-combiner
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-25T16:10:07.491Z"
+last_updated: "2026-06-25T16:10:51.522Z"
 last_activity: 2026-06-25
-last_activity_desc: Phase 03 complete, transitioned to Phase 04
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 6
+  total_plans: 9
   completed_plans: 6
   percent: 50
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Produce an accurate, low-false-positive list of suspected spammer pubkeys as fast as possible, with every layer independently tunable and the whole system correctable from human-labeled false positives.
-**Current focus:** Phase 03 — fetcher-bounded-streaming-pipeline
+**Current focus:** Phase 04 — detection-layers-logistic-combiner
 
 ## Current Position
 
-Phase: 04 — Detection Layers + Logistic Combiner (first end-to-end verdict)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-25 — Phase 03 complete, transitioned to Phase 04
+Phase: 04 (detection-layers-logistic-combiner) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 04
+Last activity: 2026-06-25 — Phase 04 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
