@@ -35,7 +35,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Writing the same `(run_id, pubkey)` (and `(run_id, pubkey, layer)`) twice leaves exactly one row — re-processing a pubkey within a run is idempotent (UPSERT), never duplicated.
   3. A new detection layer can record a sub-score by inserting a `signal` row with a new `layer` name without any schema migration.
   4. Writes go through a single writer using batched transactions; a developer can persist a batch of synthetic scores and read them back identically.
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — SQLite store: scaffold + WAL schema + single-writer idempotent UPSERT API + 5-test round-trip contract (SCORE-02)
 
 ### Phase 2: GraphQL Client + Author Enumeration
 **Goal**: The engine can enumerate every distinct pubkey in the live corpus through the LMDB2GraphQL adapter, resumably and terminating cleanly, while handling the adapter's real failure modes — proving connectivity against the actual contract before any analysis exists.
@@ -101,7 +102,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Persistence Foundation | 0/TBD | Not started | - |
+| 1. Persistence Foundation | 0/1 | Not started | - |
 | 2. GraphQL Client + Author Enumeration | 0/TBD | Not started | - |
 | 3. Fetcher + Bounded Streaming Pipeline | 0/TBD | Not started | - |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
