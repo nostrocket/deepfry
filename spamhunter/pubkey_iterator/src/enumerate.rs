@@ -197,8 +197,13 @@ pub async fn run(
         // Flush-before-cursor (Pitfall 2 / D-07): enqueue the page's pubkeys
         // through the single writer FIRST.
         store.insert_pubkeys(valid.clone());
+        // `count` is rows-seen-across-pages, NOT a distinct count (LW-02): an
+        // overlapping resume re-fetches a page and counts a pubkey twice even
+        // though `INSERT OR IGNORE` collapses it to one row. Word the log to
+        // match that — a true distinct count would need `SELECT count(*) FROM
+        // pubkey`.
         count += valid.len() as u64;
-        eprintln!("enumerate: run {run_id} enumerated {count} distinct pubkeys");
+        eprintln!("enumerate: run {run_id} fetched {count} pubkeys (pre-dedup)");
 
         // ONLY after the pubkeys are DURABLE, advance the cursor. The flush
         // barrier (D-07 / Pitfall 2) blocks until the writer has committed the
