@@ -10,8 +10,8 @@ Requirements for the initial release. Each maps to a roadmap phase.
 ### Ingestion
 
 - [x] **INGEST-01**: Engine enumerates all distinct pubkeys via the LMDB2GraphQL `authors` query with cursor pagination, resumable and terminating cleanly at the end of the keyspace
-- [ ] **INGEST-02**: Engine fetches each pubkey's most-recent ~100 events via batched `latestPerAuthor` (≤1000 authors/call), respecting the 256 KiB body limit and the ≤500 page clamp
-- [ ] **INGEST-03**: Fetch (I/O) and analysis (CPU) run as a bounded-memory streaming pipeline (tokio → bounded channel → rayon) that never buffers the full corpus
+- [x] **INGEST-02**: Engine fetches each pubkey's most-recent ~100 events via batched `latestPerAuthor` (≤1000 authors/call), respecting the 256 KiB body limit and the ≤500 page clamp
+- [x] **INGEST-03**: Fetch (I/O) and analysis (CPU) run as a bounded-memory streaming pipeline (tokio → bounded channel → rayon) that never buffers the full corpus
 - [x] **INGEST-04**: Engine handles adapter conditions gracefully — `503` (back off, do not advance cursor), `INVALID_CURSOR` (restart pagination), empty-group omission (match by author, never zip by index), and snapshot drift (record `maxLevId` start/end, do not abort)
 
 ### Detection

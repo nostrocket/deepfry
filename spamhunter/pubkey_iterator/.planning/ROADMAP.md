@@ -139,7 +139,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 |-------|----------------|--------|-----------|
 | 1. Persistence Foundation | 1/1 | Complete    | 2026-06-25 |
 | 2. GraphQL Client + Author Enumeration | 3/3 | Complete    | 2026-06-25 |
-| 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete   | 2026-06-25 |
+| 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
 | 5. CLI `run` + `export` | 0/TBD | Not started | - |
 | 6. Labeling + Logistic Tuner + Backtest Gate | 0/TBD | Not started | - |
