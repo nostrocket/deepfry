@@ -66,19 +66,26 @@ fn is_retryable(e: &ClientError) -> bool {
     }
 }
 
-/// Fetch one `authors` page with bounded exponential backoff (RESEARCH §"Bounded
-/// Retry"). Returns the first success, or the terminal error after the ceiling /
-/// on the first non-retryable error. An `INVALID_CURSOR` is non-retryable here
-/// (coded `Graphql`) and surfaces immediately so the caller's restart branch
-/// handles it — never burning a retry/sleep (Pitfall 4).
-async fn fetch_page_with_retry(
-    client: &GraphQlClient,
-    after: Option<&str>,
-) -> Result<AuthorsPage, ClientError> {
+/// Run an async client operation with bounded exponential backoff (RESEARCH
+/// §"Bounded Retry"). Returns the first success, or the terminal error after the
+/// ceiling / on the first non-retryable error. A coded `Graphql` error
+/// (`INVALID_CURSOR` etc.) is non-retryable and surfaces immediately so the
+/// caller's restart/abort branch handles it — never burning a retry/sleep
+/// (Pitfall 4).
+///
+/// Both the page fetches and the start/end `stats` drift probes route through
+/// this single helper (D-06/D-08), so a transient `503`/transport blip on a
+/// probe gets the same bounded backoff as a page fetch rather than aborting the
+/// run on the first failure (MD-02).
+async fn retry<T, F, Fut>(mut op: F) -> Result<T, ClientError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, ClientError>>,
+{
     let mut delay = BACKOFF_BASE;
     for attempt in 1..=MAX_ATTEMPTS {
-        match client.authors(after, LIMIT).await {
-            Ok(p) => return Ok(p),
+        match op().await {
+            Ok(v) => return Ok(v),
             Err(e) if is_retryable(&e) && attempt < MAX_ATTEMPTS => {
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(BACKOFF_CAP);
@@ -87,6 +94,14 @@ async fn fetch_page_with_retry(
         }
     }
     unreachable!("loop returns on the final attempt")
+}
+
+/// Fetch one `authors` page through the bounded-retry helper.
+async fn fetch_page_with_retry(
+    client: &GraphQlClient,
+    after: Option<&str>,
+) -> Result<AuthorsPage, ClientError> {
+    retry(|| client.authors(after, LIMIT)).await
 }
 
 /// `true` when `pk` is the contract-guaranteed shape: 64 lowercase-hex chars
@@ -130,8 +145,11 @@ pub async fn run(
     };
 
     // Drift probe start (D-09). On resume keep the original `max_lev_id_start`
-    // when already set (RESEARCH Open Q2); only record it when null.
-    let max_start = client.stats().await?.max_lev_id;
+    // when already set (RESEARCH Open Q2); only record it when null. Routed
+    // through `retry` (MD-02) so a transient `503` on the start probe — the
+    // "adapter still booting" condition the retry policy exists for — gets the
+    // same bounded backoff as a page fetch instead of aborting before page 1.
+    let max_start = retry(|| client.stats()).await?.max_lev_id;
     if existing_start.is_none() {
         store.set_run_max_lev_start(run_id, max_start)?;
     }
@@ -188,8 +206,11 @@ pub async fn run(
         }
     }
 
-    // Clean termination (INGEST-01): end drift probe + mark done (D-09).
-    let max_end = client.stats().await?.max_lev_id;
+    // Clean termination (INGEST-01): end drift probe + mark done (D-09). The
+    // end probe is routed through `retry` (MD-02) so a transient `503`/transport
+    // blip does not discard the `done` mark for a run whose entire keyspace was
+    // already enumerated and cursor-advanced.
+    let max_end = retry(|| client.stats()).await?.max_lev_id;
     store.mark_run_done(run_id, max_end)?;
     Ok(())
 }
