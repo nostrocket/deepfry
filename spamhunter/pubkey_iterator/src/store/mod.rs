@@ -159,16 +159,6 @@ impl Store {
         Ok(())
     }
 
-    /// Record the corpus high-water mark observed at clean termination (D-09).
-    pub fn set_run_max_lev_end(&self, run_id: i64, v: i64) -> rusqlite::Result<()> {
-        let conn = self.run_write_conn()?;
-        conn.execute(
-            "UPDATE run SET max_lev_id_end = ?2 WHERE run_id = ?1",
-            params![run_id, v],
-        )?;
-        Ok(())
-    }
-
     /// Mark a run `aborted` and stamp `finished_at` (D-07). MUST NOT touch
     /// `last_cursor` — the cursor already points at the last fully-persisted
     /// page, so a resume continues from there.
@@ -684,7 +674,9 @@ mod tests {
         assert_eq!(read_run(&path, run_id).last_cursor.as_deref(), Some("cur2"));
     }
 
-    /// D-09: `set_run_max_lev_start` / `set_run_max_lev_end` round-trip.
+    /// D-09: `set_run_max_lev_start` records the start high-water mark; the end
+    /// high-water mark is written by `mark_run_done` (the only production path —
+    /// the standalone end-mark setter was removed as dead code, LW-01).
     #[test]
     fn set_run_max_lev_roundtrip() {
         let (_dir, path) = temp_db();
@@ -692,7 +684,7 @@ mod tests {
         let run_id = store.begin_run("{}").expect("begin_run");
 
         store.set_run_max_lev_start(run_id, 42).expect("set start");
-        store.set_run_max_lev_end(run_id, 99).expect("set end");
+        store.mark_run_done(run_id, 99).expect("mark done records end");
 
         let run = read_run(&path, run_id);
         assert_eq!(run.max_lev_id_start, Some(42));
