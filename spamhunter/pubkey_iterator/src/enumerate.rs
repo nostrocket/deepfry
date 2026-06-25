@@ -270,6 +270,9 @@ mod tests {
         fn ok(body: impl Into<String>) -> Self {
             Resp { status_line: "200 OK", body: body.into() }
         }
+        // For a 503 the `body` is irrelevant: the client short-circuits on the
+        // status (client.rs) before parsing any body, so `{}` fixtures below
+        // are placeholders, not meaningful payloads (LW-03 test-fidelity note).
         fn status(status_line: &'static str, body: impl Into<String>) -> Self {
             Resp { status_line, body: body.into() }
         }
