@@ -413,7 +413,12 @@ export const RawEventDocument = graphql(`
 | A5 | The `t` (hashtag) tag is the widely-deployed convention, not strictly in NIP-01 | Pattern 2 / Code Examples | LOW — DRILL-03 success criterion explicitly names `t`; the corpus uses it. Parsing `tag[0]==='t'` is correct regardless of which NIP formalizes it. |
 | A6 | Selecting `raw` requires a NEW document (no `event(id)` query); `ids` filter + `limit:1` is the path | Pattern 4 | NONE — verified against `schema.graphql` (only `events(filter)`, no `event(id)`); EventFilterInput has `ids`. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All resolved 2026-06-25 during plan/revision; plans implement these.
+> - **Q1 (threshold numbers) → RESOLVED:** ship documented conservative defaults in `thresholds.ts` (Jaccard 0.8, shingle k=3, highTagCount/massMention/stuffing) flagged corpus-validatable; honesty framing holds regardless. The mass-mention/stuffing thresholds ARE consumed by `analyzeTags` (revision f4e3185, W1).
+> - **Q2 (raw-inspector trigger UX) → RESOLVED:** row-inline collapsible `<pre>` (escaped plaintext) — adopted in 03-02.
+> - **Q3 (memoize near-dup) → RESOLVED:** the O(n²) `nearDup` is wrapped in `useMemo` keyed on `events`; tags/kinds stay plain (revision f4e3185, W3).
 
 1. **Exact threshold numbers (Jaccard cutoff, mass-mention/stuffing/high-tag-count)**
    - What we know: defaults belong in `thresholds.ts`; honesty posture is threshold-independent (STATE/CONTEXT).
