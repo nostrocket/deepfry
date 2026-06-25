@@ -1,9 +1,10 @@
 ---
 phase: 02-suspect-entry-drill-down-core
 verified: 2026-06-24T23:10:00Z
-status: human_needed
-score: 9/9 must-have truth-clusters statically verified (0 failed); 8 behavior items deferred to live UAT
-behavior_unverified: 8
+status: passed
+score: 9/9 must-have truth-clusters statically verified (0 failed); 8 live-UAT behaviors confirmed by human walkthrough 2026-06-25 (see 02-UAT.md, all pass)
+behavior_unverified: 0
+human_verification_result: passed 2026-06-25 — all 8 items pass (live walkthrough against lens at VITE_GRAPHQL_URL)
 overrides_applied: 0
 human_verification:
   - test: "Paste a known author's npub (or 64-char hex) in the shell entry bar → click 'Inspect author' (npm run dev, against live lens at VITE_GRAPHQL_URL)"
