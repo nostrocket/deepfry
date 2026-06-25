@@ -37,3 +37,17 @@ export const TAGS = {
   massMention: 20, // p-mention (fan-out) count on one event above this = mass-mention
   stuffing: 15, // t-hashtag count on one event above this = hashtag stuffing
 } as const
+
+// Batch-triage tunables (BATCH-01..04) — same single-tunable-home + honesty posture as
+// BURST/NEAR_DUP/TAGS above. These are Claude's-discretion defaults (RESEARCH A1–A5), not
+// corpus-validated values; they govern WHERE the chunking / first-pass-screen lines sit,
+// never the epistemics. perAuthor=5 is a deliberately tiny first-pass window — a quiet or
+// zero-event author is INCONCLUSIVE, never "clean", regardless of how these numbers move.
+export const TRIAGE = {
+  kind: 1, // text notes — the spam-bearing kind screened in a batch pass (BATCH-02)
+  perAuthor: 5, // deliberately tiny per-author window — a FIRST-PASS screen, not a verdict
+  chunkAuthors: 500, // conservative static chunk; the <=1000-author cap binds before 256 KiB
+  largeSetWarn: 1000, // non-blocking warning threshold above this many input authors
+  enumLimit: 500, // authors() page-size ceiling (contract §12)
+  maxFileBytes: 5 * 1024 * 1024, // in-browser upload bound (V12) — files are never sent anywhere
+} as const
