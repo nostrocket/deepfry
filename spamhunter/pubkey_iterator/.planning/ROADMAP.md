@@ -56,7 +56,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A `503` causes a backoff-and-retry without advancing the cursor; an `INVALID_CURSOR` error restarts pagination from page 1; GraphQL `errors[]`/`extensions.code` in a `200` body are parsed rather than ignored.
   4. `maxLevId` is recorded at run start and end as a snapshot-drift probe, and a corpus change mid-pagination does not abort the run.
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+- [ ] 02-01-PLAN.md — Store run-state helpers + pubkey-only single-writer insert path (WriteMsg enum) for resume/abort/drift (INGEST-01, INGEST-04)
+- [ ] 02-02-PLAN.md — Reusable async GraphQL client: hand-written `authors`/`stats` queries + envelope with two-layer error dispatch (INGEST-01, INGEST-04)
+- [ ] 02-03-PLAN.md — `authors` opaque-cursor walk + minimal `--resume` binary; bounded 503 retry, INVALID_CURSOR restart, drift probe, abort-preserves-cursor (INGEST-01, INGEST-04)
 
 ### Phase 3: Fetcher + Bounded Streaming Pipeline
 
@@ -123,7 +127,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Persistence Foundation | 1/1 | Complete    | 2026-06-25 |
-| 2. GraphQL Client + Author Enumeration | 0/TBD | Not started | - |
+| 2. GraphQL Client + Author Enumeration | 0/3 | Not started | - |
 | 3. Fetcher + Bounded Streaming Pipeline | 0/TBD | Not started | - |
 | 4. Detection Layers + Logistic Combiner | 0/TBD | Not started | - |
 | 5. CLI `run` + `export` | 0/TBD | Not started | - |
