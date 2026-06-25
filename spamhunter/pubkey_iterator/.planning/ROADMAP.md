@@ -155,7 +155,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each run reads the latest weights at startup and snapshots them into run metadata, so any past score can be traced to the exact weights that produced it.
   4. New weights are backtested against the full human-labeled set before adoption: confirmed-spam pubkeys must remain flagged (no new false negatives) and confirmed-non-spam pubkeys must remain unflagged (no new false positives); a regression is surfaced and blocks/flags adoption of the new weights.
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — Foundation slice: rename `label`→`backpropagation` (+ 4 ref sites) + `review_queue` DDL, add linfa/linfa-logistic/ndarray=0.16 deps, extract shared `detect::combine()` from ScoringStage::score (TUNE-01)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 06-02-PLAN.md — Tune slice: `src/tune.rs` deterministic linfa-logistic fit over signal×backpropagation + STRICT backtest gate (zero new FN/FP, τ un-refit) writing weights+bias with provenance only on PASS + sync `tune` clap arm (TUNE-02, TUNE-05)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 06-03-PLAN.md — Negative-sampling + traceability: deterministic `review_queue` sample of unflagged pubkeys (no RNG) + confirming test that a retuned weight set appears in the next run's `config_json` snapshot (TUNE-04, TUNE-03)
 
 ## Progress
 
@@ -166,7 +178,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 3/3 | Complete    | 2026-06-25 |
 | 5. CLI `run` + `export` | 3/3 | Complete    | 2026-06-25 |
-| 6. Labeling + Logistic Tuner + Backtest Gate | 0/TBD | Not started | - |
+| 6. Labeling + Logistic Tuner + Backtest Gate | 0/3 | Not started | - |
 
 ## Coverage
 
