@@ -57,6 +57,24 @@ pub trait Layer: Send + Sync {
     fn score(&self, events: &[Event], whitelisted: bool) -> LayerOutput;
 }
 
+/// The single shared logistic combiner `sigmoid(bias + Σ weightsᵢ·xsᵢ)`
+/// (SCORE-01 / OPS-02). Extracted so BOTH live scoring ([`ScoringStage::score`])
+/// and the Phase-6 tuner backtest (Plan 02) re-score with byte-identical math —
+/// the backtest gate must compare apples to apples.
+///
+/// Determinism: the sum walks two positionally-paired slices in index order
+/// (never a HashMap), so the floating-point accumulation is reproducible. The
+/// caller is responsible for passing `weights` and `xs` in the same fixed order.
+pub fn combine(weights: &[f64], bias: f64, xs: &[f64]) -> f64 {
+    debug_assert_eq!(
+        weights.len(),
+        xs.len(),
+        "combine: weights and xs must be positionally paired (OPS-02 fixed-order sum)"
+    );
+    let z = bias + weights.iter().zip(xs).map(|(w, x)| w * x).sum::<f64>();
+    1.0 / (1.0 + (-z).exp()) // sigmoid
+}
+
 /// The fixed-order layer registry + logistic combiner (SCORE-01 / OPS-02).
 ///
 /// `weights[i]` pairs positionally with `layers[i]` (built by name lookup from
@@ -197,9 +215,9 @@ impl ScoringStage {
     /// `layers` is iterated in index order (the OPS-02 fixed-sum-order guarantee,
     /// mirroring `writer.rs`'s fixed-order subscore iteration).
     pub fn score(&self, run_id: i64, pubkey: &str, events: &[Event], whitelisted: bool) -> Persist {
-        let mut z = self.bias;
+        let mut xs = Vec::with_capacity(self.layers.len());
         let mut subscores = Vec::with_capacity(self.layers.len());
-        for (i, layer) in self.layers.iter().enumerate() {
+        for layer in self.layers.iter() {
             let out = layer.score(events, whitelisted);
             debug_assert!(
                 (0.0..=1.0).contains(&out.value),
@@ -207,14 +225,16 @@ impl ScoringStage {
                 layer.name(),
                 out.value
             );
-            z += self.weights[i] * out.value;
+            xs.push(out.value);
             subscores.push(SubScore {
                 layer: layer.name().to_string(),
                 value: out.value,
                 evidence: Some(out.evidence.to_string()),
             });
         }
-        let score = 1.0 / (1.0 + (-z).exp()); // sigmoid
+        // Single shared combiner — identical math to the Plan-02 tuner backtest.
+        // `xs` is built in the same fixed index order `weights` was (OPS-02).
+        let score = combine(&self.weights, self.bias, &xs);
         let suspected = score > self.tau;
         Persist {
             run_id,

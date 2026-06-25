@@ -50,6 +50,16 @@ toml = "1.1"
 # API). The ONLY Phase-5 dep — do NOT add gaoya/linfa (Phase 6). MSRV 1.85 ≤ the
 # 1.96 toolchain.
 clap = { version = "4", features = ["derive"] }
+# linfa + linfa-logistic + ndarray (Phase-6-owned, D-03): the offline logistic
+# tuner used ONLY by the `tune` subcommand. Default features = pure Rust (no
+# BLAS — reproducible across hosts, matching rusqlite `bundled`). ndarray is
+# pinned to 0.16 (NOT 0.17): linfa 0.8 pins `^0.16`, so a 0.17 ndarray would
+# resolve a SECOND ndarray and the Array2/Dataset types would not match linfa's
+# (cryptic trait-bound error — RESEARCH Pitfall 1). argmin (L-BFGS) comes in
+# transitively via linfa-logistic; do NOT add it directly.
+linfa = "0.8"
+linfa-logistic = "0.8"
+ndarray = "0.16"
 
 [dev-dependencies]
 # tempfile: temp-FILE-backed DB so tests exercise real WAL on-disk behavior
