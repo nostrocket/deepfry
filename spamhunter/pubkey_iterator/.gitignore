@@ -1,1 +1,9 @@
 /target
+
+# Runtime SQLite database (regenerated on each run)
+spamhunter.sqlite
+spamhunter.sqlite-shm
+spamhunter.sqlite-wal
+
+# GSD research cache (ephemeral)
+.planning/research/.cache/
