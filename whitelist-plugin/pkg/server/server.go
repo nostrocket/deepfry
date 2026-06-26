@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 	"whitelist-plugin/pkg/version"
@@ -43,6 +44,7 @@ func (s *WhitelistServer) SetReady(entries int) {
 func (s *WhitelistServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /check/{pubkey}", s.handleCheck)
+	mux.HandleFunc("POST /check", s.handleBulkCheck)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /version", s.handleVersion)
@@ -78,6 +80,21 @@ type checkResponse struct {
 	Whitelisted bool `json:"whitelisted"`
 }
 
+// maxBulkPubkeys caps a single bulk request to bound memory and work.
+const maxBulkPubkeys = 100000
+
+// maxBulkBodyBytes caps the request body size. A 64-char hex pubkey plus JSON
+// quoting/comma is ~67 bytes; 100k of them plus envelope fits comfortably in 8 MiB.
+const maxBulkBodyBytes = 8 << 20
+
+type bulkCheckRequest struct {
+	Pubkeys []string `json:"pubkeys"`
+}
+
+type bulkCheckResponse struct {
+	Results map[string]bool `json:"results"`
+}
+
 type statsResponse struct {
 	Entries     int64  `json:"entries"`
 	LastRefresh string `json:"last_refresh"`
@@ -100,6 +117,50 @@ func (s *WhitelistServer) handleCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(checkResponse{Whitelisted: result})
+}
+
+// handleBulkCheck checks many pubkeys in one request. Body:
+//
+//	{"pubkeys": ["<hex>", ...]}
+//
+// Response:
+//
+//	{"results": {"<hex>": true|false, ...}}
+//
+// Each pubkey maps to its own boolean, so duplicates collapse and the caller
+// can look up any pubkey it sent. Unknown/invalid pubkeys simply map to false.
+func (s *WhitelistServer) handleBulkCheck(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBulkBodyBytes)
+
+	var req bulkCheckRequest
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Pubkeys) > maxBulkPubkeys {
+		http.Error(w, "too many pubkeys (max "+strconv.Itoa(maxBulkPubkeys)+")", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	results := make(map[string]bool, len(req.Pubkeys))
+	for _, pubkey := range req.Pubkeys {
+		if pubkey == "" {
+			continue
+		}
+		// In-memory whitelist never returns a non-nil error; ignored for parity
+		// with the single-key handler.
+		whitelisted, _ := s.whitelist.IsWhitelisted(pubkey)
+		results[pubkey] = whitelisted
+	}
+
+	if s.debug {
+		s.logger.Printf("BULK CHECK %d pubkeys", len(req.Pubkeys))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bulkCheckResponse{Results: results})
 }
 
 func (s *WhitelistServer) handleHealth(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -93,6 +94,66 @@ func TestHandleCheck_InvalidPubkey(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&body)
 	if body.Whitelisted {
 		t.Fatal("expected whitelisted=false for invalid key")
+	}
+}
+
+func TestHandleBulkCheck(t *testing.T) {
+	known := makeKey(0x01)
+	knownHex := hex.EncodeToString(known[:])
+	unknown := makeKey(0x99)
+	unknownHex := hex.EncodeToString(unknown[:])
+
+	_, ts := setupServer([][32]byte{known}, true)
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(bulkCheckRequest{
+		Pubkeys: []string{knownHex, unknownHex, "not-a-valid-hex-key", ""},
+	})
+	resp, err := http.Post(ts.URL+"/check", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var body bulkCheckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if !body.Results[knownHex] {
+		t.Errorf("expected %s whitelisted=true", knownHex)
+	}
+	if body.Results[unknownHex] {
+		t.Errorf("expected %s whitelisted=false", unknownHex)
+	}
+	if body.Results["not-a-valid-hex-key"] {
+		t.Error("expected invalid key whitelisted=false")
+	}
+	// Empty pubkey is skipped, not included in results.
+	if _, ok := body.Results[""]; ok {
+		t.Error("expected empty pubkey to be skipped")
+	}
+	if len(body.Results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(body.Results))
+	}
+}
+
+func TestHandleBulkCheck_InvalidJSON(t *testing.T) {
+	_, ts := setupServer(nil, true)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/check", "application/json", bytes.NewReader([]byte("not json")))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 }
 
