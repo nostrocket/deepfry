@@ -198,11 +198,18 @@ pub async fn production_fetch_with_whitelist(
     // match_groups attributes by author (never index) and yields one entry per
     // REQUESTED pubkey, empty for omitted authors — D-15.
     let matched = crate::fetch::match_groups(batch, groups);
+    // Resolve L0 membership for the WHOLE batch in ONE round-trip via the bulk
+    // endpoint (note A), instead of one serial GET per pubkey — this was the
+    // dominant fetch-stage cost and a serial unbounded-hang point. The cache
+    // still keeps a repeated pubkey a single round-trip and a stable value
+    // (OPS-02); the bulk map always has an entry per requested pubkey.
+    let pubkeys: Vec<String> = matched.iter().map(|(pk, _)| pk.to_string()).collect();
+    let wl = whitelist.is_whitelisted_bulk(&pubkeys).await;
     let mut out = Vec::with_capacity(matched.len());
     for (pk, events) in matched {
-        // Resolve L0 membership in the fetch stage (note A); the cache keeps a
-        // repeated pubkey a single round-trip and a stable value (OPS-02).
-        let whitelisted = whitelist.is_whitelisted(pk).await;
+        // Missing key shouldn't happen (bulk fills every requested pubkey), but
+        // default to the fail-safe true (clears L0) if it ever does (Pitfall 2).
+        let whitelisted = wl.get(pk).copied().unwrap_or(true);
         out.push(ScoredInput {
             group: AuthorGroup {
                 author: pk.to_string(),

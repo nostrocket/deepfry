@@ -40,6 +40,14 @@ struct CheckResponse {
     whitelisted: bool,
 }
 
+/// The whitelist `POST /check` bulk 200 body: a `pubkey → bool` map
+/// (`{"results":{"<pubkey>":true,...}}`, server.go bulk handler). A pubkey the
+/// server considers empty is OMITTED from the map (README §"Bulk check").
+#[derive(Deserialize)]
+struct BulkCheckResponse {
+    results: HashMap<String, bool>,
+}
+
 /// The async whitelist membership resolver (L0). Reuses one pooled
 /// [`reqwest::Client`]; caches every resolved `(pubkey → bool)` for the run with
 /// NO TTL (determinism, OPS-02). Lives in the tokio fetch stage so the CPU
@@ -62,7 +70,15 @@ impl WhitelistClient {
         let base = base.into();
         let base = base.trim_end_matches('/').to_string();
         WhitelistClient {
-            http: reqwest::Client::new(),
+            // Bounded timeouts: a slow or black-holed whitelist response must NOT
+            // hang the (serial) fetch stage indefinitely. reqwest's default has no
+            // request timeout, so without this one stalled connection freezes the
+            // whole pipeline. On timeout the call fails toward not-flagging (true).
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("build whitelist reqwest client"),
             base,
             cache: Mutex::new(HashMap::new()),
         }
@@ -114,6 +130,88 @@ impl WhitelistClient {
             // later retry can still resolve the real value (Pitfall 2 / D-14).
             None => true,
         }
+    }
+
+    /// Resolve whitelist membership for a whole batch in ONE round-trip via the
+    /// whitelist-plugin `POST {base}/check` bulk endpoint
+    /// (`{"pubkeys":[...]}` → `{"results":{"<pubkey>":bool}}`). This replaces up
+    /// to `batch.len()` serial `GET /check/{pubkey}` round-trips with a single
+    /// request — the dominant cost (and a serial unbounded-hang point) in the
+    /// fetch stage before the bulk endpoint existed.
+    ///
+    /// Cache-first per pubkey (no TTL, OPS-02): already-resolved keys are served
+    /// without a network hit and only the misses are POSTed. Newly resolved
+    /// values are cached.
+    ///
+    /// Fail-toward-not-flagging (Pitfall 2): on ANY transport/non-200/decode
+    /// error EVERY requested-but-unresolved pubkey resolves to `true` (→ L0
+    /// sub-score 0.0) and nothing is cached, so a transient outage neither flags
+    /// everyone nor poisons the run. A pubkey the server OMITS from `results`
+    /// (e.g. an empty string) also fails safe to `true`. The returned map always
+    /// contains an entry for every pubkey in `pubkeys`.
+    pub async fn is_whitelisted_bulk(&self, pubkeys: &[String]) -> HashMap<String, bool> {
+        let mut out: HashMap<String, bool> = HashMap::with_capacity(pubkeys.len());
+        let mut misses: Vec<String> = Vec::new();
+        {
+            let cache = self.cache.lock().expect("whitelist cache mutex");
+            for pk in pubkeys {
+                match cache.get(pk) {
+                    Some(&hit) => {
+                        out.insert(pk.clone(), hit);
+                    }
+                    None => misses.push(pk.clone()),
+                }
+            }
+        }
+        if misses.is_empty() {
+            return out;
+        }
+
+        let url = format!("{}/check", self.base);
+        let resolved: Option<HashMap<String, bool>> = match self
+            .http
+            .post(&url)
+            .json(&json!({ "pubkeys": misses }))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<BulkCheckResponse>().await {
+                    Ok(body) => Some(body.results),
+                    Err(_) => None, // decode error → fail-safe, do not cache
+                }
+            }
+            // Non-success status or transport error → fail toward not-flagging.
+            Ok(_) => None,
+            Err(_) => None,
+        };
+
+        match resolved {
+            Some(results) => {
+                let mut cache = self.cache.lock().expect("whitelist cache mutex");
+                for pk in misses {
+                    match results.get(&pk) {
+                        Some(&value) => {
+                            cache.insert(pk.clone(), value);
+                            out.insert(pk, value);
+                        }
+                        // Server omitted this pubkey (e.g. empty string) → fail
+                        // safe to true, NOT cached.
+                        None => {
+                            out.insert(pk, true);
+                        }
+                    }
+                }
+            }
+            // Whole-request failure → every miss fails safe to true, uncached, so
+            // a later retry can still resolve the real value (Pitfall 2).
+            None => {
+                for pk in misses {
+                    out.insert(pk, true);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -270,6 +368,92 @@ mod tests {
             hits.load(Ordering::SeqCst),
             1,
             "second lookup hit the cache, not the network (OPS-02 no-TTL cache)"
+        );
+    }
+
+    /// A loopback stub for the bulk `POST /check` endpoint: replies once with a
+    /// fixed `{"results":{...}}` body built from `(pubkey, bool)` pairs, counting
+    /// connections so a test can prove the cache suppresses a second POST.
+    fn bulk_stub(entries: &[(&str, bool)], max_conns: usize) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        let url = format!("http://{addr}");
+        let pairs: Vec<(String, bool)> =
+            entries.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_c = Arc::clone(&hits);
+        thread::spawn(move || {
+            let results: Vec<String> = pairs
+                .iter()
+                .map(|(k, v)| format!(r#""{k}":{v}"#))
+                .collect();
+            let resp_body = format!(r#"{{"results":{{{}}}}}"#, results.join(","));
+            for (i, conn) in listener.incoming().enumerate() {
+                if i >= max_conns {
+                    break;
+                }
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                hits_c.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 8192];
+                let _ = sock.read(&mut buf);
+                let bytes = resp_body.as_bytes();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = sock.write_all(head.as_bytes());
+                let _ = sock.write_all(bytes);
+                let _ = sock.flush();
+            }
+        });
+        (url, hits)
+    }
+
+    const PK2: &str = "bb00000000000000000000000000000000000000000000000000000000000002";
+
+    /// Bulk resolve parses the `{"results":{...}}` map, caches each value, and a
+    /// second call for the SAME keys hits the cache (stub accepts ONE connection).
+    #[test]
+    fn bulk_parses_caches_and_reuses() {
+        let (url, hits) = bulk_stub(&[(PK, true), (PK2, false)], 1);
+        let client = WhitelistClient::new(url);
+        let keys = vec![PK.to_string(), PK2.to_string()];
+
+        let first = block_on(client.is_whitelisted_bulk(&keys));
+        assert_eq!(first.get(PK), Some(&true), "PK parsed true");
+        assert_eq!(first.get(PK2), Some(&false), "PK2 parsed false");
+
+        // Second call: every key is cached → no second POST (stub serves only 1).
+        let second = block_on(client.is_whitelisted_bulk(&keys));
+        assert_eq!(second.get(PK), Some(&true));
+        assert_eq!(second.get(PK2), Some(&false));
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "second bulk lookup hit the cache, not the network (OPS-02)"
+        );
+    }
+
+    /// Bulk fail-toward-not-flagging: a transport error resolves EVERY requested
+    /// pubkey to `true` and caches nothing.
+    #[test]
+    fn bulk_transport_error_fails_toward_not_flagging() {
+        let dead_url = {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            format!("http://{addr}")
+        };
+        let client = WhitelistClient::new(dead_url);
+        let keys = vec![PK.to_string(), PK2.to_string()];
+        let out = block_on(client.is_whitelisted_bulk(&keys));
+        assert_eq!(out.get(PK), Some(&true), "transport error → fail-safe true");
+        assert_eq!(out.get(PK2), Some(&true), "transport error → fail-safe true");
+        assert!(
+            client.cache.lock().unwrap().is_empty(),
+            "fail-safe values must not be cached (Pitfall 2)"
         );
     }
 

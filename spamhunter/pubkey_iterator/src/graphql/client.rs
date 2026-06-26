@@ -68,7 +68,16 @@ impl GraphQlClient {
     /// (connection pooling, keep-alive). No TLS — loopback HTTP (contract §10).
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // Bounded timeouts so a stalled adapter response can never hang the
+            // (serial) fetch stage indefinitely — reqwest's default has none. A
+            // timeout maps to a retryable Transport error (enumerate::retry), not
+            // an unbounded freeze. 30s request budget allows the multi-MB
+            // latestPerAuthor payloads; 3s to establish the connection.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("build graphql reqwest client"),
             endpoint: endpoint.into(),
         }
     }
