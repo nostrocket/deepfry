@@ -32,11 +32,11 @@ Requirements for the initial release. Each maps to a roadmap phase.
 
 ### Tuning & Feedback
 
-- [ ] **TUNE-01**: Humans can record confirmed false positives (and true positives) as run-independent labels in SQLite
-- [ ] **TUNE-02**: An offline `tune` step fits a logistic model (`linfa-logistic`) over stored signals × labels and writes new layer weights to a weights table
-- [ ] **TUNE-03**: Each run reads the latest weights at startup and snapshots them into run metadata for reproducibility
-- [ ] **TUNE-04**: The review/labeling queue includes randomly-sampled unflagged pubkeys to counter selection bias (negative sampling)
-- [ ] **TUNE-05**: Any weight or algorithm change is backtested against the full human-labeled set before adoption — confirmed-spam pubkeys must remain flagged (guard against new false negatives) and confirmed-non-spam pubkeys must remain unflagged (guard against new false positives); regressions are surfaced and block/flag adoption of the new weights
+- [x] **TUNE-01**: Humans can record confirmed false positives (and true positives) as run-independent labels in SQLite
+- [x] **TUNE-02**: An offline `tune` step fits a logistic model (`linfa-logistic`) over stored signals × labels and writes new layer weights to a weights table
+- [x] **TUNE-03**: Each run reads the latest weights at startup and snapshots them into run metadata for reproducibility
+- [x] **TUNE-04**: The review/labeling queue includes randomly-sampled unflagged pubkeys to counter selection bias (negative sampling)
+- [x] **TUNE-05**: Any weight or algorithm change is backtested against the full human-labeled set before adoption — confirmed-spam pubkeys must remain flagged (guard against new false negatives) and confirmed-non-spam pubkeys must remain unflagged (guard against new false positives); regressions are surfaced and block/flag adoption of the new weights
 
 ### Operations
 

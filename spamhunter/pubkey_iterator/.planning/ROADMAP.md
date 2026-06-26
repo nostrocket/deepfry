@@ -178,7 +178,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 3. Fetcher + Bounded Streaming Pipeline | 2/2 | Complete    | 2026-06-25 |
 | 4. Detection Layers + Logistic Combiner | 3/3 | Complete    | 2026-06-25 |
 | 5. CLI `run` + `export` | 3/3 | Complete    | 2026-06-25 |
-| 6. Labeling + Logistic Tuner + Backtest Gate | 3/3 | Complete   | 2026-06-25 |
+| 6. Labeling + Logistic Tuner + Backtest Gate | 3/3 | Complete    | 2026-06-25 |
 
 ## Coverage
 
