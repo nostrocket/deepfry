@@ -2,12 +2,12 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,9 +24,9 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 			name: "successful fetch with profiles",
 			mockResponse: `{
 				"data": {
-					"queryProfile": [
-						{"pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-						{"pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+					"q": [
+						{"uid": "0x2", "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+						{"uid": "0x3", "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 					]
 				}
 			}`,
@@ -38,7 +38,7 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 			name: "empty profile list",
 			mockResponse: `{
 				"data": {
-					"queryProfile": []
+					"q": []
 				}
 			}`,
 			mockStatusCode: http.StatusOK,
@@ -46,7 +46,7 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 			expectedCount:  5, // 0 from Dgraph + 5 hardcoded
 		},
 		{
-			name: "GraphQL error response",
+			name: "DQL error response",
 			mockResponse: `{
 				"errors": [
 					{"message": "Internal server error"}
@@ -71,18 +71,14 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 				if r.Method != "POST" {
 					t.Errorf("Expected POST request, got %s", r.Method)
 				}
-				if r.Header.Get("Content-Type") != "application/json" {
-					t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+				if r.Header.Get("Content-Type") != "application/dql" {
+					t.Errorf("Expected Content-Type application/dql, got %s", r.Header.Get("Content-Type"))
 				}
 
-				// Verify request body contains GraphQL query
-				var reqBody map[string]interface{}
-				if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-					t.Errorf("Failed to decode request body: %v", err)
-				}
-
-				if _, ok := reqBody["query"]; !ok {
-					t.Error("Request body missing 'query' field")
+				// Verify request body contains a DQL query for Profile pubkeys
+				body, _ := io.ReadAll(r.Body)
+				if !strings.Contains(string(body), "type(Profile)") {
+					t.Errorf("Request body missing DQL Profile query: %s", string(body))
 				}
 
 				// Send mock response
@@ -93,7 +89,7 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 
 			// Create repository with mock server
 			repo := &GraphQLRepository{
-				endpoint: server.URL,
+				dqlEndpoint: server.URL,
 				httpClient: &http.Client{
 					Timeout: 5 * time.Second,
 				},
@@ -131,42 +127,37 @@ func TestGraphQLRepository_GetAll(t *testing.T) {
 func TestGraphQLRepository_Pagination(t *testing.T) {
 	callCount := 0
 
-	// Create mock server that returns different data per page
+	// Create mock server that returns different data per page based on the
+	// uid cursor (the DQL "after:" clause).
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
-		var reqBody struct {
-			Query     string                 `json:"query"`
-			Variables map[string]interface{} `json:"variables"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-			t.Errorf("Failed to decode request: %v", err)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("Failed to read request: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		offset := int(reqBody.Variables["offset"].(float64))
+		// First page has no "after:" cursor; subsequent pages do.
+		hasCursor := strings.Contains(string(body), "after:")
 
-		// Return different responses based on offset
 		var response string
-		if offset == 0 {
-			// First page: return full page with unique profiles
+		if !hasCursor {
+			// First page: return a full page (1000 rows) with unique pubkeys.
+			// The last uid becomes the cursor for the next page.
 			profiles := "["
 			for i := 0; i < 1000; i++ {
 				if i > 0 {
 					profiles += ","
 				}
-				// Generate unique pubkeys using hex index
-				profiles += fmt.Sprintf(`{"pubkey": "%064x"}`, i)
+				profiles += fmt.Sprintf(`{"uid": "0x%x", "pubkey": "%064x"}`, i+1, i)
 			}
 			profiles += "]"
-			response = `{"data": {"queryProfile": ` + profiles + `}}`
-		} else if offset == 1000 {
-			// Second page: return partial page to trigger end of pagination
-			response = `{"data": {"queryProfile": [{"pubkey": "1111111111111111111111111111111111111111111111111111111111111111"}]}}`
+			response = `{"data": {"q": ` + profiles + `}}`
 		} else {
-			// Any other page: return empty (shouldn't be called if pagination works correctly)
-			response = `{"data": {"queryProfile": []}}`
+			// Second page: return a partial page (< pageSize) to end pagination.
+			response = `{"data": {"q": [{"uid": "0x3e9", "pubkey": "1111111111111111111111111111111111111111111111111111111111111111"}]}}`
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -175,7 +166,7 @@ func TestGraphQLRepository_Pagination(t *testing.T) {
 	defer server.Close()
 
 	repo := &GraphQLRepository{
-		endpoint: server.URL,
+		dqlEndpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -208,9 +199,9 @@ func TestGraphQLRepository_Deduplication(t *testing.T) {
 		// Return one of the hardcoded pubkeys
 		response := `{
 			"data": {
-				"queryProfile": [
-					{"pubkey": "f6b07746e51d757fce1a030ef6fbe5dae6805df857f26ddce4e414bc3f983c4d"},
-					{"pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+				"q": [
+					{"uid": "0x2", "pubkey": "f6b07746e51d757fce1a030ef6fbe5dae6805df857f26ddce4e414bc3f983c4d"},
+					{"uid": "0x3", "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 				]
 			}
 		}`
@@ -220,7 +211,7 @@ func TestGraphQLRepository_Deduplication(t *testing.T) {
 	defer server.Close()
 
 	repo := &GraphQLRepository{
-		endpoint: server.URL,
+		dqlEndpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -249,7 +240,7 @@ func TestGraphQLRepository_Timeout(t *testing.T) {
 	defer server.Close()
 
 	repo := &GraphQLRepository{
-		endpoint: server.URL,
+		dqlEndpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 100 * time.Millisecond, // Short timeout
 		},
@@ -272,7 +263,7 @@ func TestGraphQLRepository_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	repo := &GraphQLRepository{
-		endpoint: server.URL,
+		dqlEndpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -379,6 +370,24 @@ func TestGetHardcodedPubkeys(t *testing.T) {
 
 	if len(expectedKeys) > 0 {
 		t.Errorf("Missing expected keys: %v", expectedKeys)
+	}
+}
+
+func TestDeriveDQLEndpoint(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"http://localhost:8080/graphql", "http://localhost:8080/query"},
+		{"http://dgraph:8080/graphql", "http://dgraph:8080/query"},
+		{"http://localhost:8080/query", "http://localhost:8080/query"},
+		{"http://localhost:8080", "http://localhost:8080/query"},
+		{"http://localhost:8080/", "http://localhost:8080/query"},
+	}
+	for _, tt := range tests {
+		if got := deriveDQLEndpoint(tt.in); got != tt.want {
+			t.Errorf("deriveDQLEndpoint(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

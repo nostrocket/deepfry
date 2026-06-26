@@ -8,21 +8,31 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// GraphQLRepository queries Dgraph's GraphQL endpoint to retrieve whitelisted pubkeys.
-// It fetches all Profile pubkeys from Dgraph, merges them with hardcoded keys,
-// deduplicates, and returns the combined list.
+// GraphQLRepository retrieves whitelisted pubkeys from Dgraph. It fetches all
+// Profile pubkeys, merges them with hardcoded keys, deduplicates, and returns
+// the combined list.
+//
+// Pagination uses Dgraph's DQL endpoint (/query) with uid-cursor pagination
+// (func: type(Profile), after: <lastUID>) rather than GraphQL offset pagination.
+// Offset pagination is O(n^2) over a large, ordered result set — at ~1.5M
+// profiles deep pages take minutes and the full load never completes within
+// queryTimeout. The uid cursor seeks directly, so every page is ~constant time.
 type GraphQLRepository struct {
-	endpoint     string
+	endpoint     string // GraphQL endpoint (kept for reference/config parity)
+	dqlEndpoint  string // DQL /query endpoint, derived from endpoint
 	httpClient   *http.Client
 	pageSize     int
 	queryTimeout time.Duration
 	logger       *log.Logger
 }
 
-// NewGraphQLRepository creates a new GraphQLRepository.
+// NewGraphQLRepository creates a new GraphQLRepository. The endpoint is the
+// Dgraph GraphQL URL (e.g. http://host:8080/graphql); the DQL /query URL used
+// for pagination is derived from it.
 func NewGraphQLRepository(endpoint string, pageSize int, logger *log.Logger, httpTimeout, idleConnTimeout, queryTimeout time.Duration) *GraphQLRepository {
 	transport := &http.Transport{
 		MaxIdleConns:        10,
@@ -32,7 +42,8 @@ func NewGraphQLRepository(endpoint string, pageSize int, logger *log.Logger, htt
 	}
 
 	return &GraphQLRepository{
-		endpoint: endpoint,
+		endpoint:    endpoint,
+		dqlEndpoint: deriveDQLEndpoint(endpoint),
 		httpClient: &http.Client{
 			Timeout:   httpTimeout,
 			Transport: transport,
@@ -41,6 +52,18 @@ func NewGraphQLRepository(endpoint string, pageSize int, logger *log.Logger, htt
 		queryTimeout: queryTimeout,
 		logger:       logger,
 	}
+}
+
+// deriveDQLEndpoint maps a Dgraph GraphQL URL to its DQL /query URL.
+// http://host:8080/graphql -> http://host:8080/query
+func deriveDQLEndpoint(graphqlURL string) string {
+	if strings.HasSuffix(graphqlURL, "/query") {
+		return graphqlURL
+	}
+	if strings.HasSuffix(graphqlURL, "/graphql") {
+		return strings.TrimSuffix(graphqlURL, "/graphql") + "/query"
+	}
+	return strings.TrimRight(graphqlURL, "/") + "/query"
 }
 
 // GetAll retrieves all whitelisted pubkeys from Dgraph and merges with hardcoded keys.
@@ -76,103 +99,86 @@ func (r *GraphQLRepository) GetAll(ctx context.Context) ([][32]byte, error) {
 }
 
 // fetchAllPubkeysFromDgraph paginates through all Profile records in Dgraph
-// and returns their pubkeys as hex strings.
+// using a uid cursor and returns their pubkeys as hex strings.
 func (r *GraphQLRepository) fetchAllPubkeysFromDgraph(ctx context.Context) ([]string, error) {
 	// Pre-allocate with estimated capacity to reduce reallocations
 	// Start with 2x pageSize as a reasonable minimum
 	allPubkeys := make([]string, 0, r.pageSize*2)
-	offset := 0
+	after := "" // empty cursor => start from the beginning
 
 	for {
 		// Context cancellation is checked automatically by http.Request
-		// No need for explicit select statement here
-
-		// Fetch page
-		pubkeys, err := r.fetchPubkeysPage(ctx, offset, r.pageSize)
+		pubkeys, lastUID, rowCount, err := r.fetchPubkeysPage(ctx, after, r.pageSize)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch page at offset %d: %w", offset, err)
+			return nil, fmt.Errorf("failed to fetch page after uid %q: %w", after, err)
 		}
 
 		// No more results
-		if len(pubkeys) == 0 {
+		if rowCount == 0 {
 			break
 		}
 
-		// log a message to say how many pubkeys were fetched in this page
-		r.logger.Printf("Fetched %d pubkeys from Dgraph at offset %d\n", len(pubkeys), offset)
+		r.logger.Printf("Fetched %d pubkeys from Dgraph after uid %q\n", len(pubkeys), after)
 
 		allPubkeys = append(allPubkeys, pubkeys...)
 
-		// If we got fewer results than page size, we're done
-		if len(pubkeys) < r.pageSize {
+		// A short page (fewer rows than requested) means we've reached the end.
+		// Use the page's row count, not len(pubkeys), since rows without a
+		// pubkey value are skipped from the result but still fill the page.
+		if rowCount < r.pageSize {
 			break
 		}
 
-		offset += r.pageSize
+		// Defensive guard against an infinite loop if the cursor fails to advance.
+		if lastUID == "" || lastUID == after {
+			break
+		}
+		after = lastUID
 	}
 
 	return allPubkeys, nil
 }
 
-// fetchPubkeysPage fetches a single page of pubkeys from Dgraph GraphQL endpoint.
-func (r *GraphQLRepository) fetchPubkeysPage(ctx context.Context, offset, limit int) ([]string, error) {
-	// GraphQL query (constant, could be moved to package level for micro-optimization)
-	query := `
-		query QueryProfiles($offset: Int!, $first: Int!) {
-			queryProfile(offset: $offset, first: $first, order: { asc: pubkey }) {
-				pubkey
-			}
-		}
-	`
-
-	// Build request body using structs to avoid map allocations
-	reqBody := struct {
-		Query     string                 `json:"query"`
-		Variables map[string]interface{} `json:"variables"`
-	}{
-		Query: query,
-		Variables: map[string]interface{}{
-			"offset": offset,
-			"first":  limit,
-		},
+// fetchPubkeysPage fetches a single page of pubkeys from Dgraph's DQL /query
+// endpoint, seeking past the given uid cursor. It returns the pubkeys found on
+// the page and the uid of the last row (the cursor for the next page); an empty
+// lastUID signals the end of pagination.
+func (r *GraphQLRepository) fetchPubkeysPage(ctx context.Context, after string, limit int) ([]string, string, int, error) {
+	// DQL query with uid-cursor pagination. The cursor (after) is a Dgraph-issued
+	// uid (e.g. "0x140000"), so it is trusted and safe to inline.
+	cursor := ""
+	if after != "" {
+		cursor = fmt.Sprintf(", after: %s", after)
 	}
+	query := fmt.Sprintf(`{ q(func: type(Profile), first: %d%s) { uid pubkey } }`, limit, cursor)
 
-	jsonData, err := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", r.dqlEndpoint, bytes.NewBufferString(query))
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/dql")
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", r.endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Execute request
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Read response body once
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// Check status code after reading (better error messages)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+		return nil, "", 0, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response struct {
 		Data struct {
-			QueryProfile []struct {
+			Q []struct {
+				UID    string `json:"uid"`
 				Pubkey string `json:"pubkey"`
-			} `json:"queryProfile"`
+			} `json:"q"`
 		} `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
@@ -180,23 +186,26 @@ func (r *GraphQLRepository) fetchPubkeysPage(ctx context.Context, offset, limit 
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, "", 0, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Check for GraphQL errors
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL error: %s", response.Errors[0].Message)
+		return nil, "", 0, fmt.Errorf("DQL error: %s", response.Errors[0].Message)
 	}
 
-	// Extract pubkeys
-	pubkeys := make([]string, 0, len(response.Data.QueryProfile))
-	for _, profile := range response.Data.QueryProfile {
-		if profile.Pubkey != "" {
-			pubkeys = append(pubkeys, profile.Pubkey)
+	rows := response.Data.Q
+	if len(rows) == 0 {
+		return nil, "", 0, nil
+	}
+
+	pubkeys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.Pubkey != "" {
+			pubkeys = append(pubkeys, row.Pubkey)
 		}
 	}
 
-	return pubkeys, nil
+	return pubkeys, rows[len(rows)-1].UID, len(rows), nil
 }
 
 // getHardcodedPubkeys returns a list of hardcoded pubkeys for known forwarders and admins.

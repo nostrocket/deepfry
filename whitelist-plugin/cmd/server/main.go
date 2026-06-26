@@ -23,8 +23,12 @@ func main() {
 		logger.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Page size for DQL uid-cursor pagination. Larger pages mean far fewer
+	// round-trips over the ~1.5M Profile set; 10k/page loads in well under a
+	// minute against a local Dgraph.
+	const dgraphPageSize = 10000
 	keyRepo := repository.NewGraphQLRepository(
-		cfg.DgraphGraphQLURL, 1000, logger,
+		cfg.DgraphGraphQLURL, dgraphPageSize, logger,
 		cfg.HTTPTimeout, cfg.IdleConnTimeout, cfg.QueryTimeout,
 	)
 	refresher := whitelist.NewWhitelistRefresher(ctx, keyRepo, cfg.RefreshInterval, cfg.RefreshRetryCount, logger)
