@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Load the operator config (τ/bias/layers + adapter/whitelist URLs) and
             // open the store. The CLI reads config.adapter_url now — no env override
             // in the binary path (env overrides survive only in the live tests, A4).
-            let config = pubkey_iterator::config::load(&config_path)?;
+            let config = pubkey_iterator::config::load_or_generate(&config_path)?;
             let store = Arc::new(pubkey_iterator::store::Store::open(&cli.db)?);
 
             // Build the tokio runtime only here (export stays sync). run_batch takes
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // adopts them into the `weight` table with provenance ONLY on a strict
             // PASS (zero new FN, zero new FP). A regression — or a single-class
             // precondition — BLOCKS adoption and is a no-op on the live weights.
-            let config = pubkey_iterator::config::load(&config_path)?;
+            let config = pubkey_iterator::config::load_or_generate(&config_path)?;
             let store = pubkey_iterator::store::Store::open(&cli.db)?;
             let report = pubkey_iterator::tune::run_tune(&store, &config, run_id)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;

@@ -173,6 +173,38 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
+/// The committed example config body, embedded at compile time. Its
+/// adapter/whitelist URLs are the operator-specified endpoints (adapter
+/// `192.168.149.21:8080/graphql`, whitelist `127.0.0.1:8081`) and every
+/// magnitude is the conservative D-08 default. Written verbatim when no config
+/// file exists yet (see [`load_or_generate`]).
+pub const DEFAULT_CONFIG: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/pubkey_iterator_config.example.toml"
+));
+
+/// Load the config at `path`, first generating it from [`DEFAULT_CONFIG`] when
+/// no file exists there. In the binary path a missing config is NOT a fatal
+/// error (OPS-03): the conservative example — carrying the operator's
+/// adapter/whitelist endpoints — is written to `path` (creating parent dirs as
+/// needed), a note is printed to stderr, and the freshly-written file is loaded.
+/// Any OTHER read error, or a parse failure on an existing file, still surfaces
+/// as a typed [`ConfigError`]. An existing config is never overwritten. D-09:
+/// tests inject a temp path, never the real `~/deepfry` file.
+pub fn load_or_generate(path: &Path) -> Result<Config, ConfigError> {
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, DEFAULT_CONFIG)?;
+        eprintln!(
+            "no config at {} — wrote default (edit adapter_url/whitelist_url as needed)",
+            path.display()
+        );
+    }
+    load(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +326,35 @@ min_events                = 5
         assert!(cfg.layers.l0_whitelist_absence.enabled);
         assert!(cfg.layers.l3_content_entropy.enabled);
         assert!(cfg.layers.l4_link_mention.enabled);
+    }
+
+    /// `load_or_generate` writes the embedded default when the file is absent,
+    /// then loads it — a missing config is auto-provisioned, not an error
+    /// (OPS-03). The nested path proves parent dirs are created (mirrors
+    /// `~/deepfry/...`), and the generated config carries the operator endpoints.
+    #[test]
+    fn load_or_generate_writes_default_when_absent() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir
+            .path()
+            .join("deepfry")
+            .join("pubkey_iterator_config.toml");
+        assert!(!path.exists(), "precondition: no config yet");
+
+        let cfg = load_or_generate(&path).expect("generate + load default");
+        assert!(path.exists(), "default config must be written to disk");
+        assert_eq!(cfg.adapter_url, "http://192.168.149.21:8080/graphql");
+        assert_eq!(cfg.whitelist_url, "http://127.0.0.1:8081");
+    }
+
+    /// When a config already exists, `load_or_generate` loads it unchanged and
+    /// never clobbers the operator's file.
+    #[test]
+    fn load_or_generate_preserves_existing() {
+        let body = SAMPLE.replace("tau           = 0.5", "tau           = 0.9");
+        let (_dir, path) = temp_config(&body);
+        let cfg = load_or_generate(&path).expect("load existing config");
+        assert_eq!(cfg.tau, 0.9, "existing config must not be overwritten");
     }
 
     /// D-09 repo rule: the loader is path-argument-based and the test writes
