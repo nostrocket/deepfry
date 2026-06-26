@@ -5,7 +5,11 @@ SESSION="strfry-streams"
 CONTAINER="strfry"
 STRFRY="/app/strfry"
 
-RELAYS=(
+WOT_CONFIG="${WOT_CONFIG:-${HOME}/deepfry/web-of-trust.yaml}"
+
+# Relays the web-of-trust discovery tool has populated take priority. Only fall
+# back to these hardcoded defaults when no config is found.
+FALLBACK_RELAYS=(
   wss://relay.damus.io
   wss://relay.nostr.band
   wss://nos.lol
@@ -28,6 +32,45 @@ RELAYS=(
   wss://atlas.nostr.land
 )
 
+RELAYS=()
+
+# Extract the `relay_urls:` YAML list from the web-of-trust config. Reads list
+# items (indented `- value` lines) until the next top-level key. Strips inline
+# quotes/comments. No external YAML dependency required.
+load_relays_from_config() {
+  [[ -f "$WOT_CONFIG" ]] || return 1
+  local line in_list=0 relay
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^relay_urls: ]]; then
+      in_list=1
+      continue
+    fi
+    if (( in_list )); then
+      if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+(.+)$ ]]; then
+        relay="${BASH_REMATCH[1]}"
+        relay="${relay%%#*}"                       # strip inline comment
+        relay="${relay#[\"\']}"; relay="${relay%[\"\']}"  # strip quotes
+        relay="${relay%"${relay##*[![:space:]]}"}" # rtrim
+        [[ -n "$relay" ]] && RELAYS+=("$relay")
+      elif [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        continue                                   # blank line within list
+      else
+        break                                      # next top-level key
+      fi
+    fi
+  done < "$WOT_CONFIG"
+  (( ${#RELAYS[@]} > 0 ))
+}
+
+resolve_relays() {
+  if load_relays_from_config; then
+    echo "Loaded ${#RELAYS[@]} relays from ${WOT_CONFIG}."
+  else
+    RELAYS=("${FALLBACK_RELAYS[@]}")
+    echo "No relays in ${WOT_CONFIG}; using ${#RELAYS[@]} hardcoded fallback relays."
+  fi
+}
+
 ensure_tmux() {
   if ! command -v tmux &>/dev/null; then
     echo "tmux not found, installing via brew..."
@@ -46,6 +89,7 @@ check_container() {
 cmd_start() {
   ensure_tmux
   check_container
+  resolve_relays
 
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session '$SESSION' already exists. Use '$0 stop' first or '$0 attach' to monitor."
