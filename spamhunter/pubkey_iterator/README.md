@@ -23,7 +23,8 @@ All layer weights and thresholds are tunable without recompiling.
 
 ```bash
 # Score a full batch: enumerate → fetch → score → persist
-pubkey_iterator run
+pubkey_iterator                       # `run` is the default — bare invocation runs a batch
+pubkey_iterator run                   # explicit form, identical to the above
 pubkey_iterator run --resume          # continue the latest unfinished run
 pubkey_iterator run --limit 1000      # stop after ~1000 pubkeys (bounded test run)
 

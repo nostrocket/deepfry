@@ -1,5 +1,6 @@
 //! The Phase-5 `clap` CLI surface (D-01/D-02): `run` and `export` subcommands
-//! plus global `--config`/`--db` options.
+//! plus global `--config`/`--db` options. `run` is the default subcommand, so a
+//! bare `pubkey_iterator` invocation drives a full batch.
 //!
 //! `run` drives a full end-to-end batch (enumerate → fetch → score → persist) on
 //! one canonical run_id via [`pubkey_iterator::run::run_batch`], building a tokio
@@ -26,8 +27,10 @@ struct Cli {
     #[arg(long, global = true, default_value = "spamhunter.sqlite")]
     db: PathBuf,
 
+    /// Subcommand; defaults to `run` (a full batch) when omitted, so bare
+    /// `pubkey_iterator` runs end-to-end. Use `run --resume`/`--limit` for the flags.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -73,7 +76,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let config_path = cli.config.clone().unwrap_or_else(default_config_path);
 
-    match cli.command {
+    // No subcommand → default to a full `run` batch (resume off, no limit).
+    let command = cli.command.unwrap_or(Commands::Run {
+        resume: false,
+        limit: None,
+    });
+
+    match command {
         Commands::Run { resume, limit } => {
             // Load the operator config (τ/bias/layers + adapter/whitelist URLs) and
             // open the store. The CLI reads config.adapter_url now — no env override
@@ -150,25 +159,32 @@ mod tests {
         let cli = Cli::try_parse_from(["pubkey_iterator", "run", "--resume"])
             .expect("parse run --resume");
         match cli.command {
-            Commands::Run { resume, .. } => assert!(resume, "--resume → resume=true"),
+            Some(Commands::Run { resume, .. }) => assert!(resume, "--resume → resume=true"),
             other => panic!("expected Run, got {other:?}"),
         }
 
         // `run` without --resume → resume=false, and --limit defaults to None.
         let cli = Cli::try_parse_from(["pubkey_iterator", "run"]).expect("parse run");
         match cli.command {
-            Commands::Run { resume, limit } => {
+            Some(Commands::Run { resume, limit }) => {
                 assert!(!resume, "no --resume → resume=false");
                 assert_eq!(limit, None, "no --limit → None (walk full keyspace)");
             }
             other => panic!("expected Run, got {other:?}"),
         }
 
+        // Bare `pubkey_iterator` (no subcommand) → command is None, dispatched as a
+        // default `run` batch in main().
+        let cli = Cli::try_parse_from(["pubkey_iterator"]).expect("parse bare invocation");
+        assert!(cli.command.is_none(), "no subcommand → None (defaults to run)");
+
         // `run --limit 1000` → Run { limit: Some(1000) } (bounded end-to-end test).
         let cli = Cli::try_parse_from(["pubkey_iterator", "run", "--limit", "1000"])
             .expect("parse run --limit 1000");
         match cli.command {
-            Commands::Run { limit, .. } => assert_eq!(limit, Some(1000), "--limit 1000 → Some(1000)"),
+            Some(Commands::Run { limit, .. }) => {
+                assert_eq!(limit, Some(1000), "--limit 1000 → Some(1000)")
+            }
             other => panic!("expected Run, got {other:?}"),
         }
 
@@ -176,14 +192,14 @@ mod tests {
         let cli = Cli::try_parse_from(["pubkey_iterator", "export", "--run-id", "7"])
             .expect("parse export --run-id 7");
         match cli.command {
-            Commands::Export { run_id } => assert_eq!(run_id, Some(7), "--run-id 7 → Some(7)"),
+            Some(Commands::Export { run_id }) => assert_eq!(run_id, Some(7), "--run-id 7 → Some(7)"),
             other => panic!("expected Export, got {other:?}"),
         }
 
         // `export` without --run-id → None (defaults to latest done run at dispatch).
         let cli = Cli::try_parse_from(["pubkey_iterator", "export"]).expect("parse export");
         match cli.command {
-            Commands::Export { run_id } => assert_eq!(run_id, None, "no --run-id → None"),
+            Some(Commands::Export { run_id }) => assert_eq!(run_id, None, "no --run-id → None"),
             other => panic!("expected Export, got {other:?}"),
         }
 
@@ -191,14 +207,14 @@ mod tests {
         let cli = Cli::try_parse_from(["pubkey_iterator", "tune", "--run-id", "5"])
             .expect("parse tune --run-id 5");
         match cli.command {
-            Commands::Tune { run_id } => assert_eq!(run_id, Some(5), "--run-id 5 → Some(5)"),
+            Some(Commands::Tune { run_id }) => assert_eq!(run_id, Some(5), "--run-id 5 → Some(5)"),
             other => panic!("expected Tune, got {other:?}"),
         }
 
         // `tune` without --run-id → None (defaults to latest done run at dispatch).
         let cli = Cli::try_parse_from(["pubkey_iterator", "tune"]).expect("parse tune");
         match cli.command {
-            Commands::Tune { run_id } => assert_eq!(run_id, None, "no --run-id → None"),
+            Some(Commands::Tune { run_id }) => assert_eq!(run_id, None, "no --run-id → None"),
             other => panic!("expected Tune, got {other:?}"),
         }
 
@@ -214,7 +230,7 @@ mod tests {
         .expect("globals before subcommand");
         assert_eq!(cli.config.as_deref(), Some(std::path::Path::new("/tmp/cfg.toml")));
         assert_eq!(cli.db, std::path::PathBuf::from("/tmp/x.sqlite"));
-        assert!(matches!(cli.command, Commands::Run { .. }));
+        assert!(matches!(cli.command, Some(Commands::Run { .. })));
 
         // Global args AFTER the subcommand (global = true).
         let cli = Cli::try_parse_from([
@@ -230,7 +246,9 @@ mod tests {
         assert_eq!(cli.config.as_deref(), Some(std::path::Path::new("/tmp/cfg2.toml")));
         assert_eq!(cli.db, std::path::PathBuf::from("/tmp/y.sqlite"));
         match cli.command {
-            Commands::Run { resume, .. } => assert!(resume, "--resume still parsed alongside globals"),
+            Some(Commands::Run { resume, .. }) => {
+                assert!(resume, "--resume still parsed alongside globals")
+            }
             other => panic!("expected Run, got {other:?}"),
         }
     }
