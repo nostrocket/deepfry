@@ -25,6 +25,7 @@ All layer weights and thresholds are tunable without recompiling.
 # Score a full batch: enumerate → fetch → score → persist
 pubkey_iterator run
 pubkey_iterator run --resume          # continue the latest unfinished run
+pubkey_iterator run --limit 1000      # stop after ~1000 pubkeys (bounded test run)
 
 # Materialize the suspected-spammer snapshot (prints pubkey + reasons)
 pubkey_iterator export                # latest completed run
@@ -33,6 +34,12 @@ pubkey_iterator export --run-id 42
 # Re-fit weights from human labels; adopt ONLY if the backtest passes
 pubkey_iterator tune
 ```
+
+`--limit` caps the enumeration walk so you can drive the full
+enumerate→fetch→score→persist flow over a bounded subset instead of the entire
+(millions-of-pubkeys) keyspace — useful for end-to-end testing. The count is
+across pages pre-dedup (page size 500), so the walk stops at the first page
+boundary ≥ the limit; the cursor is preserved, so `--resume` continues from there.
 
 `export` prints each suspected pubkey joined to its per-layer `signal` rows so a
 reviewer can see *why* it fired.
