@@ -37,6 +37,11 @@ enum Commands {
         /// Resume the latest unfinished run from its stored cursor.
         #[arg(long)]
         resume: bool,
+        /// Stop enumeration after roughly this many pubkeys (test-mode cap, so a
+        /// full end-to-end run can be driven over a bounded subset instead of the
+        /// entire keyspace). Counted across pages pre-dedup; omit to walk all.
+        #[arg(long)]
+        limit: Option<u64>,
     },
     /// Materialize the suspected-spammer snapshot for a run into SQLite.
     Export {
@@ -69,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = cli.config.clone().unwrap_or_else(default_config_path);
 
     match cli.command {
-        Commands::Run { resume } => {
+        Commands::Run { resume, limit } => {
             // Load the operator config (τ/bias/layers + adapter/whitelist URLs) and
             // open the store. The CLI reads config.adapter_url now — no env override
             // in the binary path (env overrides survive only in the live tests, A4).
@@ -79,7 +84,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Build the tokio runtime only here (export stays sync). run_batch takes
             // the sole Arc<Store> and owns the close()/mark_run_done lifecycle.
             let rt = tokio::runtime::Runtime::new()?;
-            let run_id = rt.block_on(pubkey_iterator::run::run_batch(store, &config, resume))?;
+            let run_id =
+                rt.block_on(pubkey_iterator::run::run_batch(store, &config, resume, limit))?;
             eprintln!("run complete: run_id={run_id}");
         }
         Commands::Export { run_id } => {
@@ -144,14 +150,25 @@ mod tests {
         let cli = Cli::try_parse_from(["pubkey_iterator", "run", "--resume"])
             .expect("parse run --resume");
         match cli.command {
-            Commands::Run { resume } => assert!(resume, "--resume → resume=true"),
+            Commands::Run { resume, .. } => assert!(resume, "--resume → resume=true"),
             other => panic!("expected Run, got {other:?}"),
         }
 
-        // `run` without --resume → resume=false.
+        // `run` without --resume → resume=false, and --limit defaults to None.
         let cli = Cli::try_parse_from(["pubkey_iterator", "run"]).expect("parse run");
         match cli.command {
-            Commands::Run { resume } => assert!(!resume, "no --resume → resume=false"),
+            Commands::Run { resume, limit } => {
+                assert!(!resume, "no --resume → resume=false");
+                assert_eq!(limit, None, "no --limit → None (walk full keyspace)");
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+
+        // `run --limit 1000` → Run { limit: Some(1000) } (bounded end-to-end test).
+        let cli = Cli::try_parse_from(["pubkey_iterator", "run", "--limit", "1000"])
+            .expect("parse run --limit 1000");
+        match cli.command {
+            Commands::Run { limit, .. } => assert_eq!(limit, Some(1000), "--limit 1000 → Some(1000)"),
             other => panic!("expected Run, got {other:?}"),
         }
 
@@ -213,7 +230,7 @@ mod tests {
         assert_eq!(cli.config.as_deref(), Some(std::path::Path::new("/tmp/cfg2.toml")));
         assert_eq!(cli.db, std::path::PathBuf::from("/tmp/y.sqlite"));
         match cli.command {
-            Commands::Run { resume } => assert!(resume, "--resume still parsed alongside globals"),
+            Commands::Run { resume, .. } => assert!(resume, "--resume still parsed alongside globals"),
             other => panic!("expected Run, got {other:?}"),
         }
     }

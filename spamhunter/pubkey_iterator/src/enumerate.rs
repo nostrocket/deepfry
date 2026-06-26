@@ -137,6 +137,11 @@ fn is_valid_pubkey(pk: &str) -> bool {
 ///   The scoring caller (Plan 02 `run_batch`) owns `mark_run_done` so one run_id
 ///   spans enumerate + score (Pitfall 1/2; INGEST-01 / D-09).
 ///
+/// `limit` (operator `--limit`): when `Some(n)`, the walk stops after at least
+/// `n` pubkeys have been enumerated (counted across pages, pre-dedup) — a clean
+/// early termination for end-to-end testing against a bounded subset rather than
+/// the full keyspace. `None` walks to the natural `endCursor==null` end.
+///
 /// The store is the sync boundary (Pitfall 1): store calls are plain synchronous
 /// calls inside this async fn; never wrap the store in a `tokio::sync::Mutex`.
 pub async fn run(
@@ -144,6 +149,7 @@ pub async fn run(
     client: &GraphQlClient,
     resume: bool,
     config_json: &str,
+    limit: Option<u64>,
 ) -> Result<i64, EnumerateError> {
     // Resume selection (D-01/D-02/D-03). The snapshot lands on the canonical run:
     // fresh/`None` → `begin_run(config_json)`; continued run → refresh via
@@ -234,6 +240,20 @@ pub async fn run(
             }
             // endCursor==null ⇒ end of the keyspace (canonical termination signal).
             None => break,
+        }
+
+        // Test-mode cap (`--limit`): stop once at least `limit` pubkeys have been
+        // enumerated so an operator can drive a full end-to-end batch without
+        // walking the entire (millions-of-pubkeys) keyspace. Treated as a clean
+        // termination — the cursor was already advanced above, so `--resume`
+        // continues from here, and the scoring caller runs over the subset.
+        if let Some(lim) = limit {
+            if count >= lim {
+                eprintln!(
+                    "enumerate: run {run_id} reached --limit {lim} ({count} pubkeys), stopping early"
+                );
+                break;
+            }
         }
     }
 
@@ -456,7 +476,7 @@ mod tests {
         // end drift but no longer marks the run done — the scoring CALLER owns
         // that. The test plays the caller's role with the returned run_id so the
         // done-semantics assertions below still hold (no coverage weakened).
-        let run_id = block_on(run(&store, &client, false, "{}")).expect("walk completes");
+        let run_id = block_on(run(&store, &client, false, "{}", None)).expect("walk completes");
         store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
 
@@ -485,7 +505,7 @@ mod tests {
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
         let snapshot = "{\"tau\":0.42,\"weights\":{\"L1\":2.0}}";
-        let run_id = block_on(run(&store, &client, false, snapshot)).expect("walk completes");
+        let run_id = block_on(run(&store, &client, false, snapshot, None)).expect("walk completes");
         store.close().expect("flush + join");
 
         let conn = rusqlite::Connection::open(&path).expect("reader");
@@ -521,7 +541,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let run_id = block_on(run(&store, &client, false, "{}")).expect("walk completes");
+        let run_id = block_on(run(&store, &client, false, "{}", None)).expect("walk completes");
         // Caller marks done AFTER run returns; run's BL-01 flush barrier already
         // ran inside run() before this point.
         store.mark_run_done(run_id, 100).expect("caller marks run done");
@@ -556,7 +576,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let result = block_on(run(&store, &client, false, "{}"));
+        let result = block_on(run(&store, &client, false, "{}", None));
         assert!(result.is_err(), "INVALID_CURSOR on page 1 aborts, not spins");
         store.close().expect("flush + join");
 
@@ -597,7 +617,7 @@ mod tests {
         let client = GraphQlClient::new(server.url());
         // A resume re-stamps the snapshot onto the continued run via
         // set_run_config_json — assert it lands below.
-        let run_id = block_on(run(&store, &client, true, "{\"resumed\":true}"))
+        let run_id = block_on(run(&store, &client, true, "{\"resumed\":true}", None))
             .expect("resume walk completes");
         assert_eq!(run_id, seed_run, "resume returns the existing run id");
         store.mark_run_done(run_id, 100).expect("caller marks run done");
@@ -649,7 +669,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("reopen store");
         let client = GraphQlClient::new(server.url());
-        block_on(run(&store, &client, true, "{}")).expect("resume walk completes");
+        block_on(run(&store, &client, true, "{}", None)).expect("resume walk completes");
         store.close().expect("flush + join");
 
         let _ = seed_run;
@@ -671,7 +691,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let run_id = block_on(run(&store, &client, false, "{}"))
+        let run_id = block_on(run(&store, &client, false, "{}", None))
             .expect("retry then success completes");
         store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
@@ -700,7 +720,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let result = block_on(run(&store, &client, false, "{}"));
+        let result = block_on(run(&store, &client, false, "{}", None));
         assert!(result.is_err(), "exhausted retries → walk returns an error");
         store.close().expect("flush + join");
 
@@ -737,7 +757,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let run_id = block_on(run(&store, &client, false, "{}"))
+        let run_id = block_on(run(&store, &client, false, "{}", None))
             .expect("invalid_cursor restart completes");
         store.mark_run_done(run_id, 100).expect("caller marks run done");
         store.close().expect("flush + join");
@@ -766,7 +786,7 @@ mod tests {
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
-        let run_id = block_on(run(&store, &client, false, "{}")).expect("drift run completes");
+        let run_id = block_on(run(&store, &client, false, "{}", None)).expect("drift run completes");
         // run records the end drift (150) via set_run_max_lev_end; the caller
         // marks done with the SAME end value (harmless overwrite, D-09 note).
         store.mark_run_done(run_id, 150).expect("caller marks run done");
@@ -828,7 +848,7 @@ mod tests {
                 let server = StubServer::start(script);
                 let store = Store::open(&path).expect("open store");
                 let client = GraphQlClient::new(server.url());
-                let _ = block_on(run(&store, &client, false, "{}")); // aborts; cursor preserved
+                let _ = block_on(run(&store, &client, false, "{}", None)); // aborts; cursor preserved
                 store.close().expect("flush");
             }
 
@@ -842,7 +862,7 @@ mod tests {
                 let server = StubServer::start(script);
                 let store = Store::open(&path).expect("reopen store");
                 let client = GraphQlClient::new(server.url());
-                block_on(run(&store, &client, true, "{}")).expect("resume completes");
+                block_on(run(&store, &client, true, "{}", None)).expect("resume completes");
                 store.close().expect("flush");
             }
 

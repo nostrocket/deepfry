@@ -85,11 +85,18 @@ pub enum RunError {
 /// the `'static` consumer-thread boundary (Pitfall 3); after the pipeline drains
 /// it unwraps the sole reference and `close()`s the writer, then marks the run
 /// `done`. `resume` threads straight to `enumerate::run` (Phase-2 semantics, D-03).
+/// `limit` (operator `--limit`) caps how many pubkeys the enumerate leg walks, for
+/// bounded end-to-end test runs; `None` walks the full keyspace.
 ///
 /// Reproducibility (D-04/D-06): τ + the weight set are snapshotted into
 /// `run.config_json` (via `enumerate::run`'s `config_json` arg) BEFORE any score
 /// is written, so the canonical run records the parameters it scored with.
-pub async fn run_batch(store: Arc<Store>, config: &Config, resume: bool) -> Result<i64, RunError> {
+pub async fn run_batch(
+    store: Arc<Store>,
+    config: &Config,
+    resume: bool,
+    limit: Option<u64>,
+) -> Result<i64, RunError> {
     // 1. Seed the weight table from config on first run (no-op once seeded), then
     //    read the live weights (the stored values stand across a Phase-6 retune).
     seed_weights_if_empty(&store, config)?;
@@ -122,7 +129,7 @@ pub async fn run_batch(store: Arc<Store>, config: &Config, resume: bool) -> Resu
     // 3. Enumerate leg on the canonical run_id (D-03 resume). The snapshot lands on
     //    the run via begin_run/set_run_config_json; enumerate does NOT mark done.
     let client = GraphQlClient::new(config.adapter_url.clone());
-    let run_id = crate::enumerate::run(&store, &client, resume, &snapshot_json).await?;
+    let run_id = crate::enumerate::run(&store, &client, resume, &snapshot_json, limit).await?;
 
     // 4. Build the fixed-order stage from config + the seeded weights.
     let stage = Arc::new(ScoringStage::from_config(config, &weights));
@@ -400,7 +407,7 @@ mod tests {
         // Arc::try_unwrap requires no surviving clone — the caller must hand over
         // ownership, exactly as main.rs's Run arm does). A fresh reader on the path
         // sees the durable rows after close() ran inside run_batch.
-        let run_id = block_on(run_batch(store, &config, false)).expect("run_batch");
+        let run_id = block_on(run_batch(store, &config, false, None)).expect("run_batch");
 
         let conn = rusqlite::Connection::open(&path).expect("reader");
 
@@ -470,7 +477,7 @@ mod tests {
         let config = stub_config(adapter, wl);
 
         // Hand the sole Arc<Store> to run_batch (Pitfall 3); read back via the path.
-        let run_id = block_on(run_batch(store, &config, false)).expect("run_batch");
+        let run_id = block_on(run_batch(store, &config, false, None)).expect("run_batch");
 
         let conn = rusqlite::Connection::open(&path).expect("reader");
         let config_json: String = conn
@@ -544,7 +551,7 @@ mod tests {
             let adapter = adapter_stub("none".to_string());
             let wl = whitelist_stub(false, 8);
             let config = stub_config(adapter, wl);
-            block_on(run_batch(store, &config, false)).expect("run_batch 1")
+            block_on(run_batch(store, &config, false, None)).expect("run_batch 1")
         };
 
         // Simulate an adopted retune: UPDATE L1_near_duplicate's weight to a
@@ -574,7 +581,7 @@ mod tests {
             let adapter = adapter_stub("none".to_string());
             let wl = whitelist_stub(false, 8);
             let config = stub_config(adapter, wl);
-            block_on(run_batch(store, &config, false)).expect("run_batch 2")
+            block_on(run_batch(store, &config, false, None)).expect("run_batch 2")
         };
         assert_ne!(run1, run2, "the second run is a distinct run_id");
 
@@ -654,7 +661,7 @@ mod tests {
             // Reachable: drive the full end-to-end batch. run_batch enumerates the
             // live keyspace, fetches kind-1 ~100 events/pubkey, scores, and persists.
             let store = Arc::new(Store::open(&path).expect("open store"));
-            let run_id = match run_batch(store, &config, false).await {
+            let run_id = match run_batch(store, &config, false, None).await {
                 Ok(rid) => rid,
                 // A mid-run transport blip on the live adapter degrades to a deferred
                 // manual check (D-07) — never a CI failure.
