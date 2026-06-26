@@ -31,6 +31,11 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "cha
 # tokio: async runtime for reqwest. `time` is for plan-03's tokio::time::sleep backoff,
 # added here at dep-introduction so Phase 3 inherits it without a manifest change.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+# futures-util: StreamExt::buffer_unordered for the concurrent fetch stage in
+# run_pipeline (overlaps the I/O-bound GraphQL round-trips). Already in the lock
+# tree transitively via reqwest; promoted to a direct dep. No executor needed, so
+# the lighter futures-util (not the full `futures` facade).
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 # thiserror: derive the two-layer ClientError taxonomy (transport vs in-body GraphQL).
 thiserror = "2"
 # rayon: the CPU analysis thread pool for the pipeline's consumer stage (Phase-3-

@@ -6,12 +6,14 @@
 //! 1. **Source (sync):** the enumerated pubkeys (read up front from the durable
 //!    `pubkey` table via [`crate::store::queries::read_pubkeys`], D-07) chunked
 //!    into `authors_per_call`-sized batches.
-//! 2. **Fetcher (async, on the tokio runtime):** for each batch, await an injected
-//!    `fetch` future (production: [`crate::fetch::fetch_batch`]; tests: a cheap
-//!    generator) and push each returned [`AuthorGroup`] into a **BOUNDED**
-//!    `flume` channel via `tx.send_async().await`. The `await` IS the
-//!    back-pressure: when the channel is full the fetcher suspends, so peak
-//!    in-flight memory is capped by `channel_cap` (× the per-batch fan-out),
+//! 2. **Fetcher (async, on the tokio runtime):** up to [`DEFAULT_FETCH_CONCURRENCY`]
+//!    batch fetches run concurrently (`buffer_unordered`), and each completed
+//!    batch's [`AuthorGroup`]s are pushed into a **BOUNDED** `flume` channel via
+//!    `tx.send_async().await` (production fetch: [`crate::fetch::fetch_batch`];
+//!    tests: a cheap generator). The `await` IS the back-pressure: when the
+//!    channel is full the send suspends and — because the fetch stream is not
+//!    polled while we await — new fetches pause too, so peak in-flight memory is
+//!    capped by `channel_cap + (DEFAULT_FETCH_CONCURRENCY + 1) × authors_per_call`,
 //!    never the corpus size (Pitfall 2 — the writer channel's `unbounded` is NOT
 //!    copied here).
 //! 3. **Consumer (sync, OFF the tokio runtime):** a dedicated `std::thread`
@@ -29,6 +31,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use futures_util::stream::{self, StreamExt};
+
 use crate::detect::ScoredInput;
 use crate::graphql::queries::AuthorGroup;
 use crate::graphql::ClientError;
@@ -43,6 +47,24 @@ pub const DEFAULT_CHANNEL_CAP: usize = 64;
 /// perAuthor) the 413 shrink-and-retry (Plan 01) backstops. Empirically tunable,
 /// validated by the live D-09 check.
 pub const DEFAULT_AUTHORS_PER_CALL: usize = 250;
+
+/// Default number of batch fetches kept in flight concurrently by the producer
+/// (`buffer_unordered`). The fetch stage is I/O-bound (measured: serial adapter
+/// round-trips dominated wall-clock), so overlapping `DEFAULT_FETCH_CONCURRENCY`
+/// requests collapses the aggregate fetch latency and stops one slow batch from
+/// stalling the whole pipeline. Peak in-flight memory stays O(1) in the corpus:
+/// bounded by `channel_cap + (DEFAULT_FETCH_CONCURRENCY + 1) * authors_per_call`
+/// (INGEST-03 — the bound is independent of the author-set size, just a larger
+/// constant than the serial path). Empirically tunable.
+///
+/// Set CONSERVATIVELY to 2 for v1: the LMDB2GraphQL adapter has a documented
+/// `MDB_BAD_RSLOT` history (LMDB reused-read-slot crashes under concurrent
+/// reads), and was observed to crash-loop under load during tuning. A small
+/// overlap still wins on the serialized network latency without firing a large
+/// burst of concurrent multi-MB LMDB reads at the adapter. Raise once the
+/// adapter is confirmed to handle concurrent read transactions safely. FC=1
+/// reproduces the original strictly-serial fetch behavior.
+pub const DEFAULT_FETCH_CONCURRENCY: usize = 2;
 
 /// The Phase-3 no-op consumer (D-06): count a scored input's events and drop it.
 ///
@@ -114,15 +136,29 @@ where
         }
     });
 
-    // PRODUCER: fetch batches on the tokio runtime; push into the bounded channel.
-    // send_async awaits when the channel is full → back-pressure (D-05). On the
-    // first error the fetcher stops, but we still drop(tx) + join the consumer
-    // below so the drain thread is never left dangling (Pitfall 3).
+    // PRODUCER: keep up to DEFAULT_FETCH_CONCURRENCY batch fetches in flight at
+    // once (buffer_unordered), pushing each completed batch's groups into the
+    // bounded channel as it arrives. Concurrency overlaps the I/O-bound adapter
+    // round-trips (measured: serial fetch dominated wall-clock) and stops one
+    // slow batch from stalling the rest. Back-pressure is preserved: while we
+    // await a send below the fetch stream is NOT polled, so a full channel
+    // naturally pauses new fetches (D-05). On the first fetch error the stream
+    // short-circuits; we still drop(tx) + join the consumer below (Pitfall 3).
     let fetch_result: Result<(), ClientError> = async {
-        for batch in pubkeys.chunks(authors_per_call) {
+        // Iterator::map is lazy and stream::iter pulls on demand, so `fetch` is
+        // invoked only as buffer_unordered spins each future up to the cap — the
+        // whole corpus is never fetched eagerly.
+        let mut fetches = stream::iter(
+            pubkeys
+                .chunks(authors_per_call)
+                .map(|batch| fetch(batch.to_vec())),
+        )
+        .buffer_unordered(DEFAULT_FETCH_CONCURRENCY);
+
+        while let Some(result) = fetches.next().await {
             // The fetch source yields the carrier directly (group + resolved
             // whitelist bool) — Plan 03 resolved membership in the fetch stage.
-            let inputs = fetch(batch.to_vec()).await?;
+            let inputs = result?; // a fetch error propagates and stops the run.
             for input in inputs {
                 // send_async (NOT the blocking tx.send) keeps the reactor alive
                 // while awaiting channel room — this await is the back-pressure.
@@ -330,11 +366,12 @@ mod tests {
 
         // The mock fetch fabricates one event per author. The send-time count is
         // approximated by counting at fetch return: because the pipeline's
-        // `send_async` back-pressures, the producer cannot run ahead of the
-        // channel by more than CAP groups + the one in-hand batch (≤ APC) — so
-        // `sent − consumed` is bounded by CAP + APC even though we bump `sent` per
-        // fabricated group. (A group counted in `sent` but still sitting in the
-        // producer's local batch Vec is exactly the ≤ APC term.)
+        // `send_async` back-pressures (and pauses the fetch stream while a send
+        // awaits), the producer cannot run ahead of the channel by more than CAP
+        // groups + the buffer_unordered fan-out — at most DEFAULT_FETCH_CONCURRENCY
+        // fetched-but-unsent batches plus the one in-hand batch (each ≤ APC). So
+        // `sent − consumed` is bounded by CAP + (FC + 1) * APC even though we bump
+        // `sent` per fabricated group at fetch return.
         let sent_f = Arc::clone(&sent);
         let if_f = Arc::clone(&in_flight);
         let consumed_f = Arc::clone(&consumed);
@@ -375,11 +412,17 @@ mod tests {
             "every group consumed exactly once"
         );
         let peak = watermark.load(Ordering::SeqCst);
+        // With buffer_unordered(DEFAULT_FETCH_CONCURRENCY) the producer can hold up
+        // to FC fetched-but-unsent batches buffered in the stream plus one in-hand
+        // batch being drained, on top of the channel's CAP slots — so the bound
+        // widens to CAP + (FC + 1) * APC. It is STILL O(1) in the corpus (INGEST-03):
+        // a fixed constant, never a function of the {N}-author set.
+        let bound = CAP + (DEFAULT_FETCH_CONCURRENCY + 1) * APC;
         assert!(
-            peak <= CAP + APC,
-            "in-flight watermark {peak} must be bounded by channel_cap + authors_per_call ({}), \
-             not the {N}-author corpus — INGEST-03 / D-08",
-            CAP + APC
+            peak <= bound,
+            "in-flight watermark {peak} must be bounded by \
+             channel_cap + (fetch_concurrency + 1) * authors_per_call ({bound}), \
+             not the {N}-author corpus — INGEST-03 / D-08"
         );
         // Sanity: with a slow consumer over 100k authors the channel really did
         // fill (the bound is exercised, not vacuously satisfied by an idle channel).

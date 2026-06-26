@@ -7,7 +7,7 @@ status: executing
 stopped_at: Phase 2 context gathered
 last_updated: "2026-06-26T03:38:31.949Z"
 last_activity: 2026-06-26
-last_activity_desc: Phase 06 complete
+last_activity_desc: "Completed quick task 260626-01: concurrent buffer_unordered fetch"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -84,7 +84,14 @@ None yet.
 ### Blockers/Concerns
 
 - Unknown spam base rate in the corpus — constrains threshold τ and tuner class-weighting until a first batch is human-labeled (Phase 6).
-- HTTP-vs-CPU bottleneck unproven — gate the fetch behind a trait so the v2 `heed` direct-LMDB path stays open.
+- HTTP-vs-CPU bottleneck RESOLVED (quick 260626-01 measurements): the pipeline is network/I/O-bound, not CPU-bound (scoring CPU is negligible). Fixed serial-whitelist stall via bulk endpoint + client timeouts; added conservative concurrent fetch (FC=2).
+- LMDB2GraphQL adapter (192.168.149.21:8080) observed crash-looping on heavy `latestPerAuthor` queries (~3.4MB) — even serial. Blocks live re-measurement; left uninvestigated (separate project). Restart likely clears it.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260626-01 | Add concurrent buffer_unordered fetch to run_pipeline | 2026-06-26 | (this commit) | [260626-01-concurrent-buffer-unordered-fetch](./quick/260626-01-concurrent-buffer-unordered-fetch/) |
 
 ## Deferred Items
 

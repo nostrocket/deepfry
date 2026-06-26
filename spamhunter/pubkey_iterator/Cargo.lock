@@ -956,6 +956,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "flume",
+ "futures-util",
  "linfa",
  "linfa-logistic",
  "ndarray",
