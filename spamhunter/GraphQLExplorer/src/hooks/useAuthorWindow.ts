@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { client } from '../transport/client'
 import { classify, type ApiError } from '../transport/errors'
 import { EventsDocument } from '../queries/events.graphql'
+import { TRIAGE } from '../analysis/thresholds'
 
 // Explicit per-page limit (contract §6 / Pitfall 7 — always pass an explicit limit;
 // the server silently clamps to [1, 500]). 100 is the contract default page size.
@@ -130,10 +131,14 @@ export function useAuthorWindow(hex: string): UseAuthorWindow {
       // contract requires the fetched set to reflect CURRENT corpus state, so the
       // events window must always hit the network and re-derive its denominator.
       // Scoped to this query only — the shared client default is left untouched.
+      // Default kind scope (contract §5 EventFilterInput.kinds): the window requests
+      // ONLY kind 1 (text notes) — the spam-bearing kind screened across the rest of
+      // the app (TRIAGE.kind). Pinning the kind here keeps the cursor's filter constant
+      // across pages (§6.4) and matches the batch-triage path's single-kind window.
       const result = await client
         .query(
           EventsDocument,
-          { filter: { authors: [hex] }, after: cursor, limit: PAGE_LIMIT },
+          { filter: { authors: [hex], kinds: [TRIAGE.kind] }, after: cursor, limit: PAGE_LIMIT },
           { requestPolicy: 'network-only' },
         )
         .toPromise()
