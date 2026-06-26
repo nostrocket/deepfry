@@ -20,10 +20,11 @@ A system that enforces web-of-trust based write access on StrFry relays. A centr
                     │  atomic.Pointer[map] (lock-free)  │
                     │               ↓                   │
                     │  HTTP :8081                        │
-                    │    GET /check/{pubkey}             │
-                    │    GET /health                     │
-                    │    GET /stats                      │
-                    │    GET /version                    │
+                    │    GET  /check/{pubkey}            │
+                    │    POST /check  (bulk)             │
+                    │    GET  /health                    │
+                    │    GET  /stats                     │
+                    │    GET  /version                   │
                     └──────────────┬───────────────────┘
                                    │
               ┌────────────────────┼────────────────────┐
@@ -88,10 +89,38 @@ curl http://localhost:8081/stats
 
 | Endpoint | Method | Description | Response |
 |----------|--------|-------------|----------|
-| `/check/{pubkey}` | GET | Check if a 64-char hex pubkey is whitelisted | `{"whitelisted": true}` or `{"whitelisted": false}` |
+| `/check/{pubkey}` | GET | Check a single 64-char hex pubkey | `{"whitelisted": true}` or `{"whitelisted": false}` |
+| `/check` | POST | Check many pubkeys in one request (see below) | `{"results": {"<pubkey>": true, ...}}` |
 | `/health` | GET | Readiness check | `200 ok` when whitelist loaded, `503` before |
 | `/stats` | GET | Cache statistics | `{"entries": 45000, "last_refresh": "2026-04-16T07:00:00Z"}` |
 | `/version` | GET | Build info (injected via ldflags at build time) | `{"version": "dev", "commit": "abc1234", "built": "2026-04-22T12:00:00Z"}` |
+
+#### Bulk check — `POST /check`
+
+Check a large number of pubkeys in a single round-trip instead of one `GET /check/{pubkey}` request each. Send a JSON body with a `pubkeys` array; the response maps **each pubkey to its own boolean**.
+
+**Request:**
+```json
+{"pubkeys": ["d91191e3...", "f6b07746...", "deadbeef..."]}
+```
+
+**Response:**
+```json
+{"results": {"d91191e3...": true, "f6b07746...": true, "deadbeef...": false}}
+```
+
+```bash
+curl -X POST http://localhost:8081/check \
+  -H 'Content-Type: application/json' \
+  -d '{"pubkeys":["d91191e30e00444b942c0e82cad470b32af171764c2275bee0bd99377efd4075","0000000000000000000000000000000000000000000000000000000000000000"]}'
+```
+
+Behaviour and limits:
+
+- Because results are keyed by pubkey, **duplicates collapse** into a single entry and the caller can look up any pubkey it sent.
+- Unknown or **invalid** pubkeys map to `false` (parity with the single-key endpoint — no error). **Empty** strings are skipped and omitted from `results`.
+- At most **100,000** pubkeys per request (`413 Request Entity Too Large` if exceeded), with the request body capped at **8 MiB**.
+- A malformed JSON body returns `400 Bad Request`.
 
 `/version` is what `switch-dgraph.sh` queries to verify the whitelist server on the LAN was built from the same git HEAD as this checkout. The commit is stamped automatically by Go's `-buildvcs=auto` at build time — no env vars required. A dirty working tree gets a `-dirty` suffix.
 
