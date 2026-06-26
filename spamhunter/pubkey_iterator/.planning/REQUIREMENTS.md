@@ -40,7 +40,7 @@ Requirements for the initial release. Each maps to a roadmap phase.
 
 ### Operations
 
-- [x] **OPS-01**: A CLI drives the engine — full batch `run`, `export`, `label`, and `tune` subcommands
+- [x] **OPS-01**: A CLI drives the engine — full batch `run`, `export`, and `tune` subcommands. Labeling has no dedicated subcommand by design (D-02): operators record ground-truth labels by inserting rows directly into the `backpropagation` table with any SQLite client, which the tuner reads JOINed against `signal` (satisfies TUNE-01).
 - [x] **OPS-02**: Scoring is deterministic — same corpus snapshot + same weights → identical verdicts
 - [x] **OPS-03**: Layer weights and thresholds are configurable without recompiling (config file)
 
@@ -110,4 +110,4 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-25*
-*Last updated: 2026-06-25 after roadmap creation*
+*Last updated: 2026-06-26 — OPS-01 reconciled with D-02 (no `label` subcommand) per v1.0 milestone audit*
