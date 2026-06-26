@@ -1,0 +1,2 @@
+# Large raw Dgraph query dumps — regenerate via _analyze*.py
+_raw_*.json
