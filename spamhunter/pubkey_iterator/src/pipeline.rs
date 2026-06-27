@@ -46,7 +46,16 @@ pub const DEFAULT_CHANNEL_CAP: usize = 64;
 /// Well under the ≤1000 contract cap (§12) and a per-call cost (authors ×
 /// perAuthor) the 413 shrink-and-retry (Plan 01) backstops. Empirically tunable,
 /// validated by the live D-09 check.
-pub const DEFAULT_AUTHORS_PER_CALL: usize = 250;
+///
+/// Lowered 250 → 50 (debug adapter-crash-heavy-query, 2026-06-27). The adapter's
+/// strfry LMDB (318 GB) lives on an EXTERNAL USB drive on a RAM-starved 8 GiB host
+/// that cannot cache the working set; a 250-author call reads ~5,268 cold event
+/// payloads (~5 ms each) → 25-40s and materialises a ~3.4 MB response as 400+ MiB
+/// in the adapter, crash-looping it. A 50-author call reads ~1,050 events (~340 KB,
+/// ~5s cold / instant warm) — bounded and safe. This is a pure batching change:
+/// same authors scored, smaller per-request blast radius. Raise only once the
+/// adapter's DB is on fast local storage with adequate RAM.
+pub const DEFAULT_AUTHORS_PER_CALL: usize = 50;
 
 /// Default number of batch fetches kept in flight concurrently by the producer
 /// (`buffer_unordered`). The fetch stage is I/O-bound (measured: serial adapter
@@ -57,14 +66,17 @@ pub const DEFAULT_AUTHORS_PER_CALL: usize = 250;
 /// (INGEST-03 — the bound is independent of the author-set size, just a larger
 /// constant than the serial path). Empirically tunable.
 ///
-/// Set CONSERVATIVELY to 2 for v1: the LMDB2GraphQL adapter has a documented
-/// `MDB_BAD_RSLOT` history (LMDB reused-read-slot crashes under concurrent
-/// reads), and was observed to crash-loop under load during tuning. A small
-/// overlap still wins on the serialized network latency without firing a large
-/// burst of concurrent multi-MB LMDB reads at the adapter. Raise once the
-/// adapter is confirmed to handle concurrent read transactions safely. FC=1
-/// reproduces the original strictly-serial fetch behavior.
-pub const DEFAULT_FETCH_CONCURRENCY: usize = 2;
+/// Set to 1 (debug adapter-crash-heavy-query, 2026-06-27). Live testing confirmed
+/// the adapter crash is NOT reader-slot contention but memory: each heavy
+/// `latestPerAuthor` response materialises to 400+ MiB in the adapter, and the host
+/// (8 GiB, ~1 GiB free) OOM-kills the adapter when concurrent/overlapping heavy
+/// requests stack those allocations. curl disconnecting at timeout does NOT stop
+/// the adapter from continuing to build a response, so even FC=2 stacks. FC=1
+/// serialises fetches so at most one large response is ever in flight, which —
+/// together with the smaller `DEFAULT_AUTHORS_PER_CALL` — keeps the adapter within
+/// its memory budget. Raise only once the adapter streams/caps responses and runs
+/// on a host with adequate RAM + fast local storage.
+pub const DEFAULT_FETCH_CONCURRENCY: usize = 1;
 
 /// The Phase-3 no-op consumer (D-06): count a scored input's events and drop it.
 ///
