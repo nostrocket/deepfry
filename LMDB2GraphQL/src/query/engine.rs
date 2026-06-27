@@ -29,7 +29,7 @@ use crate::lmdb::payload::DictCache;
 use crate::lmdb::scan::{scan_index_bounded, ScanDirection, DEFAULT_WINDOW_SIZE};
 use crate::lmdb::types::{DecodedEvent, LevId, NostrEvent};
 use crate::query::filter::{NostrFilter, PageCursor, QueryError};
-use crate::query::hydrate::hydrate_lev_ids;
+use crate::query::hydrate::{hydrate_lev_ids, hydrate_lev_ids_batch};
 use crate::query::merge::merge_windowed;
 use crate::query::router::{build_start_keys, decode_hex, select_index, SelectedIndex};
 use std::collections::HashMap;
@@ -537,11 +537,17 @@ pub fn latest_per_author(
 
         let lev_ids: Vec<LevId> = matching;
         let mut skip_count = 0usize;
-        let hydrated_pairs = hydrate_lev_ids(env, &lev_ids, dict_cache, &mut skip_count)?;
+        // PERF-01: use batch hydration (one RoTxn for all levIds in this author's bucket)
+        // instead of hydrate_lev_ids (one RoTxn per levId). For per_author=100 this reduces
+        // the LMDB txn count from 100 to 1 per author — 100× fewer open/use/close cycles.
+        // Across 250 authors: 25,000 txns → 250 txns. Under IO pressure this prevents the
+        // spawn_blocking thread from stalling for 20-30s (which starved the async reactor,
+        // caused /health timeouts, and triggered Docker restart loops).
+        let hydrated_pairs = hydrate_lev_ids_batch(env, &lev_ids, dict_cache, &mut skip_count)?;
 
         // CR-05 fix: iterate Vec<(LevId, DecodedEvent)> pairs; drop is_expired on pair.1.event;
         // collect pair.1 (DecodedEvent) into the bucket. Scan order is preserved because
-        // hydrate_lev_ids returns pairs in input order for surviving entries.
+        // hydrate_lev_ids_batch returns pairs in input order for surviving entries.
         let events: Vec<DecodedEvent> = hydrated_pairs
             .into_iter()
             .filter(|(_, ev)| !is_expired(&ev.event))

@@ -3,9 +3,16 @@
 /// `hydrate_lev_ids` takes the levIds the merge selected and resolves each to a
 /// `(LevId, DecodedEvent)` pair via [`get_event_payload`] + [`decode_event_payload_with_cache`].
 ///
+/// `hydrate_lev_ids_batch` is a performance variant used by `latest_per_author`: it opens ONE
+/// LMDB read transaction for all levIds in the slice (instead of one per levId), reducing the
+/// LMDB txn overhead by O(per_author) for each author's bucket. See PERF-01 note below.
+///
 /// Policy (D-06, D-08, D-11):
 /// - Hydration runs AFTER merge selection — only finally-selected levIds are decoded.
-/// - Each levId opens and drops its own short read txn via `get_event_payload` (D-08).
+/// - `hydrate_lev_ids`: each levId opens and drops its own short read txn via `get_event_payload`
+///   (D-08). Used by execute_query where levIds come from multiple merge rounds.
+/// - `hydrate_lev_ids_batch`: one txn covers the entire slice (PERF-01). Used by
+///   `latest_per_author` where each author's levIds are already bounded and independent.
 /// - A missing levId (structural index error) is propagated as `QueryError::Payload`; it
 ///   is NOT silently skipped — a levId present in a real index scan must exist in
 ///   `EventPayload` (only a decode/corrupt failure is skipped, not a lookup miss).
@@ -22,7 +29,9 @@
 /// slice. Callers MUST match results back to their authoritative `(ts, lev_id)` keys
 /// from the scan layer by looking up the `LevId` component — not by positional index.
 /// Using `.zip()` on the raw return value is a correctness error (CR-05).
-use crate::lmdb::payload::{decode_event_payload_with_cache, get_event_payload, DictCache};
+use crate::lmdb::payload::{
+    batch_get_event_payloads, decode_event_payload_with_cache, get_event_payload, DictCache,
+};
 use crate::lmdb::types::{DecodedEvent, LevId};
 use crate::query::filter::QueryError;
 
@@ -64,6 +73,63 @@ pub fn hydrate_lev_ids(
                     lev_id,
                     reason = %e,
                     "skipping undecodable EventPayload in hydrate batch"
+                );
+                *skip_count += 1;
+            }
+        }
+    }
+    Ok(results)
+}
+
+/// Hydrate a slice of levIds into `(LevId, DecodedEvent)` pairs using ONE LMDB read txn (PERF-01).
+///
+/// ## Purpose
+///
+/// `hydrate_lev_ids` opens one read txn per levId (one call to `get_event_payload` per entry).
+/// For `latest_per_author(authors=250, perAuthor=100)` this produces 25,000 individual txn
+/// open/use/close cycles inside a single `spawn_blocking` task. Under IO pressure each cycle
+/// multiplies 25,000× and can stall the blocking thread for 20-30s, starving the async reactor
+/// (causing /health timeouts → Docker restart). See PERF-01.
+///
+/// This function opens ONE read txn for the entire `lev_ids` slice via
+/// `batch_get_event_payloads`, then decodes each raw payload. The txn is held only for the
+/// lookup+copy phase and dropped before any decoding occurs (D-08).
+///
+/// ## Policy — same as `hydrate_lev_ids` except txn granularity
+///
+/// - A missing levId propagates immediately as `QueryError::Payload` (structural error, not skip).
+/// - A decode failure increments `skip_count`, emits `tracing::warn!`, and omits the slot (D-11).
+/// - Output is in INPUT ORDER for surviving pairs (D-10: ordering is the scan layer's responsibility).
+/// - Callers MUST join on lev_id, never positionally zip (CR-05).
+///
+/// ## Short-txn invariant (D-08)
+///
+/// `batch_get_event_payloads` opens ONE txn, reads all levIds, copies all bytes, and drops
+/// the txn before returning. The owned `Vec<u8>` payloads are txn-independent. Decoding then
+/// happens entirely outside the txn.
+pub fn hydrate_lev_ids_batch(
+    env: &heed::Env,
+    lev_ids: &[LevId],
+    dict_cache: &DictCache,
+    skip_count: &mut usize,
+) -> Result<Vec<(LevId, DecodedEvent)>, QueryError> {
+    if lev_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // ONE txn for all lookups (PERF-01). Propagates structural errors (missing levId) immediately.
+    let raw_pairs = batch_get_event_payloads(env, lev_ids).map_err(QueryError::Payload)?;
+
+    // Decode outside the txn (D-08: txn already dropped by batch_get_event_payloads).
+    let mut results = Vec::with_capacity(raw_pairs.len());
+    for (lev_id, raw) in raw_pairs {
+        match decode_event_payload_with_cache(&raw, dict_cache, env) {
+            Ok(decoded) => results.push((lev_id, decoded)),
+            Err(e) => {
+                tracing::warn!(
+                    lev_id,
+                    reason = %e,
+                    "skipping undecodable EventPayload in batch hydrate"
                 );
                 *skip_count += 1;
             }
@@ -303,5 +369,96 @@ mod tests {
             "4d401c513571d1b439fbce0e8f1e11fb27b3729056473684034ba305451a4939",
             "result[1].event must be lev_id=5's event (4d401c51...)"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // PERF-01: hydrate_lev_ids_batch tests (batch single-txn hydration)
+    // -----------------------------------------------------------------------
+
+    /// Test 5 (PERF-01): hydrate_lev_ids_batch returns the same pairs as hydrate_lev_ids
+    /// for a normal batch of valid levIds, using only one LMDB read txn for all lookups.
+    ///
+    /// Verifies that the batch variant is functionally equivalent to the per-levId variant
+    /// (same result ordering, same lev_id associations, same zero skip_count).
+    #[test]
+    fn test_hydrate_batch_matches_per_levid_result() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+
+        let mut skip_per = 0usize;
+        let mut skip_batch = 0usize;
+
+        let per_levid = hydrate_lev_ids(&env, &[4, 5, 6], &cache, &mut skip_per)
+            .expect("per-levId hydrate must succeed");
+        let batch = hydrate_lev_ids_batch(&env, &[4, 5, 6], &cache, &mut skip_batch)
+            .expect("batch hydrate must succeed");
+
+        assert_eq!(skip_per, 0);
+        assert_eq!(skip_batch, 0);
+        assert_eq!(per_levid.len(), batch.len(), "batch must return same count as per-levId");
+
+        for i in 0..per_levid.len() {
+            assert_eq!(
+                per_levid[i].0, batch[i].0,
+                "lev_id at position {i} must match between per-levId and batch results"
+            );
+            assert_eq!(
+                per_levid[i].1.event.id, batch[i].1.event.id,
+                "event.id at position {i} must match between per-levId and batch results"
+            );
+        }
+    }
+
+    /// Test 6 (PERF-01): hydrate_lev_ids_batch on an empty slice returns Ok(empty vec).
+    #[test]
+    fn test_hydrate_batch_empty_slice_returns_empty() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+        let mut skip = 0usize;
+
+        let result = hydrate_lev_ids_batch(&env, &[], &cache, &mut skip)
+            .expect("batch hydrate on empty slice must succeed");
+
+        assert!(result.is_empty(), "empty levIds slice must return empty vec");
+        assert_eq!(skip, 0, "skip_count must remain 0 for empty input");
+    }
+
+    /// Test 7 (PERF-01): hydrate_lev_ids_batch propagates LevIdNotFound for missing levIds.
+    #[test]
+    fn test_hydrate_batch_missing_levid_propagates_error() {
+        let (env, _tmp) = open_temp_fixture_env();
+        let cache = DictCache::new();
+        let mut skip = 0usize;
+
+        let result = hydrate_lev_ids_batch(&env, &[4, 9999], &cache, &mut skip);
+
+        assert!(
+            result.is_err(),
+            "batch hydrate with missing levId must return Err (structural error)"
+        );
+        assert_eq!(skip, 0, "missing levId is structural (not a skip) — skip_count stays 0");
+    }
+
+    /// Test 8 (PERF-01): hydrate_lev_ids_batch skips corrupt payloads mid-batch (D-11).
+    ///
+    /// Injects a corrupt payload at levId=100, then calls batch hydrate with [4, 100, 5].
+    /// The corrupt slot is absent from the result; lev_ids for valid entries are correct.
+    #[test]
+    fn test_hydrate_batch_skips_corrupt_payload() {
+        let (writable_env, tmp) = open_temp_writable_env();
+        inject_corrupt_payload(&writable_env, 100);
+        drop(writable_env);
+
+        let env = open_fixture_env(tmp.path()).expect("reopen fixture read-only");
+        let cache = DictCache::new();
+        let mut skip = 0usize;
+
+        let result = hydrate_lev_ids_batch(&env, &[4, 100, 5], &cache, &mut skip)
+            .expect("batch hydrate must not error on corrupt mid-batch payload");
+
+        assert_eq!(skip, 1, "exactly 1 skip for the corrupt payload at levId=100");
+        assert_eq!(result.len(), 2, "2 surviving pairs (corrupt slot absent)");
+        assert_eq!(result[0].0, 4, "first surviving pair must carry lev_id=4");
+        assert_eq!(result[1].0, 5, "second surviving pair must carry lev_id=5");
     }
 }

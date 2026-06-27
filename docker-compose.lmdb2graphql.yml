@@ -33,6 +33,16 @@ services:
       dockerfile: Dockerfile
     container_name: lmdb2graphql
     restart: unless-stopped
+    # Memory containment (DEBUG adapter-crash-heavy-query). The host is an 8 GiB Mac mini
+    # whose Docker Desktop VM has only ~3.8 GiB, most of which strfry's LMDB mmap occupies.
+    # With NO limit, a heavy-query memory spike lets the VM kernel OOM-killer pick its victim
+    # — and strfry (the fattest process) could be the one killed, taking down the relay.
+    # This cgroup limit guarantees lmdb2graphql is the process that dies if it balloons
+    # (contained, OOMKilled=true — an accurate signal), protecting strfry. 768m sits well
+    # above the post-PERF-01 per-request peak (tens of MB). memswap_limit == mem_limit
+    # disables container swap so it fails fast instead of thrashing this already-swapping host.
+    mem_limit: 768m
+    memswap_limit: 768m
     environment:
       RUST_LOG: "info,lmdb2graphql=info"
     volumes:

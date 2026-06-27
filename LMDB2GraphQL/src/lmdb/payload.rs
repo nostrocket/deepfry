@@ -383,6 +383,64 @@ pub fn get_event_payload(env: &heed::Env, lev_id: LevId) -> Result<Vec<u8>, Payl
     Ok(owned)
 }
 
+/// Fetch raw EventPayload bytes for a BATCH of levIds using a single read transaction.
+///
+/// ## Purpose — reduces LMDB txn overhead for `latest_per_author` (PERF-01)
+///
+/// `get_event_payload` opens one txn per levId. For `latestPerAuthor(authors=250,
+/// perAuthor=100)` that is 25,000 individual txn open/use/close cycles. Under IO pressure
+/// each cycle adds measurable overhead that multiplies 25,000×, stalling the spawn_blocking
+/// thread for 20-30s and starving the async reactor (causing /health timeouts → Docker restart).
+///
+/// This function opens ONE read txn for all `lev_ids` in the slice, reads each record, copies
+/// bytes out (txn-independent), and drops the txn once. One txn per call instead of N.
+///
+/// ## Return value
+///
+/// `Ok(Vec<(LevId, Vec<u8>)>)` — pairs in INPUT ORDER for present entries.
+/// Missing levIds propagate immediately as `PayloadError::LevIdNotFound` (structural error).
+/// The caller is responsible for deciding whether absence is fatal or skippable.
+///
+/// ## Short-txn invariant (D-08)
+///
+/// The single RoTxn is opened, all lookups performed, all bytes copied, then the txn is
+/// dropped — before returning. The txn is never held across call boundaries.
+///
+/// ## Key encoding
+///
+/// Same as `get_event_payload`: `lev_id.to_ne_bytes()` (native-endian uint64, MDB_INTEGERKEY).
+///
+/// # Errors
+/// - `PayloadError::SubDbNotFound` if the EventPayload sub-DB is absent.
+/// - `PayloadError::LevIdNotFound { lev_id }` if any entry is absent (structural error).
+/// - `PayloadError::Heed` on any underlying LMDB error.
+pub fn batch_get_event_payloads(
+    env: &heed::Env,
+    lev_ids: &[LevId],
+) -> Result<Vec<(LevId, Vec<u8>)>, PayloadError> {
+    if lev_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // ONE read txn for the entire batch (PERF-01).
+    let rtxn = env.read_txn()?;
+    let db = open_event_payload_db(env, &rtxn)?;
+
+    let mut results = Vec::with_capacity(lev_ids.len());
+    for &lev_id in lev_ids {
+        let key_bytes = lev_id.to_ne_bytes();
+        let raw = db
+            .get(&rtxn, key_bytes.as_ref())?
+            .ok_or(PayloadError::LevIdNotFound { lev_id })?;
+        // Copy bytes OUT before txn drops (D-08: heed bytes tied to txn lifetime).
+        results.push((lev_id, raw.to_vec()));
+    }
+
+    // Drop txn after ALL lookups and copies are done (D-08 short-txn).
+    drop(rtxn);
+    Ok(results)
+}
+
 /// Decode a raw EventPayload value into a [`DecodedEvent`] (typed struct + retained raw JSON).
 ///
 /// Dispatches on the leading type-tag byte (`raw[0]`):
