@@ -5,6 +5,16 @@ services:
       dockerfile: Dockerfile.strfry
     container_name: strfry
     restart: unless-stopped
+    # OOM protection (debug adapter-crash-heavy-query, 2026-06-28). On this 8 GiB host the
+    # Docker VM (3.83 GiB) suffers VM-wide (global) OOM under heavy adapter load; the kernel
+    # repeatedly killed strfry (3× on 2026-06-28) because it is the fattest unprotected
+    # process (large LMDB mmap → ~126 MiB page tables). strfry holds the canonical event data
+    # and must be the LAST sacrifice. -300 strongly deprioritises it as an OOM victim while
+    # staying ABOVE dockerd (-500)/init (-999) so Docker's own infrastructure is never at
+    # risk. Paired with oom_score_adj: 1000 on lmdb2graphql (the disposable read-lens), which
+    # the kernel now kills first. NB: this steers WHICH process dies, not the underlying
+    # capacity shortfall — the durable fix is more RAM / DB on local SSD.
+    oom_score_adj: -300
     environment:
       STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
     volumes:

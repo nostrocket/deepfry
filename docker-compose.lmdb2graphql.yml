@@ -43,6 +43,14 @@ services:
     # disables container swap so it fails fast instead of thrashing this already-swapping host.
     mem_limit: 768m
     memswap_limit: 768m
+    # OOM victim selection (debug adapter-crash-heavy-query, 2026-06-28). Under VM-wide
+    # (global) OOM, the kernel killed strfry — the canonical relay — because it was the
+    # fattest unprotected process. lmdb2graphql is a disposable read-lens (auto-restarts,
+    # holds no canonical data), so it should be the FIRST sacrifice. 1000 = "kill me first":
+    # it maximises lmdb2graphql's oom_score so the kernel picks it over strfry (set to -300)
+    # whenever the VM runs out of memory. Together with mem_limit this both caps and
+    # prioritises lmdb2graphql for OOM.
+    oom_score_adj: 1000
     environment:
       RUST_LOG: "info,lmdb2graphql=info"
     volumes:
