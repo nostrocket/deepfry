@@ -27,7 +27,9 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   2. A built filter serialized to bytes and deserialized back queries identically, and the serialized form carries its parameters (bit size, hash count) and a generation/version marker
   3. Every pubkey that was added to the filter queries as "possibly present" (zero false negatives), and known non-members query as "definitely not present" except for the bounded false-positive leak
   4. The target false-positive rate is a build-time parameter, not a hardcoded constant
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 01-01-PLAN.md — pkg/bloom Builder + Filter + DFBF serialization + ReadFilter + generation marker; round-trip, determinism, zero-false-negative, measured-FP-rate, invalid-hex tests
+- [ ] 01-02-PLAN.md — size-swept Contains hit/miss benchmarks + Build benchmark + 0-allocs guard test (D-08 alloc-free hot path)
 
 ### Phase 2: Server Bloom Endpoint
 **Goal**: The existing whitelist server rebuilds a bloom filter from its in-memory whitelist on every refresh and exposes it over HTTP with cheap conditional polling, without disturbing existing endpoints or read latency.
@@ -68,7 +70,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Shared Bloom Library | 0/? | Not started | - |
+| 1. Shared Bloom Library | 0/2 | Not started | - |
 | 2. Server Bloom Endpoint | 0/? | Not started | - |
 | 3. Bloom Gate Plugin | 0/? | Not started | - |
 | 4. Ops & Integration | 0/? | Not started | - |
