@@ -9,9 +9,9 @@ Requirements for the Bloom Filter Gate Plugin milestone. Each maps to roadmap ph
 
 ### Shared Bloom Library
 
-- [ ] **BLOOM-01**: A shared `pkg/bloom` package builds a filter from a set of pubkeys, sized to a configurable false-positive rate (default 0.0001% / 1e-6)
-- [ ] **BLOOM-02**: A filter serializes to and deserializes from a portable binary format carrying its parameters (bit size, hash count) and a generation/version marker
-- [ ] **BLOOM-03**: Membership query distinguishes "definitely not present" from "possibly present", with no false negatives
+- [x] **BLOOM-01**: A shared `pkg/bloom` package builds a filter from a set of pubkeys, sized to a configurable false-positive rate (default 0.0001% / 1e-6)
+- [x] **BLOOM-02**: A filter serializes to and deserializes from a portable binary format carrying its parameters (bit size, hash count) and a generation/version marker
+- [x] **BLOOM-03**: Membership query distinguishes "definitely not present" from "possibly present", with no false negatives
 
 ### Server Bloom Endpoint
 
@@ -63,9 +63,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BLOOM-01 | Phase 1 | Pending |
-| BLOOM-02 | Phase 1 | Pending |
-| BLOOM-03 | Phase 1 | Pending |
+| BLOOM-01 | Phase 1 | Complete |
+| BLOOM-02 | Phase 1 | Complete |
+| BLOOM-03 | Phase 1 | Complete |
 | SRV-01 | Phase 2 | Pending |
 | SRV-02 | Phase 2 | Pending |
 | SRV-03 | Phase 2 | Pending |
@@ -82,6 +82,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-03 | Phase 4 | Pending |
 
 **Coverage:**
+
 - v1.1 requirements: 17 total
 - Mapped to phases: 17 ✓
 - Unmapped: 0

@@ -30,10 +30,10 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   3. Every pubkey that was added to the filter queries as "possibly present" (zero false negatives), and known non-members query as "definitely not present" except for the bounded false-positive leak
   4. The target false-positive rate is a build-time parameter, not a hardcoded constant
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — pkg/bloom Builder + Filter + DFBF serialization + ReadFilter + generation marker; round-trip, determinism, zero-false-negative, measured-FP-rate, invalid-hex tests
+- [x] 01-01-PLAN.md — pkg/bloom Builder + Filter + DFBF serialization + ReadFilter + generation marker; round-trip, determinism, zero-false-negative, measured-FP-rate, invalid-hex tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -87,7 +87,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Shared Bloom Library | 0/2 | Not started | - |
+| 1. Shared Bloom Library | 1/2 | In Progress|  |
 | 2. Server Bloom Endpoint | 0/? | Not started | - |
 | 3. Bloom Gate Plugin | 0/? | Not started | - |
 | 4. Ops & Integration | 0/? | Not started | - |
