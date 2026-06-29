@@ -1,0 +1,91 @@
+# Requirements: Whitelist Plugin — v1.1 Bloom Filter Gate Plugin
+
+**Defined:** 2026-06-29
+**Core Value:** Every event written to the relay comes from a pubkey in the web of trust — enforced cheaply, reliably, and without forking StrFry.
+
+## v1.1 Requirements
+
+Requirements for the Bloom Filter Gate Plugin milestone. Each maps to roadmap phases.
+
+### Shared Bloom Library
+
+- [ ] **BLOOM-01**: A shared `pkg/bloom` package builds a filter from a set of pubkeys, sized to a configurable false-positive rate (default 0.0001% / 1e-6)
+- [ ] **BLOOM-02**: A filter serializes to and deserializes from a portable binary format carrying its parameters (bit size, hash count) and a generation/version marker
+- [ ] **BLOOM-03**: Membership query distinguishes "definitely not present" from "possibly present", with no false negatives
+
+### Server Bloom Endpoint
+
+- [ ] **SRV-01**: The server rebuilds the bloom filter from the in-memory whitelist on each refresh and swaps it atomically alongside the existing map (lock-free reads, no read stalls)
+- [ ] **SRV-02**: `GET /bloom` returns the current serialized filter
+- [ ] **SRV-03**: `/bloom` supports conditional GET (ETag / `If-None-Match`), returning `304 Not Modified` when the filter is unchanged since the client's last fetch
+- [ ] **SRV-04**: The bloom false-positive rate / sizing is configurable via the server YAML (default 0.0001%)
+
+### Bloom Gate Plugin
+
+- [ ] **GATE-01**: A new standalone `cmd/bloom` StrFry writePolicy plugin reuses the existing JSONL `Handler`/`IOAdapter` protocol abstractions
+- [ ] **GATE-02**: Per-event decisions use the local filter only — not-in-set → reject, maybe-in-set → accept — with zero per-event HTTP
+- [ ] **GATE-03**: The plugin fetches the filter from the server `/bloom` endpoint on startup and on a periodic interval (~6h, conditional GET), swapping it atomically
+- [ ] **GATE-04**: The plugin persists each successfully fetched filter to the config directory (`~/deepfry/`)
+- [ ] **GATE-05**: When the server is unreachable, the plugin loads and serves decisions from the persisted on-disk filter
+- [ ] **GATE-06**: Cold start blocks (returns no decisions) only when there is neither a reachable server nor a persisted filter on disk
+- [ ] **GATE-07**: The plugin is configured via `~/deepfry/` YAML (server URL, refresh interval, persisted-filter path)
+
+### Ops & Integration
+
+- [ ] **OPS-01**: Makefile build targets for the bloom plugin (native + static Alpine)
+- [ ] **OPS-02**: The Docker image bakes the bloom binary; `strfry.conf` can select it as the writePolicy plugin
+- [ ] **OPS-03**: README documents the bloom plugin and the `/bloom` endpoint
+
+## v2 / Future Requirements
+
+Acknowledged but deferred — not in the current roadmap.
+
+### Bloom Gate
+
+- **GATE-F1**: Faster (minutes-scale) refresh option for near-real-time whitelist propagation
+- **GATE-F2**: Metrics endpoint / stderr counters for bloom hit/miss/accept rates and filter generation age
+
+## Out of Scope
+
+Explicitly excluded. Documented to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| Modifying `cmd/whitelist` or `cmd/router` | Bloom gate is a separate, opt-in fourth binary; proven plugins stay byte-identical |
+| Per-event HTTP fallback in steady state | Bloom is the sole local gate by design (maybe → accept); HTTP only ever used for the periodic filter fetch |
+| Eliminating false-positive accepts | A ~1e-6 leak rate is deliberately tolerated for zero per-event network cost |
+| Forking StrFry | All integration via the stdin/stdout JSON plugin protocol |
+| Counting / cuckoo / deletable filters | Whitelist is rebuilt wholesale each refresh; a plain bloom rebuilt per cycle suffices |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| BLOOM-01 | TBD | Pending |
+| BLOOM-02 | TBD | Pending |
+| BLOOM-03 | TBD | Pending |
+| SRV-01 | TBD | Pending |
+| SRV-02 | TBD | Pending |
+| SRV-03 | TBD | Pending |
+| SRV-04 | TBD | Pending |
+| GATE-01 | TBD | Pending |
+| GATE-02 | TBD | Pending |
+| GATE-03 | TBD | Pending |
+| GATE-04 | TBD | Pending |
+| GATE-05 | TBD | Pending |
+| GATE-06 | TBD | Pending |
+| GATE-07 | TBD | Pending |
+| OPS-01 | TBD | Pending |
+| OPS-02 | TBD | Pending |
+| OPS-03 | TBD | Pending |
+
+**Coverage:**
+- v1.1 requirements: 17 total
+- Mapped to phases: 0 (roadmap pending)
+- Unmapped: 17 ⚠️
+
+---
+*Requirements defined: 2026-06-29*
+*Last updated: 2026-06-29 after initial definition*
