@@ -40,6 +40,12 @@ go.work.sum
 # env file
 .env
 
+# Per-host deploy config (copy from the tracked *.example templates).
+# Kept untracked so each host carries its own values and `git pull` never conflicts.
+config/whitelist/whitelist.yaml
+config/whitelist/router.yaml
+config/whitelist/whitelist-server.yaml
+
 # switch-dgraph.sh backups
 .switch-dgraph-backups/
 

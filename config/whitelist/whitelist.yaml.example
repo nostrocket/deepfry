@@ -1,0 +1,21 @@
+# whitelist.yaml — config for the StrFry writePolicy plugins (whitelist / router / bloom).
+#
+# SETUP: copy this file to whitelist.yaml (gitignored) and adjust for THIS host:
+#     cp whitelist.yaml.example whitelist.yaml
+# The real whitelist.yaml is per-host and never tracked, so `git pull` never conflicts.
+#
+# server_url: where the whitelist server's HTTP API lives.
+#   - Same docker network (single-host deploy):  http://whitelist-server:8081
+#   - Server on a different LAN host:             http://<server-ip>:8081
+server_url: "http://whitelist-server:8081"
+check_timeout: 2s
+
+# --- bloom gate plugin (cmd/bloom) only; ignored by whitelist/router ---
+# Reuses server_url above for the periodic GET /bloom fetch (conditional GET / ETag).
+# bloom_path MUST live under /root/deepfry/bloom-data/ (mounted via BLOOM_DATA_PATH in
+# docker-compose.strfry.yml) so the persisted filter survives container restarts and the
+# relay keeps gating when the whitelist server is unreachable.
+bloom_path: "/root/deepfry/bloom-data/bloom.dfbf"
+bloom_refresh_interval: 6h
+bloom_fetch_timeout: 30s
+refresh_retry_count: 3

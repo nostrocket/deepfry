@@ -236,6 +236,7 @@ services:
 # ============================================================================
 networks:
   deepfry-net:
-    # Use external network created by main docker-compose.yml
+    # Use an existing external network. Name is per-host: defaults to the shared
+    # deepfry-net, override via DEEPFRY_NET_NAME in .env (e.g. strfry-net).
     external: true
-    name: deepfry-net
+    name: ${DEEPFRY_NET_NAME:-deepfry-net}

@@ -1,0 +1,9 @@
+# router.yaml — config for the `router` writePolicy plugin (quarantine-routing variant).
+#
+# SETUP: copy this file to router.yaml (gitignored) and adjust for THIS host:
+#     cp router.yaml.example router.yaml
+#
+# server_url: where the whitelist server's HTTP API lives.
+#   - Same docker network (single-host deploy):  http://whitelist-server:8081
+#   - Server on a different LAN host:             http://<server-ip>:8081
+server_url: "http://whitelist-server:8081"

@@ -73,4 +73,7 @@ services:
 networks:
   deepfry-net:
     external: true
-    name: deepfry-net
+    # Network name is per-host: defaults to the shared deepfry-net, override via
+    # DEEPFRY_NET_NAME in .env (e.g. strfry-net) on a split deploy. The named
+    # network must already exist (`docker network create <name>`).
+    name: ${DEEPFRY_NET_NAME:-deepfry-net}
