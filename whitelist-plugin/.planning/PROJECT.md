@@ -75,12 +75,12 @@ Every event written to the relay comes from a pubkey in the web of trust — enf
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Sole local gate (no per-event HTTP, maybe→accept) | Removes the server from the hot path entirely; meets load/latency/resilience goals at once | — Pending |
-| 0.0001% (1e-6) false-positive target | Strongest practical spam suppression; filter still only a few MB at 1M keys | — Pending |
-| Separate `cmd/bloom` binary (not a flag on existing plugins) | Keeps the proven `whitelist`/`router` plugins byte-identical; opt-in adoption | — Pending |
-| Persist filter to `~/deepfry/` + serve on server-unreachable | Resilience: relay survives server downtime, incl. at cold start | — Pending |
-| New `GET /bloom` on existing server + conditional GET | Reuses the server that already owns the canonical whitelist; cheap polling | — Pending |
-| Refresh ~6h tracking server's Dgraph refresh | Matches existing staleness model; quarantine-rescuer backfills the gap | — Pending |
+| Sole local gate (no per-event HTTP, maybe→accept) | Removes the server from the hot path entirely; meets load/latency/resilience goals at once | ✓ Shipped (Phase 3, GATE-02) |
+| 0.0001% (1e-6) false-positive target | Strongest practical spam suppression; filter still only a few MB at 1M keys | ✓ Shipped (Phase 1/2, configurable) |
+| Separate `cmd/bloom` binary (not a flag on existing plugins) | Keeps the proven `whitelist`/`router` plugins byte-identical; opt-in adoption | ✓ Shipped (Phase 3/4, byte-identical verified) |
+| Persist filter to `~/deepfry/` + serve on server-unreachable | Resilience: relay survives server downtime, incl. at cold start | ✓ Shipped (Phase 3, GATE-04/05/06; Docker mount Phase 4) |
+| New `GET /bloom` on existing server + conditional GET | Reuses the server that already owns the canonical whitelist; cheap polling | ✓ Shipped (Phase 2, SRV-02/03) |
+| Refresh ~6h tracking server's Dgraph refresh | Matches existing staleness model; quarantine-rescuer backfills the gap | ✓ Shipped (Phase 3, GATE-03/07) |
 
 ## Evolution
 
@@ -100,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-30 — Phase 1 (Shared Bloom Library) complete: `pkg/bloom` shipped and verified.*
+*Last updated: 2026-06-30 — Milestone v1.1 (Bloom Filter Gate Plugin) COMPLETE: all 4 phases shipped and verified (17/17 requirements). Bloom gate is built, deployable, and documented; ready for `/gsd-complete-milestone`.*
