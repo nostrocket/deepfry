@@ -24,14 +24,27 @@ use crate::store::Store;
 /// A4); a 500×64-hex response (~35 KB) is far under the 256 KiB request limit.
 const LIMIT: i64 = 500;
 
-/// Bounded-retry ceiling: 1 initial attempt + 2 retries (fail-fast, D-06).
-const MAX_ATTEMPTS: u32 = 3;
+/// Bounded-retry ceiling: 1 initial attempt + 4 retries (D-06).
+///
+/// Raised 3 → 5 (debug scoring-client-unavailable, 2026-06-27). The heavy scoring
+/// `latestPerAuthor` can OOM-restart the mem_limit-768m adapter on a cold batch;
+/// the rebooting/gated adapter returns HTTP 503 (`Unavailable`) for several
+/// seconds while it warms. The old 3-attempt / ~0.75s-backoff budget could not
+/// outlast a restart, so a single transient 503 aborted the whole run. Five
+/// attempts with the wider `BACKOFF_CAP` below give the adapter time to come back
+/// before the run gives up.
+const MAX_ATTEMPTS: u32 = 5;
 
 /// Backoff base; doubles per attempt, capped at `BACKOFF_CAP`.
 const BACKOFF_BASE: Duration = Duration::from_millis(250);
 
-/// Backoff cap (250ms → 500ms → 1s … never exceeds this).
-const BACKOFF_CAP: Duration = Duration::from_secs(2);
+/// Backoff cap (250ms → 500ms → 1s → 2s → 4s … never exceeds this).
+///
+/// Raised 2s → 10s (debug scoring-client-unavailable, 2026-06-27). Pairs with the
+/// MAX_ATTEMPTS bump so the cumulative retry window (~0.25+0.5+1+2 ≈ 3.75s of
+/// sleeps across 5 attempts, plus the per-attempt request time) spans a transient
+/// adapter OOM-restart instead of exhausting before it recovers.
+const BACKOFF_CAP: Duration = Duration::from_secs(10);
 
 /// The walk's error taxonomy: a transport/in-body client error or a store error.
 #[derive(Debug, thiserror::Error)]
@@ -710,13 +723,15 @@ mod tests {
     #[test]
     fn abort_preserves_cursor() {
         let (dir, path) = temp_store();
-        // page 1 succeeds (cursor → PK2), then 503 to exhaustion (3 attempts).
+        // page 1 succeeds (cursor → PK2), then 503 to exhaustion (MAX_ATTEMPTS=5).
         let server = StubServer::start(vec![
             Resp::ok(stats_body(100)),
             Resp::ok(authors_body(&[PK1, PK2], true, Some(PK2))), // page 1 persisted, cursor=PK2
             Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 1
             Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 2
-            Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 3 (exhaust)
+            Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 3
+            Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 4
+            Resp::status("503 Service Unavailable", r#"{}"#),     // attempt 5 (exhaust)
         ]);
         let store = Store::open(&path).expect("open store");
         let client = GraphQlClient::new(server.url());
@@ -841,10 +856,11 @@ mod tests {
                 for (slice, has_more, ec) in pages.iter().take(*cut_pages) {
                     script.push(Resp::ok(authors_body(slice, *has_more, *ec)));
                 }
-                // Force an abort after the cut so leg 1 stops cleanly mid-walk.
-                script.push(Resp::status("503 Service Unavailable", r#"{}"#));
-                script.push(Resp::status("503 Service Unavailable", r#"{}"#));
-                script.push(Resp::status("503 Service Unavailable", r#"{}"#));
+                // Force an abort after the cut so leg 1 stops cleanly mid-walk:
+                // 503 to exhaustion (one per attempt, the whole MAX_ATTEMPTS budget).
+                for _ in 0..MAX_ATTEMPTS {
+                    script.push(Resp::status("503 Service Unavailable", r#"{}"#));
+                }
                 let server = StubServer::start(script);
                 let store = Store::open(&path).expect("open store");
                 let client = GraphQlClient::new(server.url());

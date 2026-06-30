@@ -71,11 +71,23 @@ impl GraphQlClient {
             // Bounded timeouts so a stalled adapter response can never hang the
             // (serial) fetch stage indefinitely — reqwest's default has none. A
             // timeout maps to a retryable Transport error (enumerate::retry), not
-            // an unbounded freeze. 30s request budget allows the multi-MB
-            // latestPerAuthor payloads; 3s to establish the connection.
+            // an unbounded freeze. 3s to establish the connection.
+            //
+            // Request budget raised 30s → 120s (debug scoring-client-unavailable,
+            // 2026-06-27). The heavy scoring `latestPerAuthor` (kind=1,
+            // perAuthor=100, 50 authors) COLD-reads ~5k event payloads off the
+            // USB-mounted 318 GB strfry LMDB; a single cold batch measured ~49s
+            // live (warm: 0.35s). The old 30s budget cut that cold read short →
+            // Transport(timeout)/503 → exhausted the retry budget →
+            // `Client(Unavailable)`, aborting scoring on the very first batch.
+            // 120s clears the observed cold ceiling with headroom for I/O
+            // contention, letting the first batch complete and WARM the OS page
+            // cache so every subsequent batch is fast. Lower again once the
+            // adapter's DB is on fast local storage. Enumeration's `authors` query
+            // is ~27ms so this only loosens the bound for the heavy path.
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(3))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("build graphql reqwest client"),
             endpoint: endpoint.into(),
