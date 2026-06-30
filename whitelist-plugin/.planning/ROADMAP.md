@@ -75,7 +75,14 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   5. Server URL, refresh interval, and persisted-filter path are all configurable via `~/deepfry/` YAML
   6. The plugin reuses the existing `Handler`/`IOAdapter` JSONL abstractions, and the `whitelist`/`router` binaries are left byte-identical
 
-**Plans**: TBD
+**Plans**: 2/2 plans created
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — `pkg/config` `BloomConfig`/`LoadBloomConfig` (bloom_-prefixed keys in shared whitelist.yaml, GATE-07/D-01/02/03) + `pkg/bloomgate` `BloomChecker` (handler.Checker over atomic `*bloom.Filter` with cold-start ready gate, GATE-01/02/D-06/D-12)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — `pkg/bloomgate` `BloomFetcher` (periodic conditional-GET, parse-before-persist, temp+rename, disk-first cold start, keep-last-good, GATE-03/04/05/06/D-04..D-11) + `cmd/bloom/main.go` wiring the reused Handler/IOAdapter event loop (GATE-01/D-12)
 
 ### Phase 4: Ops & Integration
 
