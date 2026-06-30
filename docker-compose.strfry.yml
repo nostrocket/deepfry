@@ -22,6 +22,12 @@ services:
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
       - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
       - ./config/whitelist/router.yaml:/root/deepfry/router.yaml
+      # Bloom filter persistence (GATE-05): writable directory for the bloom plugin's
+      # persisted filter so it survives container restarts. Override host path via
+      # BLOOM_DATA_PATH env var. When using the bloom plugin, set bloom_path in
+      # whitelist.yaml to a file under /root/deepfry/bloom-data/ (e.g.
+      # bloom_path: /root/deepfry/bloom-data/bloom.dfbf).
+      - ${BLOOM_DATA_PATH:-./data/bloom}:/root/deepfry/bloom-data
     ports:
       - "7777:7777" # Nostr WebSocket
     networks:
