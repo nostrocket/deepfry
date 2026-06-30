@@ -1,2 +1,12 @@
 server_url: "http://whitelist-server:8081"
 check_timeout: 2s
+
+# Used by the `bloom` gate plugin (cmd/bloom). It reuses server_url above for the
+# periodic GET /bloom fetch (conditional GET / ETag). bloom_path MUST live under
+# /root/deepfry/bloom-data/ (mounted via BLOOM_DATA_PATH in docker-compose.strfry.yml)
+# so the persisted filter survives restarts and the relay keeps gating when the
+# whitelist server is unreachable.
+bloom_path: "/root/deepfry/bloom-data/bloom.dfbf"
+bloom_refresh_interval: 6h
+bloom_fetch_timeout: 30s
+refresh_retry_count: 3
