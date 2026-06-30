@@ -12,10 +12,23 @@ findings:
   warning: 3
   info: 3
   total: 7
-status: issues_found
+status: partially_resolved
+resolution:
+  resolved: [CR-01, WR-03]
+  resolved_in: 326c894
+  deferred: [WR-01, WR-02, IN-01, IN-02, IN-03]
 ---
 
 # Phase 1: Code Review Report
+
+> **Resolution (2026-06-30, commit `326c894`):** CR-01 (unbounded `ReadFilter`
+> allocation) and WR-03 (unvalidated header fp-rate) are FIXED — `maxPayloadBytes`
+> (1 GiB) cap checked before allocation + `io.CopyN` incremental read; fp-rate
+> rejected if NaN/Inf/<=0/>=1. Regression tests added
+> (`TestReadFilterRejectsOversizedPayload` incl. above-max-int no-panic case,
+> `TestReadFilterRejectsInvalidFPRate`). WR-01 (dead `ContainsHex` error return),
+> WR-02 (Builder/Filter aliasing), and the Info items are accepted as known debt
+> for a follow-up — none block the Phase 1 goal or are security-critical.
 
 **Reviewed:** 2026-06-30T00:00:00Z
 **Depth:** standard
