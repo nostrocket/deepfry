@@ -1,17 +1,22 @@
-FROM golang:1.24-alpine AS plugin-builder
+# Pin the builder to the native build platform so the Go toolchain itself is
+# never QEMU-emulated; cross-compile to the target arch via BuildKit's
+# auto-populated TARGETOS/TARGETARCH (CGO is off, so this is free).
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS plugin-builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /build
 COPY whitelist-plugin/ .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -a -installsuffix cgo \
     -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
     -o /whitelist ./cmd/whitelist
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -a -installsuffix cgo \
     -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
     -o /router ./cmd/router
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -a -installsuffix cgo \
     -ldflags "-w -s -extldflags '-static'" \
     -tags netgo \
