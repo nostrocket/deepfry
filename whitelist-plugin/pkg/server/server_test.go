@@ -427,6 +427,116 @@ func TestSetStats_LiveValues(t *testing.T) {
 	}
 }
 
+// TestBloomReflectsWhitelist verifies end-to-end that the served /bloom filter
+// tracks successive SwapFilter calls (emulating two refreshes) and that the ETag
+// changes when the key set changes so a stale If-None-Match yields 200 not 304.
+// Covers ROADMAP success criteria 1 (membership) and 3 (ETag-based conditional GET).
+func TestBloomReflectsWhitelist(t *testing.T) {
+	s, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	// --- Refresh A: key set {k1} ---
+	k1 := makeKey(0x11)
+	kOther := makeKey(0xFF) // not in any filter
+
+	bA := bloom.NewBuilder(1, 1e-6)
+	bA.Add(k1)
+	fA, err := bA.Build()
+	if err != nil {
+		t.Fatalf("build A failed: %v", err)
+	}
+	if err := s.SwapFilter(fA); err != nil {
+		t.Fatalf("SwapFilter A failed: %v", err)
+	}
+
+	// GET /bloom after first swap — expect 200, correct ETag, k1 possibly-present
+	resp, err := http.Get(ts.URL + "/bloom")
+	if err != nil {
+		t.Fatalf("GET /bloom (A) failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after SwapFilter A, got %d", resp.StatusCode)
+	}
+	etagA := resp.Header.Get("ETag")
+	if etagA == "" {
+		t.Fatal("expected non-empty ETag after SwapFilter A")
+	}
+	if etagA != fA.ETag() {
+		t.Fatalf("ETag mismatch: got %q, want %q", etagA, fA.ETag())
+	}
+
+	bodyA, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body A failed: %v", err)
+	}
+	f2A, err := bloom.ReadFilter(bytes.NewReader(bodyA))
+	if err != nil {
+		t.Fatalf("ReadFilter A failed: %v", err)
+	}
+	if !f2A.Contains(k1) {
+		t.Errorf("filter A: k1 should be possibly-present but Contains returned false")
+	}
+	if f2A.Contains(kOther) {
+		// A false positive is statistically possible but vanishingly unlikely at 1e-6;
+		// treat as an error to surface unexpected membership.
+		t.Errorf("filter A: kOther unexpectedly reported as possibly-present")
+	}
+
+	// --- Refresh B: key set {k1, k2} — adds a new key ---
+	k2 := makeKey(0x22)
+	bB := bloom.NewBuilder(2, 1e-6)
+	bB.Add(k1)
+	bB.Add(k2)
+	fB, err := bB.Build()
+	if err != nil {
+		t.Fatalf("build B failed: %v", err)
+	}
+	if err := s.SwapFilter(fB); err != nil {
+		t.Fatalf("SwapFilter B failed: %v", err)
+	}
+
+	// GET /bloom with stale ETag (filter A's ETag) — must return 200 with new ETag (criteria 3)
+	reqB, _ := http.NewRequest("GET", ts.URL+"/bloom", nil)
+	reqB.Header.Set("If-None-Match", etagA)
+	respB, err := http.DefaultClient.Do(reqB)
+	if err != nil {
+		t.Fatalf("GET /bloom (B) failed: %v", err)
+	}
+	defer respB.Body.Close()
+
+	if respB.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for stale If-None-Match after SwapFilter B, got %d", respB.StatusCode)
+	}
+	etagB := respB.Header.Get("ETag")
+	if etagB == "" {
+		t.Fatal("expected non-empty ETag in response B")
+	}
+	if etagB == etagA {
+		t.Fatalf("ETag must change after key-set change: both are %q", etagA)
+	}
+	if etagB != fB.ETag() {
+		t.Fatalf("ETag B mismatch: got %q, want %q", etagB, fB.ETag())
+	}
+
+	bodyB, err := io.ReadAll(respB.Body)
+	if err != nil {
+		t.Fatalf("read body B failed: %v", err)
+	}
+	f2B, err := bloom.ReadFilter(bytes.NewReader(bodyB))
+	if err != nil {
+		t.Fatalf("ReadFilter B failed: %v", err)
+	}
+	// New key k2 must be possibly-present (criteria 1: membership tracks the current key set)
+	if !f2B.Contains(k2) {
+		t.Errorf("filter B: k2 (newly added) should be possibly-present but Contains returned false")
+	}
+	if !f2B.Contains(k1) {
+		t.Errorf("filter B: k1 should still be possibly-present after second swap")
+	}
+}
+
 func TestHandleVersion(t *testing.T) {
 	_, ts := setupServer(nil, true)
 	defer ts.Close()
