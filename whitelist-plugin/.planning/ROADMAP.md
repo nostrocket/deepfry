@@ -14,7 +14,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 - [x] **Phase 1: Shared Bloom Library** - `pkg/bloom` builds, serializes, and queries a false-positive-rate-sized filter (completed 2026-06-29)
 - [x] **Phase 2: Server Bloom Endpoint** - Server rebuilds the filter on each refresh and serves it via conditional `GET /bloom` (completed 2026-06-30)
 - [x] **Phase 3: Bloom Gate Plugin** - Standalone `cmd/bloom` plugin gates writes from a local filter with zero per-event HTTP, persisting and surviving server outages (completed 2026-06-30)
-- [ ] **Phase 4: Ops & Integration** - Build targets, Docker/`strfry.conf` wiring, and documentation for the bloom gate
+- [x] **Phase 4: Ops & Integration** - Build targets, Docker/`strfry.conf` wiring, and documentation for the bloom gate (completed 2026-06-30)
 
 ## Phase Details
 
@@ -95,11 +95,11 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   2. The Docker image bakes the bloom binary alongside `whitelist`/`router`, and `strfry.conf` can select it as the writePolicy plugin by changing a single line
   3. The README documents the bloom plugin (config, behavior, resilience) and the server's `/bloom` endpoint, consistent with the existing plugin/endpoint docs
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **Wave 1** *(both plans independent — disjoint files, run in parallel)*
 
 - [x] 04-01-PLAN.md — bloom Makefile targets (OPS-01) + Dockerfile.strfry build/COPY + strfry.conf selectable plugin + docker-compose `/root/deepfry/bloom-data` persistence mount (OPS-02)
-- [ ] 04-02-PLAN.md — README bloom gate plugin section, GET /bloom endpoint, build/file-structure/docker-config docs (OPS-03)
+- [x] 04-02-PLAN.md — README bloom gate plugin section, GET /bloom endpoint, build/file-structure/docker-config docs (OPS-03)
 
 ## Progress
 
@@ -108,7 +108,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 | 1. Shared Bloom Library | 2/2 | Complete    | 2026-06-29 |
 | 2. Server Bloom Endpoint | 2/2 | Complete    | 2026-06-30 |
 | 3. Bloom Gate Plugin | 2/2 | Complete    | 2026-06-30 |
-| 4. Ops & Integration | 1/2 | In Progress|  |
+| 4. Ops & Integration | 2/2 | Complete   | 2026-06-30 |
 
 ---
 *Roadmap created: 2026-06-29*
