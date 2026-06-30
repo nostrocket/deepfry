@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
+	"whitelist-plugin/pkg/bloom"
 	"whitelist-plugin/pkg/version"
 	"whitelist-plugin/pkg/whitelist"
 )
@@ -220,6 +223,207 @@ func TestHandleStats(t *testing.T) {
 	}
 	if body2.LastRefresh == "" {
 		t.Fatal("expected non-empty last_refresh")
+	}
+}
+
+func TestHandleBloom_NotReady(t *testing.T) {
+	_, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/bloom")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 before filter is built, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if body["status"] != "loading" {
+		t.Fatalf("expected status=loading, got %q", body["status"])
+	}
+}
+
+func TestHandleBloom_OK(t *testing.T) {
+	s, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	// Build a real filter over makeKey-derived keys
+	keys := [][32]byte{makeKey(0xAA), makeKey(0xBB), makeKey(0xCC)}
+	b := bloom.NewBuilder(uint(len(keys)), 1e-6)
+	for _, k := range keys {
+		b.Add(k)
+	}
+	f, err := b.Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if err := s.SwapFilter(f); err != nil {
+		t.Fatalf("SwapFilter failed: %v", err)
+	}
+
+	resp, err := http.Get(ts.URL + "/bloom")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("expected Content-Type application/octet-stream, got %q", ct)
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("expected non-empty ETag header")
+	}
+	if etag != f.ETag() {
+		t.Fatalf("ETag mismatch: got %q, want %q", etag, f.ETag())
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body failed: %v", err)
+	}
+	if len(bodyBytes) == 0 {
+		t.Fatal("expected non-empty body")
+	}
+
+	// Round-trip through bloom.ReadFilter and verify Contains
+	f2, err := bloom.ReadFilter(bytes.NewReader(bodyBytes))
+	if err != nil {
+		t.Fatalf("ReadFilter failed: %v", err)
+	}
+	for _, k := range keys {
+		if !f2.Contains(k) {
+			t.Errorf("round-tripped filter missing key %x", k)
+		}
+	}
+}
+
+func TestHandleBloom_NotModified(t *testing.T) {
+	s, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	keys := [][32]byte{makeKey(0xDD)}
+	b := bloom.NewBuilder(uint(len(keys)), 1e-6)
+	for _, k := range keys {
+		b.Add(k)
+	}
+	f, err := b.Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if err := s.SwapFilter(f); err != nil {
+		t.Fatalf("SwapFilter failed: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/bloom", nil)
+	req.Header.Set("If-None-Match", f.ETag())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304 for matching ETag, got %d", resp.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if len(bodyBytes) != 0 {
+		t.Fatalf("expected empty body for 304, got %d bytes", len(bodyBytes))
+	}
+	if etag := resp.Header.Get("ETag"); etag == "" {
+		t.Fatal("expected ETag header on 304")
+	}
+}
+
+func TestHandleBloom_StaleMismatchedETag(t *testing.T) {
+	s, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	keys := [][32]byte{makeKey(0xEE)}
+	b := bloom.NewBuilder(uint(len(keys)), 1e-6)
+	for _, k := range keys {
+		b.Add(k)
+	}
+	f, err := b.Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if err := s.SwapFilter(f); err != nil {
+		t.Fatalf("SwapFilter failed: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/bloom", nil)
+	req.Header.Set("If-None-Match", `"staleetag0000000000000000000000000000000000000000000000000000000000"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for mismatched ETag, got %d", resp.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if len(bodyBytes) == 0 {
+		t.Fatal("expected non-empty body for 200 response")
+	}
+}
+
+func TestSetStats_LiveValues(t *testing.T) {
+	s, ts := setupServer(nil, false)
+	defer ts.Close()
+
+	// SetStats should NOT flip ready — health should still 503
+	healthResp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 health before SetReady, got %d", healthResp.StatusCode)
+	}
+
+	// Call SetStats with known values
+	now := time.Now().Truncate(time.Second)
+	s.SetStats(42, now)
+
+	// Verify /stats shape unchanged and values live
+	resp, err := http.Get(ts.URL + "/stats")
+	if err != nil {
+		t.Fatalf("stats request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var body statsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if body.Entries != 42 {
+		t.Fatalf("expected entries=42 after SetStats, got %d", body.Entries)
+	}
+	if body.LastRefresh == "" {
+		t.Fatal("expected non-empty last_refresh after SetStats")
+	}
+
+	// Health still 503 — SetStats must NOT have called s.ready.Store(true)
+	healthResp2, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("health request 2 failed: %v", err)
+	}
+	healthResp2.Body.Close()
+	if healthResp2.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 health after SetStats (not SetReady), got %d", healthResp2.StatusCode)
 	}
 }
 
