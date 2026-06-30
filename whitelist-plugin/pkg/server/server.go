@@ -9,18 +9,27 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+	"whitelist-plugin/pkg/bloom"
 	"whitelist-plugin/pkg/version"
 	"whitelist-plugin/pkg/whitelist"
 )
 
+// bloomEntry holds the pre-serialized filter and its ETag, swapped atomically
+// on each successful refresh. nil until the first rebuild (D-03, D-05).
+type bloomEntry struct {
+	etag  string // Filter.ETag() — pre-computed quoted hex string
+	bytes []byte // Filter.MarshalBinary() output — cached once per generation
+}
+
 type WhitelistServer struct {
-	whitelist   *whitelist.Whitelist
-	addr        string
-	logger      *log.Logger
-	debug       bool
-	ready       atomic.Bool
-	entries     atomic.Int64
-	lastRefresh atomic.Pointer[time.Time]
+	whitelist     *whitelist.Whitelist
+	addr          string
+	logger        *log.Logger
+	debug         bool
+	ready         atomic.Bool
+	entries       atomic.Int64
+	lastRefresh   atomic.Pointer[time.Time]
+	bloomSnapshot atomic.Pointer[bloomEntry] // separate from whitelist.list (D-03)
 }
 
 func NewWhitelistServer(wl *whitelist.Whitelist, addr string, debug bool, logger *log.Logger) *WhitelistServer {
@@ -40,6 +49,25 @@ func (s *WhitelistServer) SetReady(entries int) {
 	s.ready.Store(true)
 }
 
+// SetStats updates entries and last_refresh live values without flipping readiness.
+// Readiness is set once at startup by SetReady; SetStats keeps the stats values
+// current after each subsequent Dgraph refresh (D-10).
+func (s *WhitelistServer) SetStats(n int, t time.Time) {
+	s.entries.Store(int64(n))
+	s.lastRefresh.Store(&t)
+}
+
+// SwapFilter serializes f once into a bloomEntry and stores it atomically.
+// Pre-serializing here means the handleBloom handler is alloc-free per request (D-05).
+func (s *WhitelistServer) SwapFilter(f *bloom.Filter) error {
+	b, err := f.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	s.bloomSnapshot.Store(&bloomEntry{etag: f.ETag(), bytes: b})
+	return nil
+}
+
 // Handler returns the HTTP handler for use in testing.
 func (s *WhitelistServer) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -48,6 +76,7 @@ func (s *WhitelistServer) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /stats", s.handleStats)
 	mux.HandleFunc("GET /version", s.handleVersion)
+	mux.HandleFunc("GET /bloom", s.handleBloom)
 	return mux
 }
 
@@ -74,6 +103,33 @@ func (s *WhitelistServer) ListenAndServe(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// handleBloom serves the serialized bloom filter.
+// - nil snapshot → 503 JSON {"status":"loading","detail":"bloom filter not yet built"} (D-08)
+// - If-None-Match matches current ETag → 304 Not Modified, ETag header, empty body (D-07)
+// - otherwise → 200 application/octet-stream, ETag header, Content-Length, cached bytes (D-06)
+func (s *WhitelistServer) handleBloom(w http.ResponseWriter, r *http.Request) {
+	snap := s.bloomSnapshot.Load()
+	if snap == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "loading",
+			"detail": "bloom filter not yet built",
+		})
+		return
+	}
+	// Conditional GET (D-07)
+	if r.Header.Get("If-None-Match") == snap.etag {
+		w.Header().Set("ETag", snap.etag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("ETag", snap.etag)
+	w.Header().Set("Content-Length", strconv.Itoa(len(snap.bytes)))
+	w.Write(snap.bytes)
 }
 
 type checkResponse struct {
