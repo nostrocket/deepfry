@@ -13,7 +13,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 
 - [x] **Phase 1: Shared Bloom Library** - `pkg/bloom` builds, serializes, and queries a false-positive-rate-sized filter (completed 2026-06-29)
 - [x] **Phase 2: Server Bloom Endpoint** - Server rebuilds the filter on each refresh and serves it via conditional `GET /bloom` (completed 2026-06-30)
-- [ ] **Phase 3: Bloom Gate Plugin** - Standalone `cmd/bloom` plugin gates writes from a local filter with zero per-event HTTP, persisting and surviving server outages
+- [x] **Phase 3: Bloom Gate Plugin** - Standalone `cmd/bloom` plugin gates writes from a local filter with zero per-event HTTP, persisting and surviving server outages (completed 2026-06-30)
 - [ ] **Phase 4: Ops & Integration** - Build targets, Docker/`strfry.conf` wiring, and documentation for the bloom gate
 
 ## Phase Details
@@ -75,14 +75,14 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   5. Server URL, refresh interval, and persisted-filter path are all configurable via `~/deepfry/` YAML
   6. The plugin reuses the existing `Handler`/`IOAdapter` JSONL abstractions, and the `whitelist`/`router` binaries are left byte-identical
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **Wave 1**
 
 - [x] 03-01-PLAN.md — `pkg/config` `BloomConfig`/`LoadBloomConfig` (bloom_-prefixed keys in shared whitelist.yaml, GATE-07/D-01/02/03) + `pkg/bloomgate` `BloomChecker` (handler.Checker over atomic `*bloom.Filter` with cold-start ready gate, GATE-01/02/D-06/D-12)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — `pkg/bloomgate` `BloomFetcher` (periodic conditional-GET, parse-before-persist, temp+rename, disk-first cold start, keep-last-good, GATE-03/04/05/06/D-04..D-11) + `cmd/bloom/main.go` wiring the reused Handler/IOAdapter event loop (GATE-01/D-12)
+- [x] 03-02-PLAN.md — `pkg/bloomgate` `BloomFetcher` (periodic conditional-GET, parse-before-persist, temp+rename, disk-first cold start, keep-last-good, GATE-03/04/05/06/D-04..D-11) + `cmd/bloom/main.go` wiring the reused Handler/IOAdapter event loop (GATE-01/D-12)
 
 ### Phase 4: Ops & Integration
 
@@ -103,7 +103,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 |-------|----------------|--------|-----------|
 | 1. Shared Bloom Library | 2/2 | Complete    | 2026-06-29 |
 | 2. Server Bloom Endpoint | 2/2 | Complete    | 2026-06-30 |
-| 3. Bloom Gate Plugin | 1/2 | In Progress|  |
+| 3. Bloom Gate Plugin | 2/2 | Complete   | 2026-06-30 |
 | 4. Ops & Integration | 0/? | Not started | - |
 
 ---

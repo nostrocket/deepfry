@@ -24,10 +24,10 @@ Requirements for the Bloom Filter Gate Plugin milestone. Each maps to roadmap ph
 
 - [x] **GATE-01**: A new standalone `cmd/bloom` StrFry writePolicy plugin reuses the existing JSONL `Handler`/`IOAdapter` protocol abstractions
 - [x] **GATE-02**: Per-event decisions use the local filter only — not-in-set → reject, maybe-in-set → accept — with zero per-event HTTP
-- [ ] **GATE-03**: The plugin fetches the filter from the server `/bloom` endpoint on startup and on a periodic interval (~6h, conditional GET), swapping it atomically
-- [ ] **GATE-04**: The plugin persists each successfully fetched filter to the config directory (`~/deepfry/`)
-- [ ] **GATE-05**: When the server is unreachable, the plugin loads and serves decisions from the persisted on-disk filter
-- [ ] **GATE-06**: Cold start blocks (returns no decisions) only when there is neither a reachable server nor a persisted filter on disk
+- [x] **GATE-03**: The plugin fetches the filter from the server `/bloom` endpoint on startup and on a periodic interval (~6h, conditional GET), swapping it atomically
+- [x] **GATE-04**: The plugin persists each successfully fetched filter to the config directory (`~/deepfry/`)
+- [x] **GATE-05**: When the server is unreachable, the plugin loads and serves decisions from the persisted on-disk filter
+- [x] **GATE-06**: Cold start blocks (returns no decisions) only when there is neither a reachable server nor a persisted filter on disk
 - [x] **GATE-07**: The plugin is configured via `~/deepfry/` YAML (server URL, refresh interval, persisted-filter path)
 
 ### Ops & Integration
@@ -72,10 +72,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRV-04 | Phase 2 | Complete |
 | GATE-01 | Phase 3 | Complete |
 | GATE-02 | Phase 3 | Complete |
-| GATE-03 | Phase 3 | Pending |
-| GATE-04 | Phase 3 | Pending |
-| GATE-05 | Phase 3 | Pending |
-| GATE-06 | Phase 3 | Pending |
+| GATE-03 | Phase 3 | Complete |
+| GATE-04 | Phase 3 | Complete |
+| GATE-05 | Phase 3 | Complete |
+| GATE-06 | Phase 3 | Complete |
 | GATE-07 | Phase 3 | Complete |
 | OPS-01 | Phase 4 | Pending |
 | OPS-02 | Phase 4 | Pending |
