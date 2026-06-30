@@ -1,6 +1,7 @@
 APP=whitelist
 APP_SERVER=whitelist-server
 APP_ROUTER=router
+APP_BLOOM=bloom
 PKG=whitelist-plugin
 
 # Version can be set via environment variable or defaults to dev
@@ -25,9 +26,9 @@ LDFLAGS=-X 'whitelist-plugin/pkg/version.Version=$(VERSION)' \
 
 BUILD_FLAGS=-ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-server build-router run test fmt vet tidy clean help bench build-alpine build-linux build-server-alpine build-server-linux build-router-alpine build-router-linux
+.PHONY: all build build-server build-router build-bloom run test fmt vet tidy clean help bench build-alpine build-linux build-server-alpine build-server-linux build-router-alpine build-router-linux build-bloom-alpine build-bloom-linux
 
-all: build build-server build-router
+all: build build-server build-router build-bloom
 
 ## Build the plugin (thin client)
 build:
@@ -95,6 +96,28 @@ build-router-linux:
 		-o bin/$(APP_ROUTER)-linux ./cmd/$(APP_ROUTER)
 	@echo "Built static router binary for Linux: bin/$(APP_ROUTER)-linux"
 
+## Build the bloom gate plugin (zero per-event HTTP; local bloom filter only)
+build-bloom:
+	go build $(BUILD_FLAGS) -o bin/$(APP_BLOOM)$(BINARY_EXT) ./cmd/$(APP_BLOOM)
+
+## Build static bloom gate plugin binary for Alpine Linux (musl libc)
+build-bloom-alpine:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_BLOOM)-alpine ./cmd/$(APP_BLOOM)
+	@echo "Built static bloom binary for Alpine Linux: bin/$(APP_BLOOM)-alpine"
+
+## Build static bloom gate plugin binary for generic Linux
+build-bloom-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-a -installsuffix cgo \
+		-ldflags "$(LDFLAGS) -w -s -extldflags '-static'" \
+		-tags netgo \
+		-o bin/$(APP_BLOOM)-linux ./cmd/$(APP_BLOOM)
+	@echo "Built static bloom binary for Linux: bin/$(APP_BLOOM)-linux"
+
 ## Run the application
 run:
 	go run $(BUILD_FLAGS) ./cmd/$(APP)
@@ -136,6 +159,12 @@ help:
 	@echo   build-server-alpine  - Build static server binary for Alpine Linux
 	@echo   build-linux          - Build static plugin binary for generic Linux
 	@echo   build-server-linux   - Build static server binary for generic Linux
+	@echo   build-router         - Build the router plugin
+	@echo   build-router-alpine  - Build static router plugin binary for Alpine Linux
+	@echo   build-router-linux   - Build static router plugin binary for generic Linux
+	@echo   build-bloom          - Build the bloom gate plugin
+	@echo   build-bloom-alpine   - Build static bloom gate plugin binary for Alpine Linux
+	@echo   build-bloom-linux    - Build static bloom gate plugin binary for generic Linux
 	@echo   run                  - Run the plugin
 	@echo   test                 - Run tests
 	@echo   bench                - Run benchmarks
