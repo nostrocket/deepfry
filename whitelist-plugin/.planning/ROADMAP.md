@@ -75,10 +75,10 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   5. Server URL, refresh interval, and persisted-filter path are all configurable via `~/deepfry/` YAML
   6. The plugin reuses the existing `Handler`/`IOAdapter` JSONL abstractions, and the `whitelist`/`router` binaries are left byte-identical
 
-**Plans**: 2/2 plans created
+**Plans**: 1/2 plans executed
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — `pkg/config` `BloomConfig`/`LoadBloomConfig` (bloom_-prefixed keys in shared whitelist.yaml, GATE-07/D-01/02/03) + `pkg/bloomgate` `BloomChecker` (handler.Checker over atomic `*bloom.Filter` with cold-start ready gate, GATE-01/02/D-06/D-12)
+- [x] 03-01-PLAN.md — `pkg/config` `BloomConfig`/`LoadBloomConfig` (bloom_-prefixed keys in shared whitelist.yaml, GATE-07/D-01/02/03) + `pkg/bloomgate` `BloomChecker` (handler.Checker over atomic `*bloom.Filter` with cold-start ready gate, GATE-01/02/D-06/D-12)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -103,7 +103,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 |-------|----------------|--------|-----------|
 | 1. Shared Bloom Library | 2/2 | Complete    | 2026-06-29 |
 | 2. Server Bloom Endpoint | 2/2 | Complete    | 2026-06-30 |
-| 3. Bloom Gate Plugin | 0/? | Not started | - |
+| 3. Bloom Gate Plugin | 1/2 | In Progress|  |
 | 4. Ops & Integration | 0/? | Not started | - |
 
 ---
