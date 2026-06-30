@@ -1,5 +1,7 @@
 ---
 created: 2026-06-30T07:07:25.808Z
+resolved: 2026-06-30T08:30:00.000Z
+status: done
 title: Move strfry-host deploy config into override/.env instead of uncommitted edits
 area: deploy
 files:
@@ -69,3 +71,26 @@ Surfaced during the 2026-06-30 bloom-gate cutover on the strfry host (milestone 
 A backup of the current host-local edits was saved on the host at
 `/tmp/host-local-deploy-*.patch`. Relates to [[2026-06-30-whitelist-server-stale-refresh]]
 (both are deploy/ops hardening items for the same stack).
+
+## Resolution (2026-06-30)
+
+Chose the gitignore-templates approach (no Go/viper code change).
+
+Repo (commit `8343c1f`, pushed):
+- `config/whitelist/{whitelist,router,whitelist-server}.yaml` gitignored; tracked
+  `*.yaml.example` templates + `config/whitelist/README.md` document per-host setup.
+- `docker-compose.{strfry,evtfwd,lmdb2graphql}.yml` take the network name from
+  `${DEEPFRY_NET_NAME:-deepfry-net}` (`external: true` unchanged); `.env.example`
+  documents `DEEPFRY_NET_NAME`. `docker-compose.dgraph.yml` stays the `deepfry-net`
+  creator (dev/single-host).
+
+Host (`g@192.168.149.21`, `/Users/g/git/deepfryupstream/deepfry`):
+- Backed up + restored the 3 real configs (untracked, host values: `192.168.149.170`,
+  bloom keys, no `debug`); appended `DEEPFRY_NET_NAME=strfry-net` to the existing `.env`.
+- `git status` is now CLEAN; a further `git pull` is a no-op (no stash-reconcile).
+- Non-disruptive: no containers recreated; strfry/quarantine stayed up + healthy on
+  the existing `strfry-net`.
+
+Note: with `external: true`, the named network must pre-exist on a host
+(`docker network create strfry-net`) — it already does on the strfry host; documented
+in `.env.example`.
