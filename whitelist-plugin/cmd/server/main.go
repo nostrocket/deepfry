@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+	"whitelist-plugin/pkg/bloom"
 	"whitelist-plugin/pkg/config"
 	"whitelist-plugin/pkg/repository"
 	"whitelist-plugin/pkg/server"
@@ -41,6 +43,26 @@ func main() {
 			logger.Fatalf("Server error: %v", err)
 		}
 	}()
+
+	// Register bloom rebuild callback before Start() so the initial synchronous
+	// refresh builds the first filter in lockstep with the whitelist (SRV-01, D-01).
+	refresher.SetOnRefresh(func(keys [][32]byte) {
+		// Rebuild bloom filter from the refreshed key set (D-01, D-09).
+		b := bloom.NewBuilder(uint(len(keys)), cfg.BloomFPRate)
+		for _, k := range keys {
+			b.Add(k)
+		}
+		f, err := b.Build()
+		if err != nil {
+			logger.Printf("bloom build failed: %v", err)
+			return // no swap — prior filter preserved (D-02)
+		}
+		if err := srv.SwapFilter(f); err != nil {
+			logger.Printf("bloom serialize failed: %v", err)
+			return // no stats update — prior state preserved (D-02)
+		}
+		srv.SetStats(len(keys), time.Now()) // keep /stats live per refresh (D-10)
+	})
 
 	// Block until initial whitelist is loaded
 	logger.Printf("Loading whitelist from %s ...", cfg.DgraphGraphQLURL)
