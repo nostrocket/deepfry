@@ -17,6 +17,7 @@ type WhitelistRefresher struct {
 	waitGroup  sync.WaitGroup
 	retryCount int
 	logger     *log.Logger
+	onRefresh  func(keys [][32]byte) // D-01: registered before Start(), called after UpdateKeys
 }
 
 func NewWhitelistRefresher(ctx context.Context, keyRepo repository.KeyRepository, interval time.Duration, retryCount int, logger *log.Logger) *WhitelistRefresher {
@@ -31,6 +32,13 @@ func NewWhitelistRefresher(ctx context.Context, keyRepo repository.KeyRepository
 		logger:     logger,
 	}
 	return r
+}
+
+// SetOnRefresh registers a callback that fires after every successful whitelist
+// refresh (after UpdateKeys). Must be called before Start(). Not concurrency-safe
+// with Start() — wiring happens in main before the goroutine launches.
+func (r *WhitelistRefresher) SetOnRefresh(fn func(keys [][32]byte)) {
+	r.onRefresh = fn
 }
 
 func (r *WhitelistRefresher) Start() {
@@ -81,6 +89,9 @@ func (r *WhitelistRefresher) refresh() {
 		}
 		r.whitelist.UpdateKeys(keys)
 		r.logger.Printf("whitelist refreshed with %d keys", len(keys))
+		if r.onRefresh != nil {
+			r.onRefresh(keys)
+		}
 		return
 	}
 	r.logger.Printf("Refresh failed after %d attempts", r.retryCount+1)
