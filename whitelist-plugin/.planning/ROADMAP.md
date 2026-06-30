@@ -52,10 +52,10 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   4. An operator can set the false-positive rate / sizing in the server YAML and the served filter reflects that setting (default 0.0001%)
   5. The existing `/check`, `/health`, `/stats`, and `/version` endpoints behave exactly as before
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — producer seams: `bloom_fp_rate` config (SRV-04), refresher `SetOnRefresh` callback (D-01/02), server filter atomic pointer + `SetStats`/`SwapFilter`/`handleBloom` + `GET /bloom` route with ETag conditional GET and 503-while-loading (SRV-02/03, D-03/05/06/07/08/10)
+- [x] 02-01-PLAN.md — producer seams: `bloom_fp_rate` config (SRV-04), refresher `SetOnRefresh` callback (D-01/02), server filter atomic pointer + `SetStats`/`SwapFilter`/`handleBloom` + `GET /bloom` route with ETag conditional GET and 503-while-loading (SRV-02/03, D-03/05/06/07/08/10)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -95,7 +95,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Shared Bloom Library | 2/2 | Complete    | 2026-06-29 |
-| 2. Server Bloom Endpoint | 0/2 | Not started | - |
+| 2. Server Bloom Endpoint | 1/2 | In Progress|  |
 | 3. Bloom Gate Plugin | 0/? | Not started | - |
 | 4. Ops & Integration | 0/? | Not started | - |
 

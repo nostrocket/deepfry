@@ -15,10 +15,10 @@ Requirements for the Bloom Filter Gate Plugin milestone. Each maps to roadmap ph
 
 ### Server Bloom Endpoint
 
-- [ ] **SRV-01**: The server rebuilds the bloom filter from the in-memory whitelist on each refresh and swaps it atomically alongside the existing map (lock-free reads, no read stalls)
-- [ ] **SRV-02**: `GET /bloom` returns the current serialized filter
-- [ ] **SRV-03**: `/bloom` supports conditional GET (ETag / `If-None-Match`), returning `304 Not Modified` when the filter is unchanged since the client's last fetch
-- [ ] **SRV-04**: The bloom false-positive rate / sizing is configurable via the server YAML (default 0.0001%)
+- [x] **SRV-01**: The server rebuilds the bloom filter from the in-memory whitelist on each refresh and swaps it atomically alongside the existing map (lock-free reads, no read stalls)
+- [x] **SRV-02**: `GET /bloom` returns the current serialized filter
+- [x] **SRV-03**: `/bloom` supports conditional GET (ETag / `If-None-Match`), returning `304 Not Modified` when the filter is unchanged since the client's last fetch
+- [x] **SRV-04**: The bloom false-positive rate / sizing is configurable via the server YAML (default 0.0001%)
 
 ### Bloom Gate Plugin
 
@@ -66,10 +66,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BLOOM-01 | Phase 1 | Complete |
 | BLOOM-02 | Phase 1 | Complete |
 | BLOOM-03 | Phase 1 | Complete |
-| SRV-01 | Phase 2 | Pending |
-| SRV-02 | Phase 2 | Pending |
-| SRV-03 | Phase 2 | Pending |
-| SRV-04 | Phase 2 | Pending |
+| SRV-01 | Phase 2 | Complete |
+| SRV-02 | Phase 2 | Complete |
+| SRV-03 | Phase 2 | Complete |
+| SRV-04 | Phase 2 | Complete |
 | GATE-01 | Phase 3 | Pending |
 | GATE-02 | Phase 3 | Pending |
 | GATE-03 | Phase 3 | Pending |
