@@ -90,6 +90,49 @@ func LoadClientConfig() (*ClientConfig, error) {
 	return &cfg, nil
 }
 
+// BloomConfig is used by the standalone bloom gate plugin (cmd/bloom).
+// It reads from the shared ~/deepfry/whitelist.yaml using bloom_-prefixed keys (D-01/D-03).
+type BloomConfig struct {
+	ServerURL            string        `mapstructure:"server_url"`
+	BloomRefreshInterval time.Duration `mapstructure:"bloom_refresh_interval"`
+	BloomPath            string        `mapstructure:"bloom_path"`
+	BloomFetchTimeout    time.Duration `mapstructure:"bloom_fetch_timeout"`
+	RefreshRetryCount    int           `mapstructure:"refresh_retry_count"`
+}
+
+// LoadBloomConfig reads the shared ~/deepfry/whitelist.yaml and returns a BloomConfig.
+// It mirrors LoadClientConfig exactly, substituting bloom_-prefixed defaults (D-01/D-02/D-03).
+// Existing config loaders and helpers are not modified.
+func LoadBloomConfig() (*BloomConfig, error) {
+	v := viper.New()
+
+	configDir, err := ensureConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	v.SetConfigName("whitelist")
+	v.SetConfigType("yaml")
+	v.AddConfigPath(configDir)
+
+	v.SetDefault("server_url", "http://localhost:8081")            // D-02: reuse shared key
+	v.SetDefault("bloom_refresh_interval", "6h")                   // D-03
+	v.SetDefault("bloom_path", filepath.Join(configDir, "bloom.dfbf")) // D-03
+	v.SetDefault("bloom_fetch_timeout", "30s")                     // D-03
+	v.SetDefault("refresh_retry_count", 3)                         // D-03
+
+	if err := readConfig(v, configDir, "whitelist.yaml"); err != nil {
+		return nil, err
+	}
+
+	var cfg BloomConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unable to decode config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
 func ensureConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
