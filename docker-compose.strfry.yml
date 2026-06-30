@@ -46,6 +46,15 @@ services:
     # Absolute path: the dockurr/strfry image keeps the binary at /app/strfry
     # and isn't in PATH, so the guard's `exec "$@"` would otherwise fail.
     command: ["/app/strfry", "--config=/etc/strfry.conf", "relay"]
+    # Override the dockurr/strfry base image's baked-in HEALTHCHECK, which probes
+    # http://localhost:7777/. This relay runs on 7778 (strfry-quarantine.conf), so the
+    # inherited 7777 check always fails ("connection refused") and the container shows
+    # (unhealthy) even though the relay is fine. Point the check at 7778.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ILfSs http://localhost:7778/ > /dev/null || exit 1"]
+      interval: 1m
+      timeout: 5s
+      retries: 2
     working_dir: /app
     environment:
       QUARANTINE_EXPECTED_DB: "/app/strfry-quarantine-db/"
