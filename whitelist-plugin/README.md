@@ -49,13 +49,14 @@ A system that enforces web-of-trust based write access on StrFry relays. A centr
 ### Build
 
 ```bash
-# Build all three binaries
+# Build all binaries
 make
 
 # Or individually
 make build          # Client plugin (cmd/whitelist)
 make build-server   # Whitelist server (cmd/server)
 make build-router   # Router plugin (cmd/router)
+make build-bloom    # Bloom gate plugin (cmd/bloom)
 ```
 
 ### Run
@@ -94,6 +95,7 @@ curl http://localhost:8081/stats
 | `/health` | GET | Readiness check | `200 ok` when whitelist loaded, `503` before |
 | `/stats` | GET | Cache statistics | `{"entries": 45000, "last_refresh": "2026-04-16T07:00:00Z"}` |
 | `/version` | GET | Build info (injected via ldflags at build time) | `{"version": "dev", "commit": "abc1234", "built": "2026-04-22T12:00:00Z"}` |
+| `/bloom` | GET | Fetch the current serialized bloom filter; supports conditional GET via `If-None-Match` / ETag (membership reflects the whitelist as of the last server refresh) | `200` binary filter body or `304 Not Modified`; `503` while filter not yet built |
 
 #### Bulk check — `POST /check`
 
@@ -272,6 +274,41 @@ The quarantine container runs with a **fail-fast DB isolation guard** (`config/s
 
 This protects mainline data from any misconfiguration. The guard test matrix (`config/strfry/quarantine-db-guard_test.sh`) exercises all cases.
 
+## Bloom Gate Plugin (optional)
+
+A drop-in alternative writePolicy plugin that makes every accept/reject decision from a locally-held bloom filter with **zero per-event HTTP**. Not-in-set → reject; maybe-in-set → accept (a deliberately bounded ~1e-6 false-positive accept rate is tolerated in exchange for zero per-event network cost). The whitelist server remains the authoritative source; the plugin fetches a serialised filter from it and gates purely locally.
+
+The bloom plugin is opt-in: the existing `whitelist` and `router` binaries are unaffected. Activate by changing `config/strfry/strfry.conf` to `plugin = "/app/plugins/bloom"` and restarting StrFry.
+
+### How It Works
+
+1. At startup, fetches the serialized filter from the server via `GET /bloom` (conditional GET with `If-None-Match`).
+2. Refreshes on the configured interval (default ~6h) and atomically swaps in each new filter without dropping events.
+3. Each successfully fetched filter is persisted to `bloom_path` on disk (under `~/deepfry/` by default).
+4. Per-event decisions use only the local in-memory filter — no per-event HTTP round-trip.
+5. When the server is unreachable at refresh time, decisions continue to be served from the last persisted on-disk filter (GATE-05).
+6. Cold start blocks only when there is neither a reachable server nor a persisted filter on disk (GATE-06).
+
+### Configuration
+
+Config file: `~/deepfry/whitelist.yaml` (shared with the whitelist/router plugins). Bloom reads `bloom_`-prefixed keys from this file (GATE-07/D-05).
+
+```yaml
+server_url: "http://localhost:8081"
+bloom_refresh_interval: 6h
+bloom_path: "~/deepfry/bloom.dfbf"
+bloom_fetch_timeout: 30s
+refresh_retry_count: 3
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `server_url` | `http://localhost:8081` | Whitelist server URL (shared key with the client plugin) |
+| `bloom_refresh_interval` | `6h` | How often to re-fetch the bloom filter from the server |
+| `bloom_path` | `~/deepfry/bloom.dfbf` | Path for the persisted filter file; set to `/root/deepfry/bloom-data/bloom.dfbf` in Docker (see below) |
+| `bloom_fetch_timeout` | `30s` | HTTP request timeout for each filter fetch |
+| `refresh_retry_count` | `3` | Retries per refresh cycle on failure |
+
 ## Docker Deployment
 
 The whitelist system spans two compose files:
@@ -286,7 +323,7 @@ docker-compose -f docker-compose.dgraph.yml up -d
 docker-compose -f docker-compose.strfry.yml up -d
 ```
 
-The server waits for Dgraph to be healthy before starting. Both plugin binaries (`/app/plugins/whitelist` and `/app/plugins/router`) are shipped in the same image; mainline's `strfry.conf:99` selects which one runs. The StrFry plugin connects to the server over the shared `deepfry-net` Docker network. The router plugin additionally publishes to `strfry-quarantine:7778` over the same network.
+The server waits for Dgraph to be healthy before starting. All three plugin binaries (`/app/plugins/whitelist`, `/app/plugins/router`, `/app/plugins/bloom`) are shipped in the same image; mainline's `strfry.conf` selects which one runs. The StrFry plugin connects to the server over the shared `deepfry-net` Docker network. The router plugin additionally publishes to `strfry-quarantine:7778` over the same network.
 
 ### Config Files in Docker
 
@@ -296,6 +333,7 @@ The server waits for Dgraph to be healthy before starting. Both plugin binaries 
 | `config/whitelist/whitelist.yaml` | `/root/deepfry/whitelist.yaml` in strfry | Client plugin |
 | `config/strfry/strfry-quarantine.conf` | `/etc/strfry.conf` in strfry-quarantine | Quarantine relay |
 | `config/strfry/quarantine-db-guard.sh` | `/usr/local/bin/quarantine-db-guard.sh` in strfry-quarantine | DB isolation guard (entrypoint) |
+| `${BLOOM_DATA_PATH:-./data/bloom}` (host dir) | `/root/deepfry/bloom-data` in strfry | Bloom gate plugin — persisted filter directory; overridable via `BLOOM_DATA_PATH` env var. When using the bloom plugin, set `bloom_path: /root/deepfry/bloom-data/bloom.dfbf` in `whitelist.yaml` so the filter survives container restarts (GATE-05). |
 
 ## File Structure
 
@@ -306,14 +344,25 @@ whitelist-plugin/
 │   │   └── main.go              # Server entry point
 │   ├── whitelist/
 │   │   └── main.go              # Client plugin entry point (StrFry subprocess)
-│   └── router/
+│   ├── router/
 │   │   └── main.go              # Router plugin entry point (quarantine-routing variant)
+│   └── bloom/
+│       └── main.go              # Bloom gate plugin entry point (local filter, zero per-event HTTP)
 ├── pkg/
 │   ├── client/
 │   │   ├── client.go            # HTTP client (Checker implementation)
 │   │   └── client_test.go
+│   ├── bloom/
+│   │   ├── bloom.go             # Shared bloom filter library (Builder/Filter, DFBF serialization, ETag)
+│   │   ├── bloom_test.go
+│   │   └── bloom_bench_test.go
+│   ├── bloomgate/
+│   │   ├── checker.go           # BloomChecker — local filter accept/reject (GATE-01/02)
+│   │   ├── checker_test.go
+│   │   ├── fetcher.go           # BloomFetcher — conditional GET fetch, persist, resilience (GATE-03/04/05/06)
+│   │   └── fetcher_test.go
 │   ├── config/
-│   │   ├── config.go            # ServerConfig and ClientConfig with Viper
+│   │   ├── config.go            # ServerConfig and ClientConfig with Viper; BloomConfig (bloom_-prefixed keys)
 │   │   └── router_config.go     # RouterConfig (server + quarantine sections)
 │   ├── handler/
 │   │   ├── handler.go           # Checker, Handler, and IOAdapter interfaces
@@ -345,19 +394,22 @@ whitelist-plugin/
 ### Build Commands
 
 ```bash
-make                     # Build all three binaries
-make build               # Build client plugin only
-make build-server        # Build whitelist server only
-make build-router        # Build router plugin only
-make build-alpine        # Static client plugin for Alpine
-make build-server-alpine # Static server for Alpine
-make build-router-alpine # Static router plugin for Alpine
-make test                # Run all tests
-make bench               # Run benchmarks
-make fmt                 # Format code
-make vet                 # Vet code
-make lint                # Run golangci-lint
-make clean               # Remove bin/
+make                      # Build all binaries (whitelist, server, router, bloom)
+make build                # Build client plugin only
+make build-server         # Build whitelist server only
+make build-router         # Build router plugin only
+make build-bloom          # Build bloom gate plugin (native)
+make build-alpine         # Static client plugin for Alpine
+make build-server-alpine  # Static server for Alpine
+make build-router-alpine  # Static router plugin for Alpine
+make build-bloom-alpine   # Static bloom gate plugin for Alpine
+make build-bloom-linux    # Static bloom gate plugin for generic Linux
+make test                 # Run all tests
+make bench                # Run benchmarks
+make fmt                  # Format code
+make vet                  # Vet code
+make lint                 # Run golangci-lint
+make clean                # Remove bin/
 ```
 
 ### Testing
