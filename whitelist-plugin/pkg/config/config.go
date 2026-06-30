@@ -20,6 +20,7 @@ type ServerConfig struct {
 	QueryTimeout      time.Duration `mapstructure:"query_timeout"`
 	ServerListenAddr  string        `mapstructure:"server_listen_addr"`
 	Debug             bool          `mapstructure:"debug"`
+	BloomFPRate       float64       `mapstructure:"bloom_fp_rate"`
 }
 
 // ClientConfig is used by the thin whitelist plugin (cmd/whitelist).
@@ -48,6 +49,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 	v.SetDefault("query_timeout", "20m")
 	v.SetDefault("server_listen_addr", ":8081")
 	v.SetDefault("debug", true)
+	v.SetDefault("bloom_fp_rate", 0.000001) // 1e-6 per D-09
 
 	if err := readConfig(v, configDir, "whitelist.yaml"); err != nil {
 		return nil, err
