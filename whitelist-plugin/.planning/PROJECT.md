@@ -21,6 +21,7 @@ Every event written to the relay comes from a pubkey in the web of trust — enf
 - ✓ **Router plugin** (`cmd/router`) — drop-in alternative that additionally forwards rejected kind 0/1/3 events to a quarantine relay (fire-and-forget, never affects the mainline decision) — v1.0
 - ✓ **StrFry plugin protocol** — JSONL stdin/stdout, malformed-input tolerant, handles 10k events/sec in the handler path — v1.0
 - ✓ **Checker / KeyRepository / Handler / IOAdapter interfaces** — decouple decision logic from whitelist source and wire protocol — v1.0
+- ✓ **Shared `pkg/bloom` package** — `Builder`/`Filter` over bits-and-blooms/bloom/v3; portable big-endian DFBF serialization with a sha256 content-hash generation marker; zero-false-negative + 0-alloc/op membership queries; measured FP rate ≤ target — v1.1 Phase 1
 
 ### Active
 
@@ -99,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-29 after bootstrapping GSD planning + starting milestone v1.1*
+*Last updated: 2026-06-30 — Phase 1 (Shared Bloom Library) complete: `pkg/bloom` shipped and verified.*
