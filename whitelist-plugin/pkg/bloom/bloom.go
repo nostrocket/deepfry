@@ -32,6 +32,16 @@ import (
 const (
 	magic         = "DFBF"
 	formatVersion = uint8(1)
+
+	// maxPayloadBytes caps the declared payloadLen ReadFilter will accept before it
+	// reads or allocates any payload bytes (D-07). It defeats two attacks from a
+	// malicious or corrupt DFBF stream: a payloadLen above the platform's max int,
+	// which would panic make([]byte, payloadLen) ("makeslice: len out of range"), and
+	// an absurdly large value that would pre-commit memory and OOM the consuming
+	// process. 1 GiB is generous headroom over any realistic pubkey filter (a 1e-6
+	// filter for ~400M keys is ~1 GiB) while keeping the failure mode a clean
+	// ErrBadFormat rather than a crash.
+	maxPayloadBytes = uint64(1) << 30 // 1 GiB
 )
 
 // Error sentinels returned by ReadFilter and related operations.
@@ -238,6 +248,12 @@ func ReadFilter(r io.Reader) (*Filter, error) {
 		return nil, fmt.Errorf("bloom: ReadFilter: read fpRate: %w", ErrTruncated)
 	}
 	fp := math.Float64frombits(fpBits)
+	// Validate the deserialized fp-rate (WR-03). The generation marker covers only the
+	// payload, not the header, so a crafted header can inject NaN/Inf/negative/>=1 that
+	// would otherwise ride past this boundary into FalsePositiveRate() undetected.
+	if math.IsNaN(fp) || math.IsInf(fp, 0) || fp <= 0 || fp >= 1 {
+		return nil, fmt.Errorf("bloom: ReadFilter: invalid fpRate %v: %w", fp, ErrBadFormat)
+	}
 
 	// gen[32]
 	var gen [32]byte
@@ -251,12 +267,23 @@ func ReadFilter(r io.Reader) (*Filter, error) {
 		return nil, fmt.Errorf("bloom: ReadFilter: read payloadLen: %w", ErrTruncated)
 	}
 
-	// Bound-check before allocation (D-07 defence against malicious/truncated payloadLen).
-	// We read exactly payloadLen bytes; if the stream ends early ReadFull will return an error.
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(r, payload); err != nil {
+	// Bound-check the declared length BEFORE allocating or reading any payload bytes
+	// (D-07). Without this, make([]byte, payloadLen) panics when payloadLen exceeds the
+	// platform max int, and an absurd value pre-commits memory — a remote DoS for any
+	// consumer of an untrusted /bloom response.
+	if payloadLen > maxPayloadBytes {
+		return nil, fmt.Errorf("bloom: ReadFilter: payloadLen %d exceeds max %d: %w", payloadLen, maxPayloadBytes, ErrBadFormat)
+	}
+
+	// Read exactly payloadLen bytes via io.CopyN, which grows the buffer incrementally
+	// as bytes arrive rather than pre-committing the declared size up front. A stream
+	// that declares payloadLen but delivers fewer yields a short copy → ErrTruncated,
+	// without ever allocating the full declared length.
+	var payloadBuf bytes.Buffer
+	if _, err := io.CopyN(&payloadBuf, r, int64(payloadLen)); err != nil {
 		return nil, fmt.Errorf("bloom: ReadFilter: read payload (declared %d bytes): %w", payloadLen, ErrTruncated)
 	}
+	payload := payloadBuf.Bytes()
 
 	// Reconstruct underlying filter from payload.
 	bf := new(bbloom.BloomFilter)

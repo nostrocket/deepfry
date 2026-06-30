@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"math"
 	"testing"
 )
 
@@ -219,9 +220,8 @@ func TestReadFilterRejectsTruncated(t *testing.T) {
 		t.Fatalf("MarshalBinary: %v", err)
 	}
 
-	// The payloadLen field starts at byte offset: 4 (magic) + 1 (version) + 8 (fpRate) + 32 (gen) = 45.
-	const payloadLenOffset = 45
-	// Set payloadLen to an absurdly large value so the stream ends before we can read it.
+	// Set payloadLen to a large-but-under-cap value so the stream ends before we can read it
+	// (999_999_999 < maxPayloadBytes, so it passes the cap and fails on the short read).
 	binary.BigEndian.PutUint64(data[payloadLenOffset:payloadLenOffset+8], 999_999_999)
 
 	_, readErr := ReadFilter(bytes.NewReader(data))
@@ -230,6 +230,77 @@ func TestReadFilterRejectsTruncated(t *testing.T) {
 	}
 	if !isTruncated(readErr) {
 		t.Errorf("expected ErrTruncated chain, got: %v", readErr)
+	}
+}
+
+// Header field byte offsets within the DFBF format (big-endian):
+// magic[4] | formatVersion:uint8 | fpRate:float64 | gen[32] | payloadLen:uint64 | payload.
+const (
+	fpRateOffset     = 5  // 4 (magic) + 1 (version)
+	payloadLenOffset = 45 // 4 (magic) + 1 (version) + 8 (fpRate) + 32 (gen)
+)
+
+// TestReadFilterRejectsOversizedPayload verifies that a declared payloadLen exceeding the
+// maxPayloadBytes cap is rejected with ErrBadFormat BEFORE any allocation — and crucially
+// that a payloadLen above the platform max int does not panic make([]byte) (D-07; CR-01).
+func TestReadFilterRejectsOversizedPayload(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		payloadLen uint64
+	}{
+		{"just over cap", maxPayloadBytes + 1},
+		{"above max int (would panic make)", math.MaxUint64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := buildSmall(t)
+			data, err := f.MarshalBinary()
+			if err != nil {
+				t.Fatalf("MarshalBinary: %v", err)
+			}
+			binary.BigEndian.PutUint64(data[payloadLenOffset:payloadLenOffset+8], tc.payloadLen)
+
+			// Must not panic, even for an above-max-int length.
+			_, readErr := ReadFilter(bytes.NewReader(data))
+			if readErr == nil {
+				t.Fatal("expected error for oversized payloadLen, got nil")
+			}
+			if !isBadFormat(readErr) {
+				t.Errorf("expected ErrBadFormat chain, got: %v", readErr)
+			}
+		})
+	}
+}
+
+// TestReadFilterRejectsInvalidFPRate verifies that a header carrying a non-probability
+// fp-rate (NaN/Inf/<=0/>=1) is rejected with ErrBadFormat. The generation marker covers
+// only the payload, so the header fp-rate must be validated at this boundary (WR-03).
+func TestReadFilterRejectsInvalidFPRate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bits uint64
+	}{
+		{"NaN", math.Float64bits(math.NaN())},
+		{"+Inf", math.Float64bits(math.Inf(1))},
+		{"zero", math.Float64bits(0)},
+		{"one", math.Float64bits(1)},
+		{"negative", math.Float64bits(-0.5)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := buildSmall(t)
+			data, err := f.MarshalBinary()
+			if err != nil {
+				t.Fatalf("MarshalBinary: %v", err)
+			}
+			binary.BigEndian.PutUint64(data[fpRateOffset:fpRateOffset+8], tc.bits)
+
+			_, readErr := ReadFilter(bytes.NewReader(data))
+			if readErr == nil {
+				t.Fatal("expected error for invalid fpRate, got nil")
+			}
+			if !isBadFormat(readErr) {
+				t.Errorf("expected ErrBadFormat chain, got: %v", readErr)
+			}
+		})
 	}
 }
 
