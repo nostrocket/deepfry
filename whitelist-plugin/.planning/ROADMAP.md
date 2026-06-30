@@ -95,10 +95,10 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
   2. The Docker image bakes the bloom binary alongside `whitelist`/`router`, and `strfry.conf` can select it as the writePolicy plugin by changing a single line
   3. The README documents the bloom plugin (config, behavior, resilience) and the server's `/bloom` endpoint, consistent with the existing plugin/endpoint docs
 
-**Plans**: 0/2 plans complete
+**Plans**: 1/2 plans executed
 **Wave 1** *(both plans independent — disjoint files, run in parallel)*
 
-- [ ] 04-01-PLAN.md — bloom Makefile targets (OPS-01) + Dockerfile.strfry build/COPY + strfry.conf selectable plugin + docker-compose `/root/deepfry/bloom-data` persistence mount (OPS-02)
+- [x] 04-01-PLAN.md — bloom Makefile targets (OPS-01) + Dockerfile.strfry build/COPY + strfry.conf selectable plugin + docker-compose `/root/deepfry/bloom-data` persistence mount (OPS-02)
 - [ ] 04-02-PLAN.md — README bloom gate plugin section, GET /bloom endpoint, build/file-structure/docker-config docs (OPS-03)
 
 ## Progress
@@ -108,7 +108,7 @@ Phases follow the hard dependency chain implied by the architecture: the shared 
 | 1. Shared Bloom Library | 2/2 | Complete    | 2026-06-29 |
 | 2. Server Bloom Endpoint | 2/2 | Complete    | 2026-06-30 |
 | 3. Bloom Gate Plugin | 2/2 | Complete    | 2026-06-30 |
-| 4. Ops & Integration | 0/2 | Not started | - |
+| 4. Ops & Integration | 1/2 | In Progress|  |
 
 ---
 *Roadmap created: 2026-06-29*

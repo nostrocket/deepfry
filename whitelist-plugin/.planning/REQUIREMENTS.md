@@ -32,8 +32,8 @@ Requirements for the Bloom Filter Gate Plugin milestone. Each maps to roadmap ph
 
 ### Ops & Integration
 
-- [ ] **OPS-01**: Makefile build targets for the bloom plugin (native + static Alpine)
-- [ ] **OPS-02**: The Docker image bakes the bloom binary; `strfry.conf` can select it as the writePolicy plugin
+- [x] **OPS-01**: Makefile build targets for the bloom plugin (native + static Alpine)
+- [x] **OPS-02**: The Docker image bakes the bloom binary; `strfry.conf` can select it as the writePolicy plugin
 - [ ] **OPS-03**: README documents the bloom plugin and the `/bloom` endpoint
 
 ## v2 / Future Requirements
@@ -77,8 +77,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GATE-05 | Phase 3 | Complete |
 | GATE-06 | Phase 3 | Complete |
 | GATE-07 | Phase 3 | Complete |
-| OPS-01 | Phase 4 | Pending |
-| OPS-02 | Phase 4 | Pending |
+| OPS-01 | Phase 4 | Complete |
+| OPS-02 | Phase 4 | Complete |
 | OPS-03 | Phase 4 | Pending |
 
 **Coverage:**
