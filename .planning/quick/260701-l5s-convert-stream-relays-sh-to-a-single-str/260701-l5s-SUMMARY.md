@@ -34,8 +34,11 @@ unverified `strfry router` rewrite risked either broken ingestion or, worse,
 `strfry router` on the deployed `dockurr/strfry 1.1.0` (commit `f31a1b9`) does
 not consume the positional router config file. See PLAN.md "BLOCKER" + "Recommended
 next steps" (read dockur's `mesh/cmd_router.cpp` docopt wiring; try the `ROUTER=`
-entrypoint env var; or move the LMDB to a named volume as the durable alternative
-to the reader-slot contention).
+entrypoint env var; or reduce env-opener process count).
+
+**HARD CONSTRAINT (CLAUDE.md):** do NOT move the LMDB or migrate it to a named
+volume — it must stay at its host bind-mount path for cross-host interoperability.
+A named-volume migration is explicitly forbidden (earlier draft recommendation removed).
 
 ## State left clean
 

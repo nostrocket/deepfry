@@ -8,6 +8,8 @@ DeepFry is a modular backend stack for Humble Horse that surrounds a **stock (un
 
 **Data separation rule:** canonical events live only in StrFry's LMDB. Dgraph stores ID-only graphs (pubkey relationships). No event payloads outside StrFry.
 
+**StrFry database location (HARD RULE — never violate):** DO NOT modify the StrFry LMDB database location, and DO NOT migrate it to a Docker named volume. The database must remain at its host filesystem path (bind mount, via `STRFRY_DB_PATH`) so it stays interoperable across hosts and tools. A named volume lives inside the Docker VM, is non-portable, and would break cross-host interoperability. Fixes for storage/locking/performance issues (e.g. LMDB reader-slot contention, macOS bind-mount quirks) MUST work with the database in place — never propose or perform moving it.
+
 ## Project Boundary Rule
 
 This repo is a monorepo of **independent projects**, each a self-contained subdirectory with its own module, build, and (where present) `.planning/` planning state — e.g. `web-of-trust`, `web-of-trust-explorer`, `event-forwarder`, `whitelist-plugin`, `quarantine-rescuer`, `LMDB2GraphQL`, `spam`, `spam-explorer`.
