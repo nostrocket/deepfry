@@ -2,6 +2,7 @@
 created: 2026-07-01
 title: Run strfry router via dockur ROUTER= entrypoint (replace 174-stream fan-out)
 area: deploy
+resolves_phase: 2
 files:
   - stream-relays.sh
   - config/strfry/strfry.conf
