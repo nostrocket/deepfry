@@ -47,18 +47,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ING-01 | TBD | Pending |
-| ING-02 | TBD | Pending |
-| CFG-01 | TBD | Pending |
-| OPS-01 | TBD | Pending |
-| OPS-02 | TBD | Pending |
-| OPS-03 | TBD | Pending |
+| CFG-01 | Phase 1 | Pending |
+| ING-02 | Phase 1 (config-side) + Phase 3 (verified live) | Pending |
+| OPS-01 | Phase 2 | Pending |
+| ING-01 | Phase 2 | Pending |
+| OPS-02 | Phase 3 | Pending |
+| OPS-03 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 6 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 6 ⚠️ (resolved by roadmap creation)
+- Mapped to phases: 6 ✓
+- Unmapped: 0 ✓
+
+*Note: ING-02 (bloom gating) is authored config-side in Phase 1 and verified running-live in Phase 3; its primary/owning phase for delivery accounting is Phase 3 (verification is where the release-blocker gate is proven). No requirement is duplicated as an owned deliverable.*
 
 ---
 *Requirements defined: 2026-07-01*
-*Last updated: 2026-07-01 after initial definition*
+*Last updated: 2026-07-01 after roadmap creation (traceability mapped)*
