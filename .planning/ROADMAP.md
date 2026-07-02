@@ -28,7 +28,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The config's `urls` array is populated from the same WoT relay list source `stream-relays.sh` loads (single source of truth — no hand-maintained second list)
   3. Every stream in the generated config carries `pluginDown = "/app/plugins/bloom"` (omitting it silently bypasses the whitelist — release blocker)
   4. The generated file parses as valid taocpp::config (no `Failed to parse router config` when fed to the binary)
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — Generate the standalone streams-only router config from the WoT relay list, with mandatory per-stream bloom gating and discover-then-fail-hard on empty list
 
 ### Phase 2: Wire & Prove Config Loads
 **Goal**: The router starts with the stack via `docker-compose.strfry.yml` through dockur's `ROUTER=` entrypoint, and its config demonstrably loads on `dockurr/strfry 1.1.0` — breaking the `260701-l5s` blocker where `docker exec ... router <file>` never loaded the positional config.
@@ -70,7 +71,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Generate Router Config | 0/TBD | Not started | - |
+| 1. Generate Router Config | 0/1 | Not started | - |
 | 2. Wire & Prove Config Loads | 0/TBD | Not started | - |
 | 3. Verify Gating & Stability On-Host | 0/TBD | Not started | - |
 | 4. Retire the Fan-Out | 0/TBD | Not started | - |
