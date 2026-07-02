@@ -23,14 +23,17 @@ relay must stay up.
 
 <!-- Shipped and confirmed valuable. -->
 
-(None yet — ship to validate)
+- [x] Generate a streams-only router config from the WoT relay list, with a
+      mandatory per-stream `pluginDown=/app/plugins/bloom` on every stream
+      — *Validated in Phase 1 (CFG-01, ING-02 config-side): `gen-router-config.sh`
+      emits the config; 22/22 bats pass; verifier 6/6; the CR-01 relay-URL
+      injection / whitelist-bypass vector was found and closed. Live on-host proof
+      of config load + gating is Phase 2/3.*
 
 ### Active
 
 <!-- Current scope. Building toward these. -->
 
-- [ ] Generate a streams-only router config from the WoT relay list, with a
-      mandatory per-stream `pluginDown=/app/plugins/bloom` on every stream
 - [ ] Wire the router through dockur's `ROUTER=` entrypoint env var in
       `docker-compose.strfry.yml`
 - [ ] Verify on the live host: `Loading router config file:` logs, streams
@@ -132,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-01 after initialization*
+*Last updated: 2026-07-02 — Phase 1 complete (router config generator shipped, CR-01 injection fixed)*
