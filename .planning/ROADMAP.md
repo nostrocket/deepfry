@@ -14,7 +14,7 @@ Replace the 174-process `strfry stream` fan-out (`stream-relays.sh`) with a sing
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Generate Router Config** - Emit a standalone streams-only router config from the WoT relay list with mandatory per-stream bloom gating (completed 2026-07-02)
-- [ ] **Phase 2: Wire & Prove Config Loads** - Wire the router via dockur's `ROUTER=` entrypoint and prove the config actually loads (break the `260701-l5s` blocker) as one process
+- [x] **Phase 2: Wire & Prove Config Loads** - Wire the router via dockur's `ROUTER=` entrypoint and prove the config actually loads (break the `260701-l5s` blocker) as one process (completed 2026-07-02)
 - [ ] **Phase 3: Verify Gating & Stability On-Host** - Confirm bloom gating flows and the relay stays stable (single process, no `MDB_BAD_RSLOT`) on the live host before cutover
 - [ ] **Phase 4: Retire the Fan-Out** - Retire `stream-relays.sh` once the router path is proven, keeping the WoT relay list intact as source of truth
 
@@ -49,7 +49,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Exactly one `strfry router` process runs (not the 174-process `strfry stream` fan-out)
   5. The LMDB stays at its host bind-mount path — no named-volume migration, no DB relocation (HARD RULE)
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 02-01-PLAN.md — De-risk (D-04): read dockur strfry.sh/Dockerfile/cmd_router.cpp at f31a1b9 and confirm the ROUTER= invocation on paper
@@ -60,7 +60,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-03-PLAN.md — On-host proof (D-06/D-07): config loads, streams activate, one router process, LMDB unmoved — recorded as evidence
+- [x] 02-03-PLAN.md — On-host proof (D-06/D-07): config loads, streams activate, one router process, LMDB unmoved — recorded as evidence
 
 ### Phase 3: Verify Gating & Stability On-Host
 
@@ -97,6 +97,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
-| 2. Wire & Prove Config Loads | 2/3 | In Progress|  |
+| 2. Wire & Prove Config Loads | 3/3 | Complete   | 2026-07-02 |
 | 3. Verify Gating & Stability On-Host | 0/TBD | Not started | - |
 | 4. Retire the Fan-Out | 0/TBD | Not started | - |

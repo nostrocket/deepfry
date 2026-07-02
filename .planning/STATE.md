@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_phase_name: Wire & Prove Config Loads
-status: executing
+status: verifying
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-02T06:43:38.552Z"
+last_updated: "2026-07-02T07:01:43.135Z"
 last_activity: 2026-07-02
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
-  percent: 25
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 
 Phase: 02 (Wire & Prove Config Loads) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-02 — Phase 02 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 3 | 2 tasks | 2 files |
 | Phase 02 P01 | 6 | 1 tasks | 1 files |
 | Phase 02 P02 | 4min | 1 tasks | 1 files |
+| Phase 02 P03 | 9min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase ?]: CONFIRMED: ROUTER=<path> runs ./strfry router positional arg from cwd /app in same container as relay (dockur v1.1.0 strfry.sh + hoytech f31a1b9)
 - [Phase ?]: Deployed dockurr/strfry:1.1.0 maps to dockur v1.1.0 TAG (Dockerfile CMD [/app/strfry.sh]); master reverted to plain relay entrypoint and is NOT representative — read the tag
 - [Phase 02]: Wired router via ROUTER=/app/strfry-router.config env + :ro bind-mount additively on the existing strfry service (D-01/D-02/D-03); db/relay stay in /etc/strfry.conf, LMDB mount untouched
+- [Phase ?]: Live arm64 host proof (Gs-Mac-mini) confirms ROUTER= loads the router config: 'Loading router config file:' appears, breaking the 260701-l5s blocker (OPS-01)
+- [Phase ?]: One strfry router process replaces the 144-proc strfry stream fan-out; LMDB stayed at host bind-mount /Volumes/BACKUP/nostr/strfry_database after recreate (ING-01, HARD RULE)
 
 ### Pending Todos
 
@@ -98,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-02T06:43:38.548Z
+Last session: 2026-07-02T07:01:28.615Z
 Stopped at: Phase 2 context gathered
 Resume file: .planning/phases/02-wire-prove-config-loads/02-CONTEXT.md

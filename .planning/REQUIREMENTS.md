@@ -9,7 +9,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Ingestion & Gating
 
-- [ ] **ING-01**: A single `strfry router` process ingests events from the full Web-of-Trust relay list, replacing the 174-process `strfry stream` fan-out
+- [x] **ING-01**: A single `strfry router` process ingests events from the full Web-of-Trust relay list, replacing the 174-process `strfry stream` fan-out
 - [x] **ING-02**: Every router-down stream is gated by the bloom whitelist plugin via per-stream `pluginDown=/app/plugins/bloom`, so no ingestion path bypasses the whitelist
 
 ### Configuration
@@ -50,7 +50,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CFG-01 | Phase 1 | Complete |
 | ING-02 | Phase 1 (config-side) + Phase 3 (verified live) | Complete |
 | OPS-01 | Phase 2 | Complete |
-| ING-01 | Phase 2 | Pending |
+| ING-01 | Phase 2 | Complete |
 | OPS-02 | Phase 3 | Pending |
 | OPS-03 | Phase 4 | Pending |
 
