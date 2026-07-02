@@ -81,11 +81,54 @@ resolve_relays() {
   exit 1
 }
 
+# Emit the streams-only taocpp/config++ router file to $ROUTER_CONFIG from
+# RELAYS. The ONLY top-level key is `streams` — NO `db`/`relay` keys (strfry
+# reads the LMDB path from the global --config; golpe silently discards unknown
+# top-level keys, and a `db`-bearing positional file breaks router load). The
+# single `ingest` stream sets dir="down", filter={} (match all; implicit limit:0
+# suppresses backfill), and pluginDown to the bloom whitelist plugin — MANDATORY,
+# because the global writePolicy does NOT gate router-down events. `urls` is a
+# whitespace/newline-separated array with NO commas (taocpp array syntax).
+#
+# Writes ONLY $ROUTER_CONFIG (D-09): builds a temp file beside it, then mv's it
+# into place atomically — never touching any other ~/deepfry/ file.
+emit_config() {
+  local tmp url
+  tmp="$(mktemp "${ROUTER_CONFIG}.XXXXXX")"
+
+  {
+    echo "connectionTimeout = 20"
+    echo "verbose = true"
+    echo ""
+    echo "streams {"
+    echo "    ingest {"
+    echo "        dir        = \"down\""
+    echo "        pluginDown = \"${BLOOM_PLUGIN}\""
+    echo "        filter     = {}"
+    echo ""
+    echo "        urls = ["
+    for url in "${RELAYS[@]}"; do
+      echo "            \"${url}\""
+    done
+    echo "        ]"
+    echo "    }"
+    echo "}"
+  } > "$tmp"
+
+  mv "$tmp" "$ROUTER_CONFIG"
+  echo "Wrote ${#RELAYS[@]} relays to ${ROUTER_CONFIG}."
+}
+
+cmd_generate() {
+  resolve_relays
+  emit_config
+}
+
 # Dispatcher — only runs when the script is executed directly, not when sourced
 # (tests source it to exercise individual functions).
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-generate}" in
-    generate) resolve_relays ;;
+    generate) cmd_generate ;;
     *) echo "Usage: $0 [generate]" >&2; exit 1 ;;
   esac
 fi
