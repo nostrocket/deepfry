@@ -17,9 +17,20 @@ services:
     oom_score_adj: -300
     environment:
       STRFRY_PRIVATE_KEY: ${STRFRY_PRIVATE_KEY:-}
+      # ROUTER drives dockur's strfry.sh (this service keeps the default entrypoint) to run
+      # `./strfry router "$ROUTER"` in-container alongside `./strfry relay`, against the
+      # bind-mounted streams-only config below. Point it at an explicit path (NOT 1/yes,
+      # which would load the image's baked-in sample /etc/strfry-router.conf). db/relay live
+      # ONLY in /etc/strfry.conf — never duplicate them into the router file. Env vars are
+      # baked at create time, so changing ROUTER requires a container recreate to take effect.
+      ROUTER: /app/strfry-router.config
     volumes:
       - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
+      # Router streams-only config (Phase 1 runtime artifact, generated host-side, not
+      # committed). Container path matches ROUTER exactly; :ro because strfry only reads it
+      # (host-side regeneration drives hot reload). Carries streams{} only — no db/relay.
+      - ${STRFRY_ROUTER_CONFIG_PATH:-~/deepfry/strfry-router.config}:/app/strfry-router.config:ro
       - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
       - ./config/whitelist/router.yaml:/root/deepfry/router.yaml
       # Bloom filter persistence (GATE-05): writable directory for the bloom plugin's
