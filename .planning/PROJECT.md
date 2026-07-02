@@ -30,17 +30,41 @@ relay must stay up.
       injection / whitelist-bypass vector was found and closed. Live on-host proof
       of config load + gating is Phase 2/3.*
 
+- [x] Wire the router through dockur's `ROUTER=` entrypoint env var in
+      `docker-compose.strfry.yml`, and prove on the live arm64 host that the
+      config actually loads
+      — *Validated in Phase 2 (OPS-01, ING-01): `docker-compose.strfry.yml`
+      sets `ROUTER: /app/strfry-router.config` + a `:ro` router-config bind-mount
+      on the existing strfry service (no separate service, no `docker exec`). On
+      the live deploy host `Loading router config file:` appeared (the line that
+      NEVER appeared in `260701-l5s`), streams activated (`New stream group
+      [ingest]` + 174 `Connecting to wss://`), exactly ONE `strfry router` process
+      ran (vs the 174-stream fan-out), and the LMDB stayed at its host bind-mount
+      path — captured in `02-VERIFICATION-EVIDENCE.md`. The `260701-l5s` blocker
+      is broken.*
+
+- [x] Verify on the live host that gating flows and the relay stays stable
+      — *Validated in Phase 3 (verify-gating-stability-on-host): live on-host proof
+      that bloom `decision=accept/reject` flows on router-down events, exactly one
+      `strfry router` process, no `MDB_BAD_RSLOT`, and strfry stays up — captured in
+      `03-VERIFICATION-EVIDENCE.md`.*
+
+- [x] Retire `stream-relays.sh` once the router path is proven, keeping the WoT
+      relay list as the single source of truth
+      — *Validated in Phase 4 (OPS-03, retire-the-fan-out): `stream-relays.sh`
+      deleted via clean `git rm` (no stub — D-01), README rewritten to the single
+      `strfry router` (`ROUTER=`) + `gen-router-config.sh` ingestion path, and fresh
+      read-only host proof captured (1 router / 0 stream procs, no `strfry-streams`
+      session, WoT `relay_urls:` list of 174 unchanged and identical to the live
+      `strfry-router.config`) in `04-VERIFICATION-EVIDENCE.md`.*
+
 ### Active
 
 <!-- Current scope. Building toward these. -->
 
-- [ ] Wire the router through dockur's `ROUTER=` entrypoint env var in
-      `docker-compose.strfry.yml`
-- [ ] Verify on the live host: `Loading router config file:` logs, streams
-      connect, bloom `decision=accept/reject` flows, single process, no
-      `MDB_BAD_RSLOT`, strfry stays up
-- [ ] Retire `stream-relays.sh` once the router path is proven, keeping the WoT
-      relay list as the single source of truth
+- Milestone v1.0 (strfry-router conversion) complete — all four phases shipped and
+  verified on the live arm64 host. No active scope; project wraps per Out of Scope
+  ("project wraps when the router conversion ships").
 
 ### Out of Scope
 
@@ -135,4 +159,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-02 — Phase 1 complete (router config generator shipped, CR-01 injection fixed)*
+*Last updated: 2026-07-02 — Phase 4 complete; milestone v1.0 shipped (`stream-relays.sh` fan-out retired, single `strfry router` path proven end-to-end on the live arm64 host, WoT relay list intact as single source of truth)*
