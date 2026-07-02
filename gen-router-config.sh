@@ -36,7 +36,7 @@ RELAYS=()
 # least one relay was collected. Ported verbatim from stream-relays.sh:37-63.
 load_relays_from_config() {
   [[ -f "$WOT_CONFIG" ]] || return 1
-  local line in_list=0 relay
+  local line in_list=0 relay saw_item=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^relay_urls: ]]; then
       in_list=1
@@ -44,11 +44,30 @@ load_relays_from_config() {
     fi
     if (( in_list )); then
       if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+(.+)$ ]]; then
+        saw_item=1
         relay="${BASH_REMATCH[1]}"
-        relay="${relay%%#*}"                       # strip inline comment
-        relay="${relay#[\"\']}"; relay="${relay%[\"\']}"  # strip quotes
+        # Strip a genuine trailing inline comment only when a whitespace
+        # precedes the '#'. A bare '#' inside an unquoted URL (fragment
+        # identifier, e.g. wss://relay.example/path#room) is preserved (WR-02).
+        relay="${relay%%[[:space:]]#*}"
+        relay="${relay#[\"\']}"; relay="${relay%[\"\']}"  # strip one boundary quote
         relay="${relay%"${relay##*[![:space:]]}"}" # rtrim
-        [[ -n "$relay" ]] && RELAYS+=("$relay")
+        if [[ -n "$relay" ]]; then
+          # CR-01 (T-01-01): relay URLs originate from the WoT discovery black
+          # box which derives from untrusted network-sourced lists. emit_config
+          # wraps each value in double-quotes verbatim, so a value containing an
+          # embedded '"', whitespace, '{', '}', '=' or backslash could break out
+          # of the taocpp string and inject a rogue pluginDown/db/relay key —
+          # the ING-02 whitelist bypass. VALIDATE and reject (fail hard per the
+          # D-06 fail-hard philosophy) any URL that is not a clean ws://|wss://
+          # URL. Never emit an unvalidated URL.
+          if [[ "$relay" =~ ^wss?://[A-Za-z0-9._~:/?#@!$\&\'\(\)*+,\;=%-]+$ ]]; then
+            RELAYS+=("$relay")
+          else
+            echo "FATAL: rejecting malformed/unsafe relay URL: ${relay}" >&2
+            return 1
+          fi
+        fi
       elif [[ "$line" =~ ^[[:space:]]*$ ]]; then
         continue                                   # blank line within list
       else
@@ -56,6 +75,13 @@ load_relays_from_config() {
       fi
     fi
   done < "$WOT_CONFIG"
+  # WR-03: distinguish "relay_urls present but every entry was blank/invalid"
+  # from "no list at all". A degenerate list (e.g. only `- ""` items) silently
+  # parses like an absent list and triggers discovery + a config rewrite; emit a
+  # diagnostic so an operator typo does not quietly kick off a network run.
+  if (( in_list && saw_item && ${#RELAYS[@]} == 0 )); then
+    echo "WARN: relay_urls present but all entries were empty/invalid" >&2
+  fi
   (( ${#RELAYS[@]} > 0 ))
 }
 
@@ -95,6 +121,12 @@ resolve_relays() {
 emit_config() {
   local tmp url
   tmp="$(mktemp "${ROUTER_CONFIG}.XXXXXX")"
+  # WR-01 (D-09): under `set -e`, a mid-write failure (ENOSPC, permission
+  # change, interrupt) would abort the script and orphan the temp file in the
+  # protected ~/deepfry/ dir. Register a cleanup trap scoped to this function so
+  # the temp is removed on any exit path; the successful `mv` below consumes it,
+  # after which we clear the trap.
+  trap 'rm -f "$tmp"' RETURN
 
   {
     echo "connectionTimeout = 20"
@@ -116,6 +148,7 @@ emit_config() {
   } > "$tmp"
 
   mv "$tmp" "$ROUTER_CONFIG"
+  trap - RETURN
   echo "Wrote ${#RELAYS[@]} relays to ${ROUTER_CONFIG}."
 }
 
