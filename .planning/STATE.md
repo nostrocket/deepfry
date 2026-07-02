@@ -6,14 +6,14 @@ current_phase: 02
 current_phase_name: Wire & Prove Config Loads
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-02T06:40:20.648Z"
+last_updated: "2026-07-02T06:43:38.552Z"
 last_activity: 2026-07-02
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
   percent: 25
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 ## Current Position
 
 Phase: 02 (Wire & Prove Config Loads) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-02 — Phase 02 execution started
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01 P01 | 3 | 2 tasks | 2 files |
 | Phase 02 P01 | 6 | 1 tasks | 1 files |
+| Phase 02 P02 | 4min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,7 @@ Recent decisions affecting current work:
 - [Setup]: `pluginDown=/app/plugins/bloom` mandatory on every stream (global `writePolicy` doesn't gate router-down events)
 - [Phase ?]: CONFIRMED: ROUTER=<path> runs ./strfry router positional arg from cwd /app in same container as relay (dockur v1.1.0 strfry.sh + hoytech f31a1b9)
 - [Phase ?]: Deployed dockurr/strfry:1.1.0 maps to dockur v1.1.0 TAG (Dockerfile CMD [/app/strfry.sh]); master reverted to plain relay entrypoint and is NOT representative — read the tag
+- [Phase 02]: Wired router via ROUTER=/app/strfry-router.config env + :ro bind-mount additively on the existing strfry service (D-01/D-02/D-03); db/relay stay in /etc/strfry.conf, LMDB mount untouched
 
 ### Pending Todos
 
@@ -96,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-02T06:40:03.052Z
+Last session: 2026-07-02T06:43:38.548Z
 Stopped at: Phase 2 context gathered
 Resume file: .planning/phases/02-wire-prove-config-loads/02-CONTEXT.md

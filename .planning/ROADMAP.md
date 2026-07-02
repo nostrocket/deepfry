@@ -49,14 +49,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Exactly one `strfry router` process runs (not the 174-process `strfry stream` fan-out)
   5. The LMDB stays at its host bind-mount path — no named-volume migration, no DB relocation (HARD RULE)
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 **Wave 1**
 
 - [x] 02-01-PLAN.md — De-risk (D-04): read dockur strfry.sh/Dockerfile/cmd_router.cpp at f31a1b9 and confirm the ROUTER= invocation on paper
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — Wire ROUTER=/app/strfry-router.config + a single-file router-config bind-mount into the strfry service (D-01/D-02/D-03)
+- [x] 02-02-PLAN.md — Wire ROUTER=/app/strfry-router.config + a single-file router-config bind-mount into the strfry service (D-01/D-02/D-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -97,6 +97,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
-| 2. Wire & Prove Config Loads | 1/3 | In Progress|  |
+| 2. Wire & Prove Config Loads | 2/3 | In Progress|  |
 | 3. Verify Gating & Stability On-Host | 0/TBD | Not started | - |
 | 4. Retire the Fan-Out | 0/TBD | Not started | - |
