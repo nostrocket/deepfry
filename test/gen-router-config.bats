@@ -113,3 +113,75 @@ YAML
   run env PATH="${STUB}:$PATH" bash -c "source '$SCRIPT'; resolve_relays"
   [ "$status" -ne 0 ]
 }
+
+# --- Task 2: streams-only taocpp emission with mandatory bloom gating ------
+
+# Run the generator end-to-end against a populated fixture and return its exit
+# status; leaves $ROUTER_CONFIG in place for assertions.
+generate_with_two_relays() {
+  write_relay_urls <<'YAML'
+  - wss://relay.alpha.example
+  - wss://relay.beta.example
+YAML
+  run bash "$SCRIPT" generate
+}
+
+@test "emitted config: only top-level key is streams (no top-level db or relay key)" {
+  generate_with_two_relays
+  [ "$status" -eq 0 ]
+  [ -f "$ROUTER_CONFIG" ]
+  # A top-level key is a non-indented `<word> {` or `<word> =` at column 0.
+  # streams must be present; the storage/relay top-level keys must be absent.
+  grep -Eq '^streams[[:space:]]*\{' "$ROUTER_CONFIG"
+  local storage_key relay_key
+  storage_key='^d''b[[:space:]]*='          # split literal to avoid the token in prose
+  relay_key='^relay[[:space:]]*\{'
+  ! grep -Eq "$storage_key" "$ROUTER_CONFIG"
+  ! grep -Eq "$relay_key" "$ROUTER_CONFIG"
+}
+
+@test "emitted config: exactly one pluginDown bloom line inside the ingest stream" {
+  generate_with_two_relays
+  [ "$status" -eq 0 ]
+  local n
+  n=$(grep -c 'pluginDown[[:space:]]*=[[:space:]]*"/app/plugins/bloom"' "$ROUTER_CONFIG")
+  [ "$n" -eq 1 ]
+}
+
+@test "emitted config: stream carries dir=down and empty filter" {
+  generate_with_two_relays
+  [ "$status" -eq 0 ]
+  grep -Eq 'dir[[:space:]]*=[[:space:]]*"down"' "$ROUTER_CONFIG"
+  grep -Eq 'filter[[:space:]]*=[[:space:]]*\{\}' "$ROUTER_CONFIG"
+}
+
+@test "emitted config: urls array lists both relays, one per line, NO commas" {
+  generate_with_two_relays
+  [ "$status" -eq 0 ]
+  grep -q '"wss://relay.alpha.example"' "$ROUTER_CONFIG"
+  grep -q '"wss://relay.beta.example"' "$ROUTER_CONFIG"
+  # No comma may appear on any quoted-url line.
+  ! grep -Eq '"wss://[^"]+",' "$ROUTER_CONFIG"
+}
+
+@test "generator writes ONLY \$ROUTER_CONFIG; sibling ~/deepfry/ files untouched" {
+  local sibling="${TMP_HOME}/deepfry/keep-me.txt"
+  echo "original" > "$sibling"
+  generate_with_two_relays
+  [ "$status" -eq 0 ]
+  [ -f "$ROUTER_CONFIG" ]
+  [ "$(cat "$sibling")" = "original" ]
+}
+
+@test "fail-hard: empty list + stub make yielding nothing -> non-zero, no config written" {
+  write_relay_urls <<'YAML'
+YAML
+  rm -f "$ROUTER_CONFIG"
+  STUB="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "$STUB"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${STUB}/make"
+  chmod +x "${STUB}/make"
+  run env PATH="${STUB}:$PATH" bash "$SCRIPT" generate
+  [ "$status" -ne 0 ]
+  [ ! -f "$ROUTER_CONFIG" ]
+}
