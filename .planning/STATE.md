@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-current_phase_name: Verify Gating & Stability On-Host
+current_phase: 04
+current_phase_name: retire-the-fan-out
 status: verifying
 stopped_at: Phase 3 verification gate PASSED 4/4 — ready for Phase 4 cutover
-last_updated: "2026-07-02T09:50:46.503Z"
+last_updated: "2026-07-02T11:02:15.170Z"
 last_activity: 2026-07-02
-last_activity_desc: 03-01 executed — live gating + stability proven on Gs-Mac-mini (gate PASSED 4/4)
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
-  percent: 75
+  completed_phases: 4
+  total_plans: 6
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-01)
 
 **Core value:** One `strfry router` process replaces the 174-process fan-out — without dropping whitelist gating and without crashing the canonical relay (`MDB_BAD_RSLOT`).
-**Current focus:** Phase 02 — Wire & Prove Config Loads
+**Current focus:** Phase 04 — retire-the-fan-out
 
 ## Current Position
 
-Phase: 3 — Verify Gating & Stability On-Host
-Plan: 01/01 complete
-Status: Phase 3 verification gate PASSED 4/4 — ready for Phase 4 cutover
-Last activity: 2026-07-02 — 03-01 executed; live gating + stability proven on Gs-Mac-mini
+Phase: 04 (retire-the-fan-out) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-07-02 — Phase 04 execution started
 
 Progress: [██████████] 100%
 
@@ -61,6 +61,7 @@ Progress: [██████████] 100%
 | Phase 02 P02 | 4min | 1 tasks | 1 files |
 | Phase 02 P03 | 9min | 1 tasks | 1 files |
 | Phase 03 P01 | 25min | 3 tasks | 1 files |
+| Phase 04 P01 | 2min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Live arm64 host proof (Gs-Mac-mini) confirms ROUTER= loads the router config: 'Loading router config file:' appears, breaking the 260701-l5s blocker (OPS-01)
 - [Phase ?]: One strfry router process replaces the 144-proc strfry stream fan-out; LMDB stayed at host bind-mount /Volumes/BACKUP/nostr/strfry_database after recreate (ING-01, HARD RULE)
 - [Phase ?]: [Phase 03]: Live gating+stability gate PASSED 4/4 on Gs-Mac-mini — bloom accept+reject(not_in_wot) on sourceType=Stream, rejected id not-stored (scan empty) + accepted id stored, 0 MDB_BAD_RSLOT, neighbors healthy; router left running (D-08), Phase 4 unblocked
+- [Phase 04]: Retired stream-relays.sh via clean git rm (D-01, no stub) + README rewrite to the strfry router path; re-verified on Gs-Mac-mini (1 router / 0 stream, no strfry-streams tmux session, WoT relay_urls: 174 == strfry-router.config set) — OPS-03 satisfied
 
 ### Pending Todos
 
@@ -104,6 +106,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-02T09:50:39.558Z
+Last session: 2026-07-02T11:01:25.597Z
 Stopped at: Phase 3 context gathered
 Resume file: .planning/phases/03-verify-gating-stability-on-host/03-CONTEXT.md

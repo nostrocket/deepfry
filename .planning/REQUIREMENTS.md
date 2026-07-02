@@ -20,7 +20,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **OPS-01**: The router starts with the stack via `docker-compose.strfry.yml` using dockur's `ROUTER=` entrypoint, and its config actually loads on `dockurr/strfry 1.1.0` (`Loading router config file:` appears)
 - [x] **OPS-02**: On-host verification confirms config-load, stream connection, live bloom `decision=accept/reject` flow, a single process (not 174), and a stable relay (no `MDB_BAD_RSLOT`) before cutover
-- [ ] **OPS-03**: `stream-relays.sh` is retired after the router path is verified, leaving no orphaned per-relay fan-out and the WoT relay list intact as source of truth
+- [x] **OPS-03**: `stream-relays.sh` is retired after the router path is verified, leaving no orphaned per-relay fan-out and the WoT relay list intact as source of truth
 
 ## v2 Requirements
 
@@ -52,7 +52,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-01 | Phase 2 | Complete |
 | ING-01 | Phase 2 | Complete |
 | OPS-02 | Phase 3 | Complete |
-| OPS-03 | Phase 4 | Pending |
+| OPS-03 | Phase 4 | Complete |
 
 **Coverage:**
 

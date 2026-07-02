@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Generate Router Config** - Emit a standalone streams-only router config from the WoT relay list with mandatory per-stream bloom gating (completed 2026-07-02)
 - [x] **Phase 2: Wire & Prove Config Loads** - Wire the router via dockur's `ROUTER=` entrypoint and prove the config actually loads (break the `260701-l5s` blocker) as one process (completed 2026-07-02)
 - [x] **Phase 3: Verify Gating & Stability On-Host** - Confirm bloom gating flows and the relay stays stable (single process, no `MDB_BAD_RSLOT`) on the live host before cutover (completed 2026-07-02)
-- [ ] **Phase 4: Retire the Fan-Out** - Retire `stream-relays.sh` once the router path is proven, keeping the WoT relay list intact as source of truth
+- [x] **Phase 4: Retire the Fan-Out** - Retire `stream-relays.sh` once the router path is proven, keeping the WoT relay list intact as source of truth (completed 2026-07-02)
 
 ## Phase Details
 
@@ -90,10 +90,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. No orphaned `strfry stream` processes remain on the host after cutover — only the single `strfry router`
   3. The Web-of-Trust relay list remains in place and unchanged, still driving the router config as the single source of truth
 
-**Plans**: 0/1 plans complete
+**Plans**: 1/1 plans complete
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Delete `stream-relays.sh` (`git rm`) + replace the README "Useful commands" block with the router ingestion path, then re-verify fresh on the live host (1 router / 0 stream procs, no `strfry-streams` session, WoT relay list unchanged) and record 04-VERIFICATION-EVIDENCE.md
+- [x] 04-01-PLAN.md — Delete `stream-relays.sh` (`git rm`) + replace the README "Useful commands" block with the router ingestion path, then re-verify fresh on the live host (1 router / 0 stream procs, no `strfry-streams` session, WoT relay list unchanged) and record 04-VERIFICATION-EVIDENCE.md
 
 ## Progress
 
@@ -105,4 +105,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
 | 2. Wire & Prove Config Loads | 3/3 | Complete    | 2026-07-02 |
 | 3. Verify Gating & Stability On-Host | 1/1 | Complete   | 2026-07-02 |
-| 4. Retire the Fan-Out | 0/1 | Not started | - |
+| 4. Retire the Fan-Out | 1/1 | Complete   | 2026-07-02 |
