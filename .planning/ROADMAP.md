@@ -50,9 +50,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. The LMDB stays at its host bind-mount path — no named-volume migration, no DB relocation (HARD RULE)
 
 **Plans**: 3 plans
+**Wave 1**
 
 - [ ] 02-01-PLAN.md — De-risk (D-04): read dockur strfry.sh/Dockerfile/cmd_router.cpp at f31a1b9 and confirm the ROUTER= invocation on paper
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-02-PLAN.md — Wire ROUTER=/app/strfry-router.config + a single-file router-config bind-mount into the strfry service (D-01/D-02/D-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-03-PLAN.md — On-host proof (D-06/D-07): config loads, streams activate, one router process, LMDB unmoved — recorded as evidence
 
 ### Phase 3: Verify Gating & Stability On-Host
