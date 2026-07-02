@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Generate Router Config** - Emit a standalone streams-only router config from the WoT relay list with mandatory per-stream bloom gating (completed 2026-07-02)
 - [x] **Phase 2: Wire & Prove Config Loads** - Wire the router via dockur's `ROUTER=` entrypoint and prove the config actually loads (break the `260701-l5s` blocker) as one process (completed 2026-07-02)
-- [ ] **Phase 3: Verify Gating & Stability On-Host** - Confirm bloom gating flows and the relay stays stable (single process, no `MDB_BAD_RSLOT`) on the live host before cutover
+- [x] **Phase 3: Verify Gating & Stability On-Host** - Confirm bloom gating flows and the relay stays stable (single process, no `MDB_BAD_RSLOT`) on the live host before cutover (completed 2026-07-02)
 - [ ] **Phase 4: Retire the Fan-Out** - Retire `stream-relays.sh` once the router path is proven, keeping the WoT relay list intact as source of truth
 
 ## Phase Details
@@ -74,10 +74,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `strfry`, `strfry-quarantine`, and `lmdb2graphql` all remain healthy alongside the running router
   4. Verification is performed on the live host and evidence recorded before any cutover step is taken (no config rewrite ships unverified)
 
-**Plans**: 1 plan
+**Plans**: 1/1 plans complete
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Verify live bloom gating (accept + reject + not-stored), soak stability (no MDB_BAD_RSLOT), and neighbor-service health on the live host; record 03-VERIFICATION-EVIDENCE.md
+- [x] 03-01-PLAN.md — Verify live bloom gating (accept + reject + not-stored), soak stability (no MDB_BAD_RSLOT), and neighbor-service health on the live host; record 03-VERIFICATION-EVIDENCE.md
 
 ### Phase 4: Retire the Fan-Out
 
@@ -101,5 +101,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
 | 2. Wire & Prove Config Loads | 3/3 | Complete    | 2026-07-02 |
-| 3. Verify Gating & Stability On-Host | 0/1 | Not started | - |
+| 3. Verify Gating & Stability On-Host | 1/1 | Complete   | 2026-07-02 |
 | 4. Retire the Fan-Out | 0/TBD | Not started | - |

@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Verify Gating & Stability On-Host
 status: verifying
-stopped_at: Phase 3 context gathered
-last_updated: "2026-07-02T08:01:15.265Z"
+stopped_at: Phase 3 verification gate PASSED 4/4 — ready for Phase 4 cutover
+last_updated: "2026-07-02T09:50:46.503Z"
 last_activity: 2026-07-02
-last_activity_desc: Phase 02 complete, transitioned to Phase 3
+last_activity_desc: 03-01 executed — live gating + stability proven on Gs-Mac-mini (gate PASSED 4/4)
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 50
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
+  percent: 75
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 ## Current Position
 
 Phase: 3 — Verify Gating & Stability On-Host
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-02 — Phase 02 complete, transitioned to Phase 3
+Plan: 01/01 complete
+Status: Phase 3 verification gate PASSED 4/4 — ready for Phase 4 cutover
+Last activity: 2026-07-02 — 03-01 executed; live gating + stability proven on Gs-Mac-mini
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02 P01 | 6 | 1 tasks | 1 files |
 | Phase 02 P02 | 4min | 1 tasks | 1 files |
 | Phase 02 P03 | 9min | 1 tasks | 1 files |
+| Phase 03 P01 | 25min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,7 @@ Recent decisions affecting current work:
 - [Phase 02]: Wired router via ROUTER=/app/strfry-router.config env + :ro bind-mount additively on the existing strfry service (D-01/D-02/D-03); db/relay stay in /etc/strfry.conf, LMDB mount untouched
 - [Phase ?]: Live arm64 host proof (Gs-Mac-mini) confirms ROUTER= loads the router config: 'Loading router config file:' appears, breaking the 260701-l5s blocker (OPS-01)
 - [Phase ?]: One strfry router process replaces the 144-proc strfry stream fan-out; LMDB stayed at host bind-mount /Volumes/BACKUP/nostr/strfry_database after recreate (ING-01, HARD RULE)
+- [Phase ?]: [Phase 03]: Live gating+stability gate PASSED 4/4 on Gs-Mac-mini — bloom accept+reject(not_in_wot) on sourceType=Stream, rejected id not-stored (scan empty) + accepted id stored, 0 MDB_BAD_RSLOT, neighbors healthy; router left running (D-08), Phase 4 unblocked
 
 ### Pending Todos
 
@@ -102,6 +104,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-02T08:01:15.260Z
+Last session: 2026-07-02T09:50:39.558Z
 Stopped at: Phase 3 context gathered
 Resume file: .planning/phases/03-verify-gating-stability-on-host/03-CONTEXT.md
