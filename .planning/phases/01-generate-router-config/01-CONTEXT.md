@@ -54,8 +54,10 @@ here.
   worse than no ingest set.
 
 ### Output location & bind-mount
-- **D-07:** The config is **generated fresh** each run and is **NOT committed to
-  git**. It is a runtime artifact.
+- **D-07 [informational]:** The config is **generated fresh** each run and is
+  **NOT committed to git**. It is a runtime artifact. Auto-satisfied by D-08:
+  the output path `~/deepfry/strfry-router.config` lives outside the git repo,
+  so it is physically un-committable — no executor action required.
 - **D-08:** Host output path: **`~/deepfry/strfry-router.config`** — beside
   `web-of-trust.yaml` in the DeepFry config dir. Container path (for the
   Phase 2 `ROUTER=` bind-mount): **`/app/strfry-router.config`** (where the
