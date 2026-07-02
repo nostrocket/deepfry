@@ -118,7 +118,7 @@ The stack is split into separate compose files so each layer can be managed inde
 | Dgraph | `dgraph` | `docker-compose.dgraph.yml` | 8080 (HTTP/GraphQL), 9080 (gRPC) | Graph database for pubkey relationships |
 | Dgraph Ratel | `dgraph-ratel` | `docker-compose.dgraph.yml` | 8000 | Dgraph web UI |
 | Whitelist Server | `whitelist-server` | `docker-compose.dgraph.yml` | 8081 | Centralized pubkey whitelist cache (refreshes from Dgraph) |
-| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay. The image ships two interchangeable writePolicy plugins (`/app/plugins/whitelist` and `/app/plugins/router`); `strfry.conf` selects which one runs. |
+| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr relay. The image ships three interchangeable writePolicy plugins (`/app/plugins/whitelist`, `/app/plugins/router`, `/app/plugins/bloom`); `strfry.conf` selects which one runs (currently `/app/plugins/bloom`). |
 | StrFry Quarantine | `strfry-quarantine` | `docker-compose.strfry.yml` | 7778 (WebSocket) | Secondary StrFry for events the router plugin rejects from mainline. Separate LMDB, guarded against mounting the mainline DB. See [`quarantine/SPEC.md`](quarantine/SPEC.md). |
 | Event Forwarders | `fwd-*` | `docker-compose.evtfwd.yml` | -- | Sync events from upstream relays |
 
@@ -180,6 +180,7 @@ DeepFry has three kinds of configuration:
 - **`.env`** at the repo root — docker-compose variables (secrets, machine-specific paths, build labels). Gitignored. Template at `.env.example`.
 - **`~/deepfry/*.yaml`** on the host — per-service runtime config, read by Go services via Viper. Auto-created with defaults on first run when missing.
 - **`config/**/*`** in the repo — files mounted read-only into containers (StrFry conf, whitelist/router plugin YAML, Dgraph schema). Edited in-tree.
+- **`~/deepfry/strfry-router.config`** on the host — **generated**, not hand-edited: `gen-router-config.sh` builds this standalone taocpp/config++ streams file from `~/deepfry/web-of-trust.yaml`'s `relay_urls:` (the single source of truth for which relays are ingested). It is bind-mounted into the `strfry` container and consumed by the single `strfry router` process via the `ROUTER=` entrypoint env var in `docker-compose.strfry.yml`. Regenerate after changing the relay list, then recreate the strfry service to apply.
 
 ### `.env` variables
 
@@ -223,7 +224,7 @@ Client side (`ClientConfig`):
 
 ### `~/deepfry/router.yaml` — router plugin
 
-The router plugin is the whitelist plugin's superset: same accept/reject decision, plus it forwards rejected events to the quarantine relay. Selected by `plugin = "/app/plugins/router"` at `config/strfry/strfry.conf:117`.
+The router plugin is the whitelist plugin's superset: same accept/reject decision, plus it forwards rejected events to the quarantine relay. It is one of three writePolicy plugins the image ships; the currently active plugin is `/app/plugins/bloom` (`config/strfry/strfry.conf:140`). To use the router plugin instead, set that line to `plugin = "/app/plugins/router"` and restart strfry.
 
 All keys honor the `ROUTER_` env-var prefix (e.g. `ROUTER_SERVER_URL`, `ROUTER_QUARANTINE_ENABLED`). Defaults in `whitelist-plugin/pkg/config/router_config.go`.
 
@@ -279,7 +280,7 @@ Stock StrFry config — consult [the StrFry docs](https://github.com/hoytech/str
 
 | Key | Value | Purpose |
 |---|---|---|
-| `writePolicy.plugin` | `/app/plugins/router` (line 117) | Selects the router plugin over the plain whitelist plugin. Both binaries ship in the image; flip this to `/app/plugins/whitelist` to disable quarantine routing. |
+| `writePolicy.plugin` | `/app/plugins/bloom` (line 140) | Selects which of the three writePolicy plugins runs: `/app/plugins/bloom` (active — local bloom-filter gating, no per-event HTTP to the whitelist server), `/app/plugins/router` (whitelist decision + forwards rejects to the quarantine relay), or `/app/plugins/whitelist` (plain accept/reject). Swap the line and restart strfry. |
 | `relay.port` | `7777` | WebSocket port (exposed on the host). |
 
 The quarantine relay uses `config/strfry/strfry-quarantine.conf` with **no** writePolicy plugin and a separate DB path. The `quarantine-db-guard.sh` entrypoint enforces DB separation (exit codes 1–4 signal specific safety failures).
