@@ -90,7 +90,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. No orphaned `strfry stream` processes remain on the host after cutover — only the single `strfry router`
   3. The Web-of-Trust relay list remains in place and unchanged, still driving the router config as the single source of truth
 
-**Plans**: TBD
+**Plans**: 0/1 plans complete
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Delete `stream-relays.sh` (`git rm`) + replace the README "Useful commands" block with the router ingestion path, then re-verify fresh on the live host (1 router / 0 stream procs, no `strfry-streams` session, WoT relay list unchanged) and record 04-VERIFICATION-EVIDENCE.md
 
 ## Progress
 
@@ -102,4 +105,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
 | 2. Wire & Prove Config Loads | 3/3 | Complete    | 2026-07-02 |
 | 3. Verify Gating & Stability On-Host | 1/1 | Complete   | 2026-07-02 |
-| 4. Retire the Fan-Out | 0/TBD | Not started | - |
+| 4. Retire the Fan-Out | 0/1 | Not started | - |
