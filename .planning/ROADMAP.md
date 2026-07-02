@@ -85,7 +85,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Generate Router Config | 1/1 | Complete   | 2026-07-02 |
+| 1. Generate Router Config | 1/1 | Complete    | 2026-07-02 |
 | 2. Wire & Prove Config Loads | 0/TBD | Not started | - |
 | 3. Verify Gating & Stability On-Host | 0/TBD | Not started | - |
 | 4. Retire the Fan-Out | 0/TBD | Not started | - |
