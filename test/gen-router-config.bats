@@ -96,11 +96,10 @@ relay_urls:
 CFG
 EOF
   chmod +x "${STUB}/make"
-  run env PATH="${STUB}:$PATH" bash -c "source '$SCRIPT'; resolve_relays; printf '%s\n' \"\${#RELAYS[@]}\" \"\${RELAYS[0]}\""
+  run env PATH="${STUB}:$PATH" bash -c "source '$SCRIPT'; resolve_relays; printf 'RESULT count=%s first=%s\n' \"\${#RELAYS[@]}\" \"\${RELAYS[0]}\""
   [ "$status" -eq 0 ]
   [ -f "${BATS_TEST_TMPDIR}/make_was_called" ]
-  [ "${lines[-2]}" = "1" ]
-  [ "${lines[-1]}" = "wss://discovered.example" ]
+  [[ "$output" == *"RESULT count=1 first=wss://discovered.example"* ]]
 }
 
 @test "resolve_relays fails hard (non-zero) when still empty after discovery" {

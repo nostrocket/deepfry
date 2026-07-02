@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# gen-router-config.sh — generate a standalone streams-only `strfry router`
+# config from the Web-of-Trust relay list.
+#
+# Reads the same `relay_urls:` list `stream-relays.sh` parses from
+# ~/deepfry/web-of-trust.yaml and emits ~/deepfry/strfry-router.config: a
+# taocpp/config++ file whose only top-level key is `streams`, with one `ingest`
+# stream carrying every relay URL and a MANDATORY per-stream
+# `pluginDown = "/app/plugins/bloom"` gate (the global writePolicy does NOT gate
+# router-down events, so omitting it would silently bypass the whitelist).
+#
+# Host-run operator script (arm64 deploy host). Runs on demand; NOT a container
+# entrypoint. The empty-list path runs WoT discovery then re-reads, and fails
+# hard (no config emitted) if the list is still empty — there is NO hardcoded
+# fallback relay set (the WoT list is the single source of truth).
+#
+# Env knobs (overridable — tests point these at a temp HOME):
+#   WOT_CONFIG     default ${HOME}/deepfry/web-of-trust.yaml   (input, read-only)
+#   ROUTER_CONFIG  default ${HOME}/deepfry/strfry-router.config (ONLY file written)
+#   WOT_DIR        default web-of-trust                         (make -C target dir)
+
+WOT_CONFIG="${WOT_CONFIG:-${HOME}/deepfry/web-of-trust.yaml}"
+ROUTER_CONFIG="${ROUTER_CONFIG:-${HOME}/deepfry/strfry-router.config}"
+WOT_DIR="${WOT_DIR:-web-of-trust}"
+
+# In-container path to the bloom whitelist plugin (Phase 2 bind-mount target).
+BLOOM_PLUGIN="/app/plugins/bloom"
+
+RELAYS=()
+
+# Extract the `relay_urls:` YAML list from the web-of-trust config. Reads list
+# items (indented `- value` lines) until the next top-level key. Strips inline
+# quotes/comments. No external YAML dependency required. Returns 0 only when at
+# least one relay was collected. Ported verbatim from stream-relays.sh:37-63.
+load_relays_from_config() {
+  [[ -f "$WOT_CONFIG" ]] || return 1
+  local line in_list=0 relay
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^relay_urls: ]]; then
+      in_list=1
+      continue
+    fi
+    if (( in_list )); then
+      if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+(.+)$ ]]; then
+        relay="${BASH_REMATCH[1]}"
+        relay="${relay%%#*}"                       # strip inline comment
+        relay="${relay#[\"\']}"; relay="${relay%[\"\']}"  # strip quotes
+        relay="${relay%"${relay##*[![:space:]]}"}" # rtrim
+        [[ -n "$relay" ]] && RELAYS+=("$relay")
+      elif [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        continue                                   # blank line within list
+      else
+        break                                      # next top-level key
+      fi
+    fi
+  done < "$WOT_CONFIG"
+  (( ${#RELAYS[@]} > 0 ))
+}
+
+# Populate RELAYS. If the config already lists relays, use them. If empty, run
+# WoT discovery (make -C "$WOT_DIR" run-discover-relays — a black box that reads
+# and writes web-of-trust.yaml itself) and re-read. If STILL empty, fail hard:
+# emit NO config and exit non-zero. NEVER fall back to a hardcoded list (D-06,
+# CFG-01) — a stale/wrong ingest set is worse than none.
+resolve_relays() {
+  if load_relays_from_config; then
+    echo "Loaded ${#RELAYS[@]} relays from ${WOT_CONFIG}."
+    return 0
+  fi
+  echo "No relays in ${WOT_CONFIG}; running WoT discovery..."
+  RELAYS=()                                        # reset before re-read
+  make -C "$WOT_DIR" run-discover-relays
+  RELAYS=()                                        # discard anything partial
+  if load_relays_from_config; then
+    echo "Discovery populated ${#RELAYS[@]} relays."
+    return 0
+  fi
+  echo "FATAL: relay list still empty after discovery; emitting no config." >&2
+  exit 1
+}
+
+# Dispatcher — only runs when the script is executed directly, not when sourced
+# (tests source it to exercise individual functions).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-generate}" in
+    generate) resolve_relays ;;
+    *) echo "Usage: $0 [generate]" >&2; exit 1 ;;
+  esac
+fi
