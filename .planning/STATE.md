@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
+current_phase: 02
 current_phase_name: Wire & Prove Config Loads
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-02T06:33:20.821Z"
+last_updated: "2026-07-02T06:40:20.648Z"
 last_activity: 2026-07-02
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  total_plans: 4
+  completed_plans: 2
   percent: 25
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-01)
 
 **Core value:** One `strfry router` process replaces the 174-process fan-out — without dropping whitelist gating and without crashing the canonical relay (`MDB_BAD_RSLOT`).
-**Current focus:** Phase 01 — generate-router-config
+**Current focus:** Phase 02 — Wire & Prove Config Loads
 
 ## Current Position
 
-Phase: 2 — Wire & Prove Config Loads
-Plan: Not started
+Phase: 02 (Wire & Prove Config Loads) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-02 — Phase 01 complete, transitioned to Phase 2
+Last activity: 2026-07-02 — Phase 02 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 3 | 2 tasks | 2 files |
+| Phase 02 P01 | 6 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - [Setup]: Drive the router via dockur's `ROUTER=` entrypoint env var, not raw `docker exec ... router <file>` (positional path silently failed to load on 1.1.0/`f31a1b9`)
 - [Setup]: Router config is a standalone streams-only file (golpe silently ignores unknown top-level keys, so `streams{}` won't load from the main `--config`)
 - [Setup]: `pluginDown=/app/plugins/bloom` mandatory on every stream (global `writePolicy` doesn't gate router-down events)
+- [Phase ?]: CONFIRMED: ROUTER=<path> runs ./strfry router positional arg from cwd /app in same container as relay (dockur v1.1.0 strfry.sh + hoytech f31a1b9)
+- [Phase ?]: Deployed dockurr/strfry:1.1.0 maps to dockur v1.1.0 TAG (Dockerfile CMD [/app/strfry.sh]); master reverted to plain relay entrypoint and is NOT representative — read the tag
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-02T06:20:13.801Z
+Last session: 2026-07-02T06:40:03.052Z
 Stopped at: Phase 2 context gathered
 Resume file: .planning/phases/02-wire-prove-config-loads/02-CONTEXT.md
