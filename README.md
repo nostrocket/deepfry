@@ -147,10 +147,18 @@ Paths can be absolute or relative to the project directory. Unset variables fall
 ### Useful commands
 
 ```bash
-# Stream from top 20 relays (uses tmux)
-./stream-relays.sh          # start
-./stream-relays.sh attach   # attach
-./stream-relays.sh stop     # stop
+# Ingestion runs as a single `strfry router` process inside the strfry
+# container — started automatically by the stack via the `ROUTER=` entrypoint
+# env var in docker-compose.strfry.yml (points at /app/strfry-router.config).
+# There is no separate start/attach/stop command; ingestion is up with the stack.
+
+# Regenerate the router config from the Web-of-Trust relay list.
+# gen-router-config.sh (host-run) rebuilds ~/deepfry/strfry-router.config from
+# the `relay_urls:` list in ~/deepfry/web-of-trust.yaml — the single source of
+# truth for which relays are ingested. Applying a regenerated config requires the
+# operator to reload/recreate the strfry service separately.
+./gen-router-config.sh              # regenerate the router config
+./gen-router-config.sh generate     # (explicit subcommand form)
 
 # Whitelist server HTTP API
 curl http://localhost:8081/health
