@@ -11,7 +11,9 @@ findings:
   warning: 3
   info: 2
   total: 6
-status: issues_found
+status: resolved
+resolved: 2026-07-02T00:00:00Z
+resolved_findings: [CR-01, WR-01, WR-02, WR-03, IN-01]
 ---
 
 # Phase 01: Code Review Report
@@ -30,6 +32,8 @@ The critical gap is **input trust**: relay URLs from the WoT config are written 
 ## Critical Issues
 
 ### CR-01: Relay URLs are written into the taocpp config unescaped — config injection bypasses the bloom whitelist
+
+**Status:** RESOLVED (2026-07-02). `load_relays_from_config` now validates each parsed relay against `^wss?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$` and fails hard (non-zero, no config emitted) on any value containing `"`, whitespace, `{`, `}`, `=`, or backslash — the injection payload is rejected before it can reach `emit_config`. Verified by new bats cases 14-18 (`test/gen-router-config.bats`), which assert the quote/brace/whitespace/equals payloads are rejected and no config with a second `pluginDown` or injected top-level `db` is ever written.
 
 **File:** `gen-router-config.sh:110-112` (emit), sourced from `gen-router-config.sh:46-51` (parser)
 **Issue:** The parser strips only ONE leading/trailing quote and an inline `#` comment; it performs no validation that the value is a well-formed `wss://`/`ws://` URL and no escaping of taocpp metacharacters. `emit_config` then wraps each value in double-quotes verbatim:
@@ -71,6 +75,8 @@ At minimum, reject any value containing `"`, whitespace, `{`, `}`, or `=`. Do no
 
 ### WR-01: No cleanup trap — temp file leaks in `~/deepfry/` on mid-write failure
 
+**Status:** RESOLVED (2026-07-02). `emit_config` now registers `trap 'rm -f "$tmp"' RETURN` immediately after `mktemp`, so any mid-write failure removes the temp file; the trap is cleared with `trap - RETURN` after the successful `mv`. Verified by new bats case 22 (no `strfry-router.config.XXXXXX` sibling remains after a successful generate).
+
 **File:** `gen-router-config.sh:95-118`
 **Issue:** `emit_config` creates `tmp="$(mktemp "${ROUTER_CONFIG}.XXXXXX")"` beside the target, then writes the here-block to it. With `set -e` and no `trap`, if any command in the redirected block fails (disk full, ENOSPC, permission change, interrupt) the script aborts and leaves a `strfry-router.config.XXXXXX` orphan in `~/deepfry/`. The phase invariant is that the script "writes ONLY its `$ROUTER_CONFIG` output and never touches other `~/deepfry/` files"; a leaked temp violates that and litters the protected config dir.
 
@@ -90,6 +96,8 @@ emit_config() {
 
 ### WR-02: `#`-fragment stripping silently corrupts valid relay URLs containing `#`
 
+**Status:** RESOLVED (2026-07-02). Inline-comment stripping changed from `${relay%%#*}` to `${relay%%[[:space:]]#*}`, so only a genuine whitespace-preceded trailing comment is removed; a `#` fragment inside the URL is preserved. Verified by new bats cases 19 (`wss://relay.example/path#room` survives intact) and 20 (a real ` # comment` is still stripped).
+
 **File:** `gen-router-config.sh:48`
 **Issue:** `relay="${relay%%#*}"` removes everything from the first `#` to end-of-line to strip inline YAML comments. But `#` is a legal URL character (fragment identifier). An unquoted relay entry such as `wss://relay.example/path#room` is silently truncated to `wss://relay.example/path` (verified). The ingest stream then connects to the wrong endpoint with no warning. This is a correctness bug for any URL that legitimately contains `#`.
 
@@ -103,6 +111,8 @@ relay="${relay%%[[:space:]]#*}"
 Note this still mis-handles `#` inside an unquoted URL with no preceding space; the robust fix is to require quoting of such URLs in the source YAML and document it.
 
 ### WR-03: Empty-list detection depends solely on `[[ -n "$relay" ]]` after stripping — a list of only-blank/quote items parses as "empty" and triggers discovery even when items were present
+
+**Status:** RESOLVED (2026-07-02). Added a `saw_item` flag set on every list-item regex match; after the loop, `load_relays_from_config` emits `WARN: relay_urls present but all entries were empty/invalid` when items were seen but none survived. This distinguishes "list present but all entries blank/invalid" from "no list". Verified by new bats case 21.
 
 **File:** `gen-router-config.sh:49-51`, `gen-router-config.sh:59`
 **Issue:** An entry like `- ""` or `- '   '` is matched by the list-item regex, then reduced to empty by quote-strip/rtrim, then dropped by the `[[ -n "$relay" ]]` guard (verified: `- ""` → `[]`). If EVERY item is degenerate, `load_relays_from_config` returns non-zero and `resolve_relays` proceeds to run WoT discovery — which is arguably acceptable, but it means a malformed-but-non-empty `relay_urls:` block is treated identically to an absent one, and `make -C "$WOT_DIR" run-discover-relays` will overwrite the user's (broken) config. There is no diagnostic distinguishing "list present but all entries invalid" from "list empty," so a config typo silently triggers a network discovery run and file rewrite.
@@ -121,6 +131,8 @@ fi
 ## Info
 
 ### IN-01: Test suite has no coverage for the injection / malformed-URL path
+
+**Status:** RESOLVED (2026-07-02). Added 9 bats cases (14-22) covering: embedded-quote injection rejected at parse; injection payload never reaches the emitted config (no second `pluginDown`, no injected top-level `db`); a good relay alongside a malicious one still fails hard; whitespace/brace/equals metacharacters rejected; `#`-fragment URL survives (WR-02); genuine ` #` comment still stripped; all-blank list diagnostic (WR-03); and no orphaned temp file after generate (WR-01). Full suite (22 cases) passes via `bats test/gen-router-config.bats`. All negative-path cases prepend a no-op stub `make` so a rejected/empty list can never trigger a live WoT discovery run.
 
 **File:** `test/gen-router-config.bats:31-165`
 **Issue:** Every parser fixture uses well-formed `wss://` URLs. There is no test asserting that a relay value containing an embedded `"`, whitespace, `{`, or `=` is rejected (or, failing that, that it does not produce a second `pluginDown` / a top-level `db` key). The `pluginDown` count test (line 143-149) and the "only top-level key is streams" test (line 129-141) would both silently pass a config-injection payload because the assertions only check the happy-path shape. Adding a negative test here would have surfaced CR-01.
