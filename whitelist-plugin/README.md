@@ -288,6 +288,7 @@ The bloom plugin is opt-in: the existing `whitelist` and `router` binaries are u
 4. Per-event decisions use only the local in-memory filter — no per-event HTTP round-trip.
 5. When the server is unreachable at refresh time, decisions continue to be served from the last persisted on-disk filter (GATE-05).
 6. Cold start blocks only when there is neither a reachable server nor a persisted filter on disk (GATE-06).
+7. A rejected (not-in-set) event that passes the same kind-0/1/3 **heuristic gate** used by the router is forwarded **fire-and-forget** to the quarantine relay. This reuses the router's `RouterHandler` (which is checker-agnostic) plus the shared quarantine `Publisher` and `heuristics.Filter` — nothing is reimplemented. The mainline reject decision and the zero-per-event-HTTP hot path are unchanged: quarantine forwarding is an async WebSocket publish on a background goroutine, never a per-event HTTP call.
 
 ### Configuration
 
@@ -299,6 +300,12 @@ bloom_refresh_interval: 6h
 bloom_path: "~/deepfry/bloom.dfbf"
 bloom_fetch_timeout: 30s
 refresh_retry_count: 3
+quarantine:
+  enabled: true
+  relay_url: "ws://strfry-quarantine:7778"
+  buffer_size: 10000
+  publish_timeout: 5s
+  metrics_interval: 60s
 ```
 
 | Field | Default | Description |
@@ -308,6 +315,8 @@ refresh_retry_count: 3
 | `bloom_path` | `~/deepfry/bloom.dfbf` | Path for the persisted filter file; set to `/root/deepfry/bloom-data/bloom.dfbf` in Docker (see below) |
 | `bloom_fetch_timeout` | `30s` | HTTP request timeout for each filter fetch |
 | `refresh_retry_count` | `3` | Retries per refresh cycle on failure |
+
+The bloom plugin now reads the same nested `quarantine:` section the router uses, with defaults matching the [Router Plugin](#router-plugin-optional) (`enabled=true`, `relay_url=ws://strfry-quarantine:7778`, `buffer_size=10000`, `publish_timeout=5s`, `metrics_interval=60s`). Setting `quarantine.enabled: false` gives **byte-identical** legacy bloom behavior (reject-only, no side-channel). See the [Router Plugin § Quarantine Path Invariants](#quarantine-path-invariants) for the shared invariants — the bloom plugin honours the same ones since it drives the same handler, publisher, and heuristic gate. Unlike the router loader, the bloom loader intentionally has no env-prefix override, preserving byte-identical behavior when the section is absent.
 
 ## Docker Deployment
 
