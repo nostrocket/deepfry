@@ -8,6 +8,7 @@ package quarantine
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ type Metrics struct {
 	Dropped        uint64
 	Published      uint64
 	PublishErrors  uint64
+	Rejected       uint64
 	ReconnectCount uint64
 	Connected      bool
 }
@@ -54,6 +56,7 @@ type Publisher struct {
 	dropped        atomic.Uint64
 	published      atomic.Uint64
 	publishErrors  atomic.Uint64
+	rejected       atomic.Uint64
 	reconnectCount atomic.Uint64
 	connected      atomic.Bool
 
@@ -130,6 +133,7 @@ func (p *Publisher) Metrics() Metrics {
 		Dropped:        p.dropped.Load(),
 		Published:      p.published.Load(),
 		PublishErrors:  p.publishErrors.Load(),
+		Rejected:       p.rejected.Load(),
 		ReconnectCount: p.reconnectCount.Load(),
 		Connected:      p.connected.Load(),
 	}
@@ -178,12 +182,32 @@ func (p *Publisher) runDrain(ctx context.Context) {
 			return
 		case evt := <-p.queue:
 			if err := p.publishOne(ctx, relay, evt); err != nil {
-				p.publishErrors.Add(1)
-				p.logger.Printf("quarantine: publish id=%s failed: %v", evt.ID, err)
-				// Force reconnect on next iteration.
-				_ = relay.Close()
-				relay = nil
-				p.connected.Store(false)
+				// Classify the failure. Reconnect ONLY when the connection is
+				// genuinely unusable: the transport dropped (!IsConnected) or the
+				// publish timed out (DeadlineExceeded). A benign application-level
+				// OK:false rejection (e.g. "replaced: have newer event", "blocked",
+				// "duplicate", "created_at too late") arrives on a perfectly healthy
+				// connection — tearing it down and reconnecting there is pure churn.
+				//
+				// Tradeoff: reconnecting on every publish timeout can itself add
+				// churn if the relay is merely slow under load, but recycling a
+				// stuck/slow connection is the intended operator behavior and must
+				// not be silently changed. A benign rejection is classified as
+				// exactly the complement of this reconnect condition so the two
+				// branches stay consistent.
+				if !relay.IsConnected() || errors.Is(err, context.DeadlineExceeded) {
+					p.publishErrors.Add(1)
+					p.logger.Printf("quarantine: publish id=%s failed: %v", evt.ID, err)
+					// Force reconnect on next iteration.
+					_ = relay.Close()
+					relay = nil
+					p.connected.Store(false)
+				} else {
+					// Benign application-level rejection on a live connection: count
+					// it, log quietly, and keep the SAME connection serving events.
+					p.rejected.Add(1)
+					p.logger.Printf("quarantine: publish id=%s rejected: %v", evt.ID, err)
+				}
 			} else {
 				p.published.Add(1)
 			}
@@ -214,8 +238,8 @@ func (p *Publisher) runMetrics(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m := p.Metrics()
-			p.logger.Printf("quarantine metrics: enqueued=%d dropped=%d published=%d publishErrors=%d reconnects=%d connected=%t queueDepth=%d",
-				m.Enqueued, m.Dropped, m.Published, m.PublishErrors, m.ReconnectCount, m.Connected, len(p.queue))
+			p.logger.Printf("quarantine metrics: enqueued=%d dropped=%d published=%d publishErrors=%d rejected=%d reconnects=%d connected=%t queueDepth=%d",
+				m.Enqueued, m.Dropped, m.Published, m.PublishErrors, m.Rejected, m.ReconnectCount, m.Connected, len(p.queue))
 		}
 	}
 }
