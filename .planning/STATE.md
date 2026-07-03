@@ -7,7 +7,7 @@ status: verifying
 stopped_at: Phase 3 context gathered
 last_updated: "2026-07-02T11:08:36.968Z"
 last_activity: 2026-07-03
-last_activity_desc: "Completed quick task 260703-p9g: align heuristics.MaxContentBytes to 64KB"
+last_activity_desc: "Completed quick task 260703-qxq: fix quarantine publisher reconnect churn"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-03 — Completed quick task 260703-p9g: aligning heuristics.MaxContentBytes down to 65536
+Last activity: 2026-07-03 — Completed quick task 260703-qxq: fix quarantine publisher reconnect churn
 
 Progress: [██████████] 100%
 
@@ -103,6 +103,7 @@ See .planning/todos/pending/ (carried from prior tasks).
 |---|-------------|------|--------|-----------|
 | 260703-m24 | add a quarantine side-channel to the bloom plugin. Forward kind 0, 1, 3. | 2026-07-03 | d8ec4b0 | [260703-m24-add-a-quarantine-side-channel-to-the-blo](./quick/260703-m24-add-a-quarantine-side-channel-to-the-blo/) |
 | 260703-p9g | aligning heuristics.MaxContentBytes down to 65536 | 2026-07-03 | 47891f9 | [260703-p9g-aligning-heuristics-maxcontentbytes-down](./quick/260703-p9g-aligning-heuristics-maxcontentbytes-down/) |
+| 260703-qxq | fix quarantine publisher: reconnect only on transport failure, not OK:false | 2026-07-03 | 6d13635 | [260703-qxq-fix-quarantine-publisher-only-reconnect-](./quick/260703-qxq-fix-quarantine-publisher-only-reconnect-/) |
 
 ## Deferred Items
 
