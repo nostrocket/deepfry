@@ -33,12 +33,13 @@ func waitFor(t *testing.T, timeout time.Duration, msg string, check func() bool)
 
 // fakeRelay is a minimal NIP-01 relay: accepts EVENT messages and replies OK.
 type fakeRelay struct {
-	srv       *httptest.Server
-	received  chan nostr.Event
-	rejectAll atomic.Bool
-	closeOnce sync.Once
-	connMu    sync.Mutex
-	conns     []*websocket.Conn
+	srv          *httptest.Server
+	received     chan nostr.Event
+	rejectAll    atomic.Bool
+	rejectReason atomic.Bool // when set, reply OK:false with a non-empty reason but keep the connection open
+	closeOnce    sync.Once
+	connMu       sync.Mutex
+	conns        []*websocket.Conn
 }
 
 func newFakeRelay(t *testing.T) *fakeRelay {
@@ -89,7 +90,14 @@ func (r *fakeRelay) handle(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 		ok := !r.rejectAll.Load()
-		reply, _ := json.Marshal([]interface{}{"OK", evt.ID, ok, ""})
+		reason := ""
+		if ok && r.rejectReason.Load() {
+			// Benign application-level rejection: OK:false with a reason, but the
+			// connection stays open and the read loop continues.
+			ok = false
+			reason = "replaced: have newer event"
+		}
+		reply, _ := json.Marshal([]interface{}{"OK", evt.ID, ok, reason})
 		_ = c.Write(ctx, websocket.MessageText, reply)
 		if ok {
 			select {
@@ -268,6 +276,50 @@ func TestPublisher_ReconnectAfterRelayDrops(t *testing.T) {
 
 	if rc := p.Metrics().ReconnectCount; rc < 2 {
 		t.Fatalf("reconnectCount = %d, want >= 2", rc)
+	}
+}
+
+func TestPublisher_NoReconnectOnBenignRejection(t *testing.T) {
+	relay := newFakeRelay(t)
+	relay.rejectReason.Store(true) // every publish gets OK:false with a reason, connection stays open
+
+	p := NewPublisher(Config{
+		RelayURL:        relay.wsURL(),
+		BufferSize:      10,
+		PublishTimeout:  2 * time.Second,
+		MetricsInterval: time.Hour,
+	}, silentLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.Start(ctx)
+	defer p.Stop(time.Second)
+
+	// Wait for the first connection to be established.
+	waitFor(t, 3*time.Second, fmt.Sprintf("initial connect, metrics=%+v", p.Metrics()),
+		func() bool { m := p.Metrics(); return m.Connected || m.ReconnectCount >= 1 })
+	initialReconnects := p.Metrics().ReconnectCount
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		if !p.Enqueue(makeEvent(fmt.Sprintf("rej-%d", i))) {
+			t.Fatalf("enqueue %d failed", i)
+		}
+	}
+
+	// All benign rejections should land in Rejected without churning the connection.
+	waitFor(t, 3*time.Second, fmt.Sprintf("rejected >= %d, metrics=%+v", n, p.Metrics()),
+		func() bool { return p.Metrics().Rejected >= n })
+
+	m := p.Metrics()
+	if m.ReconnectCount > initialReconnects {
+		t.Fatalf("ReconnectCount increased from %d to %d on benign OK:false — connection was churned", initialReconnects, m.ReconnectCount)
+	}
+	if m.PublishErrors != 0 {
+		t.Fatalf("PublishErrors = %d, want 0 (benign rejections must not count as transport errors)", m.PublishErrors)
+	}
+	if !m.Connected {
+		t.Fatalf("Connected = false, want true (connection should be retained across benign rejections)")
 	}
 }
 
