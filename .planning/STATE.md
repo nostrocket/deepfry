@@ -6,8 +6,8 @@ current_phase: 04
 status: verifying
 stopped_at: Phase 3 context gathered
 last_updated: "2026-07-02T11:08:36.968Z"
-last_activity: 2026-07-02
-last_activity_desc: Phase 04 complete
+last_activity: 2026-07-03
+last_activity_desc: "Completed quick task 260703-m24: bloom quarantine side-channel"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-02 — Phase 04 complete
+Last activity: 2026-07-03 — Completed quick task 260703-m24: add a quarantine side-channel to the bloom plugin
 
 Progress: [██████████] 100%
 
@@ -96,6 +96,12 @@ See .planning/todos/pending/ (carried from prior tasks).
 - **KEY UNKNOWN (de-risked in Phase 2):** On `dockurr/strfry 1.1.0` (`f31a1b9`), `docker exec strfry /app/strfry router <file>` never loads the positional router config (`Loading router config file:` never logs, 0 streams). The untried lead is dockur's `ROUTER=` entrypoint (`./strfry router "$ROUTER"`). Phase 2 must prove config actually loads via this path — highest-risk unknown; do not defer to the end.
 - **Gating gotcha:** the global `writePolicy` does NOT gate router-down events — `pluginDown` per stream is mandatory or the whitelist is silently bypassed (release blocker).
 - **HARD RULE:** never move the LMDB or migrate to a named volume; verify on the live host before cutover; retire `stream-relays.sh` only AFTER the router path is verified.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260703-m24 | add a quarantine side-channel to the bloom plugin. Forward kind 0, 1, 3. | 2026-07-03 | d8ec4b0 | [260703-m24-add-a-quarantine-side-channel-to-the-blo](./quick/260703-m24-add-a-quarantine-side-channel-to-the-blo/) |
 
 ## Deferred Items
 
