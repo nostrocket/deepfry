@@ -5,9 +5,18 @@ package heuristics
 
 import "github.com/nbd-wtf/go-nostr"
 
-// MaxContentBytes is the upper bound on evt.Content length for MVP.
-// Chosen to comfortably cover kind 0 / 1 / 3 payloads without room for abuse.
-const MaxContentBytes = 256 * 1024
+// MaxContentBytes is the 64 KB (65536-byte) upper bound on len(evt.Content).
+// It is aligned to the quarantine relay's maxEventSize (config/strfry/strfry-quarantine.conf)
+// so oversized events are dropped at this gate rather than forwarded and then rejected by the
+// relay — a rejection closes the WebSocket with a 1006 that churns the fire-and-forget
+// publisher's reconnect loop. Dropping them here eliminates that churn.
+//
+// Caveat: the relay's maxEventSize bounds the TOTAL serialized event size (id, pubkey, sig,
+// kind, tags, content, JSON envelope), whereas MaxContentBytes bounds only len(evt.Content).
+// So an event with near-limit content plus large tags could still marginally exceed the relay
+// limit. This is acceptable: it removes the large-content offenders responsible for essentially
+// all observed rejections; the residual near-boundary case is negligible.
+const MaxContentBytes = 65536
 
 // Reason codes surfaced in logs and metrics.
 const (
