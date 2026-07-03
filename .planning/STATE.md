@@ -7,7 +7,7 @@ status: verifying
 stopped_at: Phase 3 context gathered
 last_updated: "2026-07-02T11:08:36.968Z"
 last_activity: 2026-07-03
-last_activity_desc: "Completed quick task 260703-m24: bloom quarantine side-channel"
+last_activity_desc: "Completed quick task 260703-p9g: align heuristics.MaxContentBytes to 64KB"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-03 — Completed quick task 260703-m24: add a quarantine side-channel to the bloom plugin
+Last activity: 2026-07-03 — Completed quick task 260703-p9g: aligning heuristics.MaxContentBytes down to 65536
 
 Progress: [██████████] 100%
 
@@ -102,6 +102,7 @@ See .planning/todos/pending/ (carried from prior tasks).
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260703-m24 | add a quarantine side-channel to the bloom plugin. Forward kind 0, 1, 3. | 2026-07-03 | d8ec4b0 | [260703-m24-add-a-quarantine-side-channel-to-the-blo](./quick/260703-m24-add-a-quarantine-side-channel-to-the-blo/) |
+| 260703-p9g | aligning heuristics.MaxContentBytes down to 65536 | 2026-07-03 | 47891f9 | [260703-p9g-aligning-heuristics-maxcontentbytes-down](./quick/260703-p9g-aligning-heuristics-maxcontentbytes-down/) |
 
 ## Deferred Items
 
