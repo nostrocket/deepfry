@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-03 — Completed quick task 260703-qxq: fix quarantine publisher reconnect churn
+Last activity: 2026-07-05 — Completed quick task 260705-mvj: split strfry router into its own container (restart policy + mem limit + liveness healthcheck)
 
 Progress: [██████████] 100%
 
@@ -104,6 +104,7 @@ See .planning/todos/pending/ (carried from prior tasks).
 | 260703-m24 | add a quarantine side-channel to the bloom plugin. Forward kind 0, 1, 3. | 2026-07-03 | d8ec4b0 | [260703-m24-add-a-quarantine-side-channel-to-the-blo](./quick/260703-m24-add-a-quarantine-side-channel-to-the-blo/) |
 | 260703-p9g | aligning heuristics.MaxContentBytes down to 65536 | 2026-07-03 | 47891f9 | [260703-p9g-aligning-heuristics-maxcontentbytes-down](./quick/260703-p9g-aligning-heuristics-maxcontentbytes-down/) |
 | 260703-qxq | fix quarantine publisher: reconnect only on transport failure, not OK:false | 2026-07-03 | 6d13635 | [260703-qxq-fix-quarantine-publisher-only-reconnect-](./quick/260703-qxq-fix-quarantine-publisher-only-reconnect-/) |
+| 260705-mvj | split strfry router into its own container with restart policy + memory limit, and add an ingestion-liveness healthcheck | 2026-07-05 | d1089b4 | [260705-mvj-split-strfry-router-into-its-own-contain](./quick/260705-mvj-split-strfry-router-into-its-own-contain/) |
 
 ## Deferred Items
 
