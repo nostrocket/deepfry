@@ -207,13 +207,31 @@ main `strfry` container into the dedicated `strfry-router` container. Run these 
    #   Connecting to wss://...
    ```
 
-4. **Confirm auto-restart recovers a killed router** (proves `restart: unless-stopped`; a real
-   OOM shows `OOMKilled=true` / `ExitCode 137`):
+4. **Confirm auto-restart recovers an OOM-killed router** (proves `restart: unless-stopped`).
+
+   > ⚠️ **Do NOT verify with `docker kill strfry-router`.** On Docker Desktop a daemon-initiated
+   > `docker kill` is treated as intentional and **bypasses the restart policy** — the container
+   > stays `exited`, giving a false "hardening is broken" result. Only an *unexpected* death (a
+   > kernel/cgroup OOM kill of PID 1, or a real crash) triggers `restart: unless-stopped`. Verified
+   > 2026-07-05: `docker kill` → no restart; a real cgroup OOM → `Status=restarting`, `OOMKilled=true`,
+   > `RestartCount` climbing.
+
+   To prove the OOM path **without disrupting the live router**, run a throwaway container that
+   reuses the image and self-OOMs under a tiny memory cap, then watch it auto-restart:
 
    ```bash
-   docker kill strfry-router
-   docker inspect strfry-router --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.RestartCount}}'
-   # Restart policy should bring it back to running → (healthy); RestartCount increments.
+   docker run -d --restart unless-stopped --memory 32m --name oom-probe \
+     --entrypoint sh deepfry-strfry -c 'tail /dev/zero'
+   # Poll a few times — expect Status=restarting, OOMKilled=true, RestartCount incrementing:
+   docker inspect oom-probe --format '{{.State.Status}} OOM={{.State.OOMKilled}} exit={{.State.ExitCode}} restarts={{.RestartCount}}'
+   docker rm -f oom-probe   # clean up the probe
+   ```
+
+   For the real router, confirm it recovers on its own after any genuine OOM by checking that
+   `RestartCount` is non-zero / it returned to `(healthy)`:
+
+   ```bash
+   docker inspect strfry-router --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}}'
    ```
 
 5. **Confirm ingestion resumes** — sample the mainline event count before/after and watch it
