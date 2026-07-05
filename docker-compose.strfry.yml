@@ -4,7 +4,7 @@
 # relay pid, so the router's death went unnoticed and unrestarted — and the container stayed
 # (healthy) because its healthcheck only probes the relay port (7777). Result: ~5h of silent
 # zero-ingestion with an orphaned bloom plugin. The router is now isolated in its own
-# `strfry-router` container (below) with restart:unless-stopped (auto-restart on ExitCode 137),
+# `relay-fan-in` container (below) with restart:unless-stopped (auto-restart on ExitCode 137),
 # an explicit mem_limit (deterministic cgroup OOM attribution), and a process-liveness
 # healthcheck (unhealthy when ingestion is actually broken, not just when the relay port is up).
 services:
@@ -12,7 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.strfry
-    # Explicit image name so strfry-router can reuse this exact tag deterministically, independent
+    # Explicit image name so relay-fan-in can reuse this exact tag deterministically, independent
     # of the compose project name (which is derived from the deploy dir and differs per host).
     image: deepfry-strfry
     container_name: strfry
@@ -32,14 +32,14 @@ services:
       # RELAY-ONLY: the `ROUTER` env var was intentionally REMOVED (2026-07-05 split).
       # dockur's strfry.sh only launches `./strfry router "$ROUTER"` when ROUTER is set;
       # with it unset this container runs ONLY `./strfry relay`. Ingestion now lives in the
-      # dedicated `strfry-router` service below. Env vars are baked at container-create time,
+      # dedicated `relay-fan-in` service below. Env vars are baked at container-create time,
       # so this container MUST be recreated (not just restarted) to stop launching the router
       # — see the Deployment & verification runbook in README.md.
     volumes:
       - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
-      # NOTE: the router-only mounts (strfry-router.config + router.yaml) were moved to the
-      # dedicated `strfry-router` service — the relay neither reads nor needs them.
+      # NOTE: the router-only mounts (strfry-relay-fan-in.config + router.yaml) were moved to the
+      # dedicated `relay-fan-in` service — the relay neither reads nor needs them.
       - ./config/whitelist/whitelist.yaml:/root/deepfry/whitelist.yaml
       # Bloom filter persistence (GATE-05): writable directory for the bloom plugin's
       # persisted filter so it survives container restarts. Override host path via
@@ -52,29 +52,29 @@ services:
     networks:
       - deepfry-net
 
-  # Dedicated ingestion router (2026-07-05 split — see INCIDENT RATIONALE at top of file).
+  # Dedicated ingestion fan-in (2026-07-05 split — see INCIDENT RATIONALE at top of file).
   # Runs ONLY `./strfry router` — pulls events from ~174 upstream relays into the SAME
   # canonical LMDB the relay serves. Same stock dockur/strfry image (NOT forked); the bloom
   # plugin is baked in at /app/plugins/bloom.
-  strfry-router:
+  relay-fan-in:
     # Reuse the relay's already-built image — the router is the SAME strfry binary/image, differing
-    # only by `command:`. Building a byte-identical second image (deepfry-strfry-router) is wasteful
+    # only by `command:`. Building a byte-identical second image (deepfry-relay-fan-in) is wasteful
     # and, worse, forces a redundant build at deploy time (which fails on hosts where the buildx
     # credential helper is unavailable, e.g. over SSH). Pin to the image the `strfry` service builds.
     image: deepfry-strfry
     depends_on:
       - strfry
-    container_name: strfry-router
+    container_name: relay-fan-in
     # SPLIT-01: an OOM SIGKILL (ExitCode 137, OOMKilled=true) lands on THIS container and is
     # auto-restarted by Docker — closing the "silent unrestarted router death" gap.
     restart: unless-stopped
     # SPLIT-02: explicit memory ceiling so a router runaway triggers a deterministic cgroup OOM
     # attributed to the router, not VM-wide killer roulette against the canonical relay. 512 MiB
     # is generous headroom for ~174 upstream WS connections + per-conn buffers + the LMDB mmap
-    # page tables while still bounding a runaway. Operator: watch `docker stats strfry-router`
-    # and raise STRFRY_ROUTER_MEM_LIMIT if it sits near the ceiling (too low → false OOM restart
+    # page tables while still bounding a runaway. Operator: watch `docker stats relay-fan-in`
+    # and raise STRFRY_RELAY_FAN_IN_MEM_LIMIT if it sits near the ceiling (too low → false OOM restart
     # loop; too high → defeats attribution).
-    mem_limit: ${STRFRY_ROUTER_MEM_LIMIT:-512m}
+    mem_limit: ${STRFRY_RELAY_FAN_IN_MEM_LIMIT:-512m}
     # Do NOT set oom_score_adj here. The relay (-300) holds canonical data and must be the LAST
     # OOM sacrifice; the router is restartable/disposable, so its default score (0) makes it the
     # more acceptable victim. Its own mem_limit gives it a deterministic local ceiling regardless.
@@ -83,7 +83,7 @@ services:
     # entrypoint always launches `./strfry relay` first and `wait`s on it, which would start a
     # second relay binding :7777 in the same network — a conflict. Same override pattern the
     # quarantine service uses. Absolute /app/strfry because the binary is not on PATH.
-    command: ["/app/strfry", "--config=/etc/strfry.conf", "router", "/app/strfry-router.config"]
+    command: ["/app/strfry", "--config=/etc/strfry.conf", "router", "/app/strfry-relay-fan-in.config"]
     volumes:
       # IDENTICAL db + strfry.conf as the relay — required for safe multi-process LMDB. The
       # router WRITES down-events into the SAME LMDB the relay serves; if the two containers
@@ -92,9 +92,9 @@ services:
       # named volume (CLAUDE.md hard rule).
       - ${STRFRY_DB_PATH:-./data/strfry-db}:/app/strfry-db
       - ./config/strfry/strfry.conf:/etc/strfry.conf:ro
-      # Router streams-only config (generated host-side by gen-router-config.sh, not committed).
+      # Router streams-only config (generated host-side by gen-relay-fan-in-config.sh, not committed).
       # :ro because strfry only reads it. Carries streams{} + pluginDown=/app/plugins/bloom.
-      - ${STRFRY_ROUTER_CONFIG_PATH:-~/deepfry/strfry-router.config}:/app/strfry-router.config:ro
+      - ${STRFRY_RELAY_FAN_IN_CONFIG_PATH:-~/deepfry/strfry-relay-fan-in.config}:/app/strfry-relay-fan-in.config:ro
       # Router-owned plugin config, moved here from the relay service.
       - ./config/whitelist/router.yaml:/root/deepfry/router.yaml
       # The bloom plugin (pluginDown gate) reads bloom_path from whitelist.yaml.
@@ -104,13 +104,13 @@ services:
       # does not gate router-down events), so this dir must be mounted exactly as on the relay.
       - ${BLOOM_DATA_PATH:-./data/bloom}:/root/deepfry/bloom-data
       # SPLIT-03 ingestion-liveness healthcheck script (:ro, mirrors quarantine-db-guard.sh).
-      - ./config/strfry/router-liveness.sh:/usr/local/bin/router-liveness.sh:ro
+      - ./config/strfry/relay-fan-in-liveness.sh:/usr/local/bin/relay-fan-in-liveness.sh:ro
     # SPLIT-03: ingestion-liveness, NOT a port probe. The router exposes no server port; this
     # asserts the `strfry router` process is alive. Dead router → unhealthy → restart:unless-
     # stopped auto-recovery. (Freshness probes rejected: false-unhealthy during quiet bloom-gate
     # windows where zero events are legitimately written.)
     healthcheck:
-      test: ["CMD-SHELL", "sh /usr/local/bin/router-liveness.sh"]
+      test: ["CMD-SHELL", "sh /usr/local/bin/relay-fan-in-liveness.sh"]
       interval: 1m
       timeout: 5s
       retries: 2

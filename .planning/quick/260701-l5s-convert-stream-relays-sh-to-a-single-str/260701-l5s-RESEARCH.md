@@ -331,3 +331,67 @@ If you see the first two lines but NOT `Loading router config file:` / `New stre
 - [dockurr/strfry on Docker Hub](https://hub.docker.com/r/dockurr/strfry)
 
 **Correction confidence:** HIGH for schema, invocation, and root-cause (all read from the exact compiled source + golpe loader). LOW (unchanged) for whether `/app/plugins/bloom` special-cases `sourceType:"stream"` — verify the plugin.
+
+---
+
+# VERSION / UPDATE ANALYSIS — should we update the strfry image?
+
+**Added:** 2026-07-01 (coordinator follow-up: "does updating the image fix the router blocker?")
+**Bottom line: NO — updating will not fix it. There is nothing newer to update to, and positional-router-config loading is already present in the deployed build.** `[VERIFIED: GitHub tag→commit API + source at exact commit]`
+
+## 1. strfry release timeline
+
+| Fact | Value | Evidence |
+|------|-------|----------|
+| Is `1.1.0` a real hoytech tag? | **YES** | `hoytech/strfry` tags list includes `1.1.0` (and betas `1.1.0-beta1..5`) |
+| Latest hoytech tag | **`1.1.0`** (newest; everything else is older or a beta of 1.1.0) | tags API |
+| Date of `1.1.0` | **2026-03-17** | commit date of the tag |
+| Does tag `1.1.0` == commit `f31a1b9`? | **YES — EXACTLY.** `git compare 1.1.0...f31a1b9` = `"status": "identical", ahead_by 0, behind_by 0` | GitHub compare API; `refs/tags/1.1.0` SHA = `f31a1b9df3a6da5fe96a9d61b5e80ed9b582f135` |
+| Is there any released version newer than 1.1.0? | **NO.** 1.1.0 is the newest tag. | tags API |
+| `master` vs `1.1.0` | master is **98 commits ahead**, but **unreleased** (no tag). | compare API |
+
+So `1.1.0` is genuine, it is the current latest strfry, and it is **byte-for-byte the commit you're pinned to**. Option (b) from the coordinator ("dockurr:1.1.0 isn't built from f31a1b9") and option (c) ("a newer release fixes it") are both **ruled out**: the tag and the commit are identical, and there is no newer release.
+
+## 2. Router-config mechanism across versions
+
+Positional `<routerConfigFile>` loading is **already present at f31a1b9** and was **not added later**:
+
+- **At f31a1b9 (== 1.1.0):** `cmd_router.cpp` has `USAGE = "router <routerConfigFile>"`, `Router(routerConfigFile)`, and `reconcileConfig()` → `loadRawTaoConfig(routerConfigFile)` → `routerConfig.at("streams")`, logging `Loading router config file:`. (Verified in the CORRECTION section above.)
+- **The 98 post-1.1.0 master commits touching `cmd_router.cpp`** are dated 2026-04 and are: PR #221 "direct config→json conversion helper" (`configValueToJson`), "make filter/filterGroup non-copyable", and the compression/byte-count **stats** additions. **None of these add or fix positional-router-config loading or the `streams{}` schema or the `Loading router config file:` log line** — those already existed. The newer code reads the config the same way.
+- **dockur's vendored fork already contains those 2026-04 changes** (its `cmd_router.cpp` has the stats + `addFilters`), so `dockurr/strfry:1.1.0` is if anything slightly *newer* than raw hoytech 1.1.0 in the router file — and it STILL loads the positional file identically (`dockur@v1.1.0` tag: `Usage: router <routerConfigFile>` line 18, `Loading router config file:` line 326, `loadRawTaoConfig(routerConfigFile)` line 329, `routerConfig.at("streams")` line 358).
+
+There is **no commit that "introduced" positional loading after f31a1b9** — it predates 1.1.0. Option (a) ("the deployed binary predates positional-router-config support") is **ruled out**: the support is present at and before the pinned commit.
+
+## 3. dockurr/strfry image tags
+
+| Docker Hub tag | Published | Maps to |
+|----------------|-----------|---------|
+| `latest` | **2026-04-26** | Same build as `1.1.0` (identical timestamp) — `latest` IS `1.1.0` |
+| `1.1.0` | 2026-04-26 | dockur fork of hoytech `1.1.0`/f31a1b9 (+ 2026-04 router stats) |
+| `1.0.4` | 2025-01-11 | older |
+| … | … | older |
+
+`dockurr/strfry:latest` == `dockurr/strfry:1.1.0`. **There is no newer image tag to pin to.** The image was rebuilt 2026-04-26 (after the 2026-03-17 upstream tag), so it already includes the latest router code. Pinning to `latest` gets you the same binary you already have.
+
+## 4. Bottom line — clear answer
+
+**NO, updating the strfry image will not fix the router blocker. (Confidence: HIGH.)**
+
+Evidence chain:
+1. `1.1.0` is the newest strfry release and equals your pinned commit `f31a1b9` exactly (GitHub: "identical").
+2. `dockurr/strfry:1.1.0` == `dockurr/strfry:latest` (both 2026-04-26); no newer image exists.
+3. Positional `<routerConfigFile>` loading + the `streams{}` schema + `Loading router config file:` log line are **present in the deployed binary's source** (verified in both hoytech@f31a1b9 and dockur's vendored fork). The 98 unreleased master commits do not change this.
+
+Therefore the blocker is **not a version/build problem** — it is the invocation/config-placement issue documented in the CORRECTION section: the `streams{}` block must be in the **positional router-config file**, not appended to the golpe `--config` file (golpe silently discards unknown top-level keys, hence "successfully installed" + zero streams). An image update cannot fix a usage error.
+
+### What to actually do (no update needed)
+1. Put the `streams{}` block in a **standalone** file, e.g. `/app/strfry-router.conf` (no `db`/`relay` keys).
+2. Run `strfry router /app/strfry-router.conf` (positional) — or set the dockur entrypoint env `ROUTER=/app/strfry-router.conf`.
+3. Confirm the log shows **`Loading router config file: /app/strfry-router.conf`** then **`New stream group [ingest]`** then **`ingest: Connecting to ...`**. If `Loading router config file:` never appears, the positional arg didn't reach `cmd_router` (check the entrypoint/wrapper) or the file failed to parse (`Failed to parse router config` → `::exit(1)`).
+
+*One caveat worth a 5-minute host check before ruling out a build anomaly entirely:* your empirical report says the positional arg appeared in the `arguments:` log yet no `Loading router config file:` line followed and no error. Per the verified source that is impossible for a normal `strfry router <file>` run — `reconcileConfig()` unconditionally logs that line first, before any parse. If you genuinely never see it, the most likely explanations (in order) are: (i) the `streams{}` was in the `--config` file and no positional arg was actually passed to the `router` subcommand (the golpe `CONFIG: Loading config from file:` line was misread as the router line); (ii) a wrapper/entrypoint swallowed stderr for the router child (dockur's `strfry.sh` backgrounds `./strfry router "$ROUTER" &` and the legacy `STREAMS` path pipes `strfry stream` to `2>/dev/null`); (iii) log verbosity/redirection hid `LI` lines. All three are config/runtime issues, not fixable by a newer image.
+
+### Version-analysis sources
+- `hoytech/strfry` tags + `git/refs/tags/1.1.0` (SHA `f31a1b9…`) + `compare/1.1.0...f31a1b9` ("identical") + `compare/1.1.0...master` (98 ahead) + `commits?path=src/apps/mesh/cmd_router.cpp` (2026-04 changes = stats/json-helper only). — [github.com/hoytech/strfry](https://github.com/hoytech/strfry)
+- `dockur/strfry` `@v1.1.0` `src/apps/mesh/cmd_router.cpp` (positional loading present) + `CHANGES` (1.1.0 deprecates `stream` → `router`). — [github.com/dockur/strfry](https://github.com/dockur/strfry)
+- `dockurr/strfry` Docker Hub tags API — `latest` and `1.1.0` both 2026-04-26; no newer tag. — [hub.docker.com/r/dockurr/strfry](https://hub.docker.com/r/dockurr/strfry)

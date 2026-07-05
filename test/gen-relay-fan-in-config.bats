@@ -1,18 +1,18 @@
 #!/usr/bin/env bats
 #
-# Shape + behavior assertions for gen-router-config.sh.
+# Shape + behavior assertions for gen-relay-fan-in-config.sh.
 #
 # All cases run the generator against a temp HOME with a fixture web-of-trust.yaml
-# and a temp ROUTER_CONFIG. The real ~/deepfry/ is NEVER touched: WOT_CONFIG and
-# ROUTER_CONFIG are always pointed at $BATS_TEST_TMPDIR paths.
+# and a temp FAN_IN_CONFIG. The real ~/deepfry/ is NEVER touched: WOT_CONFIG and
+# FAN_IN_CONFIG are always pointed at $BATS_TEST_TMPDIR paths.
 
-SCRIPT="${BATS_TEST_DIRNAME}/../gen-router-config.sh"
+SCRIPT="${BATS_TEST_DIRNAME}/../gen-relay-fan-in-config.sh"
 
 setup() {
   TMP_HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${TMP_HOME}/deepfry"
   export WOT_CONFIG="${TMP_HOME}/deepfry/web-of-trust.yaml"
-  export ROUTER_CONFIG="${TMP_HOME}/deepfry/strfry-router.config"
+  export FAN_IN_CONFIG="${TMP_HOME}/deepfry/strfry-relay-fan-in.config"
 }
 
 # Write a fixture web-of-trust.yaml with the given relay_urls list body.
@@ -117,7 +117,7 @@ YAML
 # --- Task 2: streams-only taocpp emission with mandatory bloom gating ------
 
 # Run the generator end-to-end against a populated fixture and return its exit
-# status; leaves $ROUTER_CONFIG in place for assertions.
+# status; leaves $FAN_IN_CONFIG in place for assertions.
 generate_with_two_relays() {
   write_relay_urls <<'YAML'
   - wss://relay.alpha.example
@@ -129,61 +129,61 @@ YAML
 @test "emitted config: only top-level key is streams (no top-level db or relay key)" {
   generate_with_two_relays
   [ "$status" -eq 0 ]
-  [ -f "$ROUTER_CONFIG" ]
+  [ -f "$FAN_IN_CONFIG" ]
   # A top-level key is a non-indented `<word> {` or `<word> =` at column 0.
   # streams must be present; the storage/relay top-level keys must be absent.
-  grep -Eq '^streams[[:space:]]*\{' "$ROUTER_CONFIG"
+  grep -Eq '^streams[[:space:]]*\{' "$FAN_IN_CONFIG"
   local storage_key relay_key
   storage_key='^d''b[[:space:]]*='          # split literal to avoid the token in prose
   relay_key='^relay[[:space:]]*\{'
-  ! grep -Eq "$storage_key" "$ROUTER_CONFIG"
-  ! grep -Eq "$relay_key" "$ROUTER_CONFIG"
+  ! grep -Eq "$storage_key" "$FAN_IN_CONFIG"
+  ! grep -Eq "$relay_key" "$FAN_IN_CONFIG"
 }
 
 @test "emitted config: exactly one pluginDown bloom line inside the ingest stream" {
   generate_with_two_relays
   [ "$status" -eq 0 ]
   local n
-  n=$(grep -c 'pluginDown[[:space:]]*=[[:space:]]*"/app/plugins/bloom"' "$ROUTER_CONFIG")
+  n=$(grep -c 'pluginDown[[:space:]]*=[[:space:]]*"/app/plugins/bloom"' "$FAN_IN_CONFIG")
   [ "$n" -eq 1 ]
 }
 
 @test "emitted config: stream carries dir=down and empty filter" {
   generate_with_two_relays
   [ "$status" -eq 0 ]
-  grep -Eq 'dir[[:space:]]*=[[:space:]]*"down"' "$ROUTER_CONFIG"
-  grep -Eq 'filter[[:space:]]*=[[:space:]]*\{\}' "$ROUTER_CONFIG"
+  grep -Eq 'dir[[:space:]]*=[[:space:]]*"down"' "$FAN_IN_CONFIG"
+  grep -Eq 'filter[[:space:]]*=[[:space:]]*\{\}' "$FAN_IN_CONFIG"
 }
 
 @test "emitted config: urls array lists both relays, one per line, NO commas" {
   generate_with_two_relays
   [ "$status" -eq 0 ]
-  grep -q '"wss://relay.alpha.example"' "$ROUTER_CONFIG"
-  grep -q '"wss://relay.beta.example"' "$ROUTER_CONFIG"
+  grep -q '"wss://relay.alpha.example"' "$FAN_IN_CONFIG"
+  grep -q '"wss://relay.beta.example"' "$FAN_IN_CONFIG"
   # No comma may appear on any quoted-url line.
-  ! grep -Eq '"wss://[^"]+",' "$ROUTER_CONFIG"
+  ! grep -Eq '"wss://[^"]+",' "$FAN_IN_CONFIG"
 }
 
-@test "generator writes ONLY \$ROUTER_CONFIG; sibling ~/deepfry/ files untouched" {
+@test "generator writes ONLY \$FAN_IN_CONFIG; sibling ~/deepfry/ files untouched" {
   local sibling="${TMP_HOME}/deepfry/keep-me.txt"
   echo "original" > "$sibling"
   generate_with_two_relays
   [ "$status" -eq 0 ]
-  [ -f "$ROUTER_CONFIG" ]
+  [ -f "$FAN_IN_CONFIG" ]
   [ "$(cat "$sibling")" = "original" ]
 }
 
 @test "fail-hard: empty list + stub make yielding nothing -> non-zero, no config written" {
   write_relay_urls <<'YAML'
 YAML
-  rm -f "$ROUTER_CONFIG"
+  rm -f "$FAN_IN_CONFIG"
   STUB="${BATS_TEST_TMPDIR}/bin"
   mkdir -p "$STUB"
   printf '#!/usr/bin/env bash\nexit 0\n' > "${STUB}/make"
   chmod +x "${STUB}/make"
   run env PATH="${STUB}:$PATH" bash "$SCRIPT" generate
   [ "$status" -ne 0 ]
-  [ ! -f "$ROUTER_CONFIG" ]
+  [ ! -f "$FAN_IN_CONFIG" ]
 }
 
 # --- Task 3: negative / injection coverage (CR-01, WR-01, WR-02, WR-03) ----
@@ -215,13 +215,13 @@ YAML
   write_relay_urls <<'YAML'
   - wss://a.example" filter={} }} db="/attacker/path" streams { x { pluginDown="/dev/null
 YAML
-  rm -f "$ROUTER_CONFIG"
+  rm -f "$FAN_IN_CONFIG"
   stub_noop_make
   # Full generate: parser rejects -> discovery (stubbed no-op) -> still empty ->
   # fail hard. No config may be written.
   run env PATH="${STUB}:$PATH" bash "$SCRIPT" generate
   [ "$status" -ne 0 ]
-  [ ! -f "$ROUTER_CONFIG" ]
+  [ ! -f "$FAN_IN_CONFIG" ]
 }
 
 @test "CR-01: a good relay alongside a malicious one still fails hard — no partial config with injection" {
@@ -229,11 +229,11 @@ YAML
   - wss://relay.good.example
   - wss://evil.example" pluginDown="/dev/null
 YAML
-  rm -f "$ROUTER_CONFIG"
+  rm -f "$FAN_IN_CONFIG"
   stub_noop_make
   run env PATH="${STUB}:$PATH" bash "$SCRIPT" generate
   [ "$status" -ne 0 ]
-  [ ! -f "$ROUTER_CONFIG" ]
+  [ ! -f "$FAN_IN_CONFIG" ]
 }
 
 @test "CR-01: other taocpp metacharacters (whitespace, brace, equals) are rejected" {
@@ -257,12 +257,12 @@ YAML
   generate_with_two_relays
   [ "$status" -eq 0 ]
   local n
-  n=$(grep -c 'pluginDown[[:space:]]*=[[:space:]]*"/app/plugins/bloom"' "$ROUTER_CONFIG")
+  n=$(grep -c 'pluginDown[[:space:]]*=[[:space:]]*"/app/plugins/bloom"' "$FAN_IN_CONFIG")
   [ "$n" -eq 1 ]
-  [ "$(grep -c 'pluginDown' "$ROUTER_CONFIG")" -eq 1 ]
+  [ "$(grep -c 'pluginDown' "$FAN_IN_CONFIG")" -eq 1 ]
   local storage_key
   storage_key='^d''b[[:space:]]*='
-  ! grep -Eq "$storage_key" "$ROUTER_CONFIG"
+  ! grep -Eq "$storage_key" "$FAN_IN_CONFIG"
 }
 
 @test "WR-02: a relay URL containing a '#' fragment survives (not truncated as a comment)" {
@@ -296,8 +296,8 @@ YAML
 @test "WR-01: no temp file is orphaned in the config dir after a successful generate" {
   generate_with_two_relays
   [ "$status" -eq 0 ]
-  [ -f "$ROUTER_CONFIG" ]
-  # No strfry-router.config.XXXXXX temp sibling may remain.
-  run bash -c "ls '${TMP_HOME}/deepfry/'strfry-router.config.?????? 2>/dev/null | wc -l | tr -d ' '"
+  [ -f "$FAN_IN_CONFIG" ]
+  # No strfry-relay-fan-in.config.XXXXXX temp sibling may remain.
+  run bash -c "ls '${TMP_HOME}/deepfry/'strfry-relay-fan-in.config.?????? 2>/dev/null | wc -l | tr -d ' '"
   [ "$output" = "0" ]
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# gen-router-config.sh — generate a standalone streams-only `strfry router`
+# gen-relay-fan-in-config.sh — generate a standalone streams-only `strfry router`
 # config from the Web-of-Trust relay list.
 #
 # Reads the same `relay_urls:` list `stream-relays.sh` parses from
-# ~/deepfry/web-of-trust.yaml and emits ~/deepfry/strfry-router.config: a
+# ~/deepfry/web-of-trust.yaml and emits ~/deepfry/strfry-relay-fan-in.config: a
 # taocpp/config++ file whose only top-level key is `streams`, with one `ingest`
 # stream carrying every relay URL and a MANDATORY per-stream
 # `pluginDown = "/app/plugins/bloom"` gate (the global writePolicy does NOT gate
@@ -18,11 +18,11 @@ set -euo pipefail
 #
 # Env knobs (overridable — tests point these at a temp HOME):
 #   WOT_CONFIG     default ${HOME}/deepfry/web-of-trust.yaml   (input, read-only)
-#   ROUTER_CONFIG  default ${HOME}/deepfry/strfry-router.config (ONLY file written)
+#   FAN_IN_CONFIG  default ${HOME}/deepfry/strfry-relay-fan-in.config (ONLY file written)
 #   WOT_DIR        default web-of-trust                         (make -C target dir)
 
 WOT_CONFIG="${WOT_CONFIG:-${HOME}/deepfry/web-of-trust.yaml}"
-ROUTER_CONFIG="${ROUTER_CONFIG:-${HOME}/deepfry/strfry-router.config}"
+FAN_IN_CONFIG="${FAN_IN_CONFIG:-${HOME}/deepfry/strfry-relay-fan-in.config}"
 WOT_DIR="${WOT_DIR:-web-of-trust}"
 
 # In-container path to the bloom whitelist plugin (Phase 2 bind-mount target).
@@ -107,7 +107,7 @@ resolve_relays() {
   exit 1
 }
 
-# Emit the streams-only taocpp/config++ router file to $ROUTER_CONFIG from
+# Emit the streams-only taocpp/config++ router file to $FAN_IN_CONFIG from
 # RELAYS. The ONLY top-level key is `streams` — NO `db`/`relay` keys (strfry
 # reads the LMDB path from the global --config; golpe silently discards unknown
 # top-level keys, and a `db`-bearing positional file breaks router load). The
@@ -116,11 +116,11 @@ resolve_relays() {
 # because the global writePolicy does NOT gate router-down events. `urls` is a
 # whitespace/newline-separated array with NO commas (taocpp array syntax).
 #
-# Writes ONLY $ROUTER_CONFIG (D-09): builds a temp file beside it, then mv's it
+# Writes ONLY $FAN_IN_CONFIG (D-09): builds a temp file beside it, then mv's it
 # into place atomically — never touching any other ~/deepfry/ file.
 emit_config() {
   local tmp url
-  tmp="$(mktemp "${ROUTER_CONFIG}.XXXXXX")"
+  tmp="$(mktemp "${FAN_IN_CONFIG}.XXXXXX")"
   # WR-01 (D-09): under `set -e`, a mid-write failure (ENOSPC, permission
   # change, interrupt) would abort the script and orphan the temp file in the
   # protected ~/deepfry/ dir. Register a cleanup trap scoped to this function so
@@ -147,9 +147,9 @@ emit_config() {
     echo "}"
   } > "$tmp"
 
-  mv "$tmp" "$ROUTER_CONFIG"
+  mv "$tmp" "$FAN_IN_CONFIG"
   trap - RETURN
-  echo "Wrote ${#RELAYS[@]} relays to ${ROUTER_CONFIG}."
+  echo "Wrote ${#RELAYS[@]} relays to ${FAN_IN_CONFIG}."
 }
 
 cmd_generate() {

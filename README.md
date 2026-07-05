@@ -118,8 +118,8 @@ The stack is split into separate compose files so each layer can be managed inde
 | Dgraph | `dgraph` | `docker-compose.dgraph.yml` | 8080 (HTTP/GraphQL), 9080 (gRPC) | Graph database for pubkey relationships |
 | Dgraph Ratel | `dgraph-ratel` | `docker-compose.dgraph.yml` | 8000 | Dgraph web UI |
 | Whitelist Server | `whitelist-server` | `docker-compose.dgraph.yml` | 8081 | Centralized pubkey whitelist cache (refreshes from Dgraph) |
-| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr **relay** (relay-only since the 2026-07-05 router split). The image ships three interchangeable writePolicy plugins (`/app/plugins/whitelist`, `/app/plugins/router`, `/app/plugins/bloom`); `strfry.conf` selects which one runs (currently `/app/plugins/bloom`). |
-| StrFry Router | `strfry-router` | `docker-compose.strfry.yml` | -- (no exposed port) | Dedicated **ingestion router** — pulls events from ~174 upstream relays into the **shared** mainline LMDB, gated by `pluginDown = /app/plugins/bloom`. Same stock image + shared `strfry.conf`/LMDB as `strfry`. `restart: unless-stopped` + `mem_limit` (512m) + a process-liveness healthcheck so a router OOM auto-restarts and shows `unhealthy` when ingestion is actually broken. |
+| StrFry | `strfry` | `docker-compose.strfry.yml` | 7777 (WebSocket) | Nostr **relay** (relay-only since the 2026-07-05 relay-fan-in split). The image ships three interchangeable writePolicy plugins (`/app/plugins/whitelist`, `/app/plugins/router`, `/app/plugins/bloom`); `strfry.conf` selects which one runs (currently `/app/plugins/bloom`). |
+| StrFry Relay Fan-in | `relay-fan-in` | `docker-compose.strfry.yml` | -- (no exposed port) | Dedicated **ingestion fan-in** — pulls events from ~174 upstream relays into the **shared** mainline LMDB, gated by `pluginDown = /app/plugins/bloom`. Same stock image + shared `strfry.conf`/LMDB as `strfry`. `restart: unless-stopped` + `mem_limit` (512m) + a process-liveness healthcheck so a fan-in OOM auto-restarts and shows `unhealthy` when ingestion is actually broken. |
 | StrFry Quarantine | `strfry-quarantine` | `docker-compose.strfry.yml` | 7778 (WebSocket) | Secondary StrFry for events the router plugin rejects from mainline. Separate LMDB, guarded against mounting the mainline DB. See [`quarantine/SPEC.md`](quarantine/SPEC.md). |
 | Event Forwarders | `fwd-*` | `docker-compose.evtfwd.yml` | -- | Sync events from upstream relays |
 
@@ -148,19 +148,19 @@ Paths can be absolute or relative to the project directory. Unset variables fall
 ### Useful commands
 
 ```bash
-# Ingestion runs as a `strfry router` process in its OWN dedicated `strfry-router`
+# Ingestion runs as a `strfry router` process in its OWN dedicated `relay-fan-in`
 # container (since the 2026-07-05 split) — NOT inside the main `strfry` container,
-# which is now relay-only. The router writes into the SAME shared LMDB the relay
+# which is now relay-only. The fan-in writes into the SAME shared LMDB the relay
 # serves; both containers bind-mount the identical db dir and strfry.conf.
 # There is no separate start/attach/stop command; ingestion is up with the stack.
 
-# Regenerate the router config from the Web-of-Trust relay list.
-# gen-router-config.sh (host-run) rebuilds ~/deepfry/strfry-router.config from
+# Regenerate the relay-fan-in config from the Web-of-Trust relay list.
+# gen-relay-fan-in-config.sh (host-run) rebuilds ~/deepfry/strfry-relay-fan-in.config from
 # the `relay_urls:` list in ~/deepfry/web-of-trust.yaml — the single source of
 # truth for which relays are ingested. Applying a regenerated config requires the
-# operator to reload/recreate the strfry-router service separately.
-./gen-router-config.sh              # regenerate the router config
-./gen-router-config.sh generate     # (explicit subcommand form)
+# operator to reload/recreate the relay-fan-in service separately.
+./gen-relay-fan-in-config.sh              # regenerate the relay-fan-in config
+./gen-relay-fan-in-config.sh generate     # (explicit subcommand form)
 
 # Whitelist server HTTP API
 curl http://localhost:8081/health
@@ -173,24 +173,24 @@ curl http://localhost:8081/check/<64-char-hex-pubkey>
 ( cd quarantine-rescuer && make build && ./bin/quarantine-rescue --dry-run )
 ```
 
-### Deployment & verification runbook — router split
+### Deployment & verification runbook — relay-fan-in split
 
-Applying the 2026-07-05 router split on the strfry host. This moves ingestion out of the
-main `strfry` container into the dedicated `strfry-router` container. Run these on the host:
+Applying the 2026-07-05 relay-fan-in split on the strfry host. This moves ingestion out of the
+main `strfry` container into the dedicated `relay-fan-in` container. Run these on the host:
 
-1. **Regenerate the router config** (host-side, from the Web-of-Trust relay list):
+1. **Regenerate the relay-fan-in config** (host-side, from the Web-of-Trust relay list):
 
    ```bash
-   ./gen-router-config.sh              # rebuilds ~/deepfry/strfry-router.config
+   ./gen-relay-fan-in-config.sh              # rebuilds ~/deepfry/strfry-relay-fan-in.config
    ```
 
 2. **Recreate the split services.** The `strfry` container's old `ROUTER=` env was baked at
-   container-create time, so a plain restart would keep launching the in-container router — the
-   container MUST be recreated to stop doing so, and the new `strfry-router` container must be
+   container-create time, so a plain restart would keep launching the in-container `strfry router` — the
+   container MUST be recreated to stop doing so, and the new `relay-fan-in` container must be
    created:
 
    ```bash
-   docker compose -f docker-compose.strfry.yml up -d --force-recreate strfry strfry-router
+   docker compose -f docker-compose.strfry.yml up -d --force-recreate strfry relay-fan-in
    ```
 
 3. **Confirm both containers are healthy:**
@@ -198,25 +198,25 @@ main `strfry` container into the dedicated `strfry-router` container. Run these 
    ```bash
    docker compose -f docker-compose.strfry.yml ps
    # Expect: strfry        (healthy)  — relay port 7777
-   #         strfry-router (healthy)  — process-liveness (no port)
+   #         relay-fan-in (healthy)  — process-liveness (no port)
 
-   docker logs strfry-router
-   # Expect the router to come up and connect to upstreams, e.g.:
-   #   Loading router config file: /app/strfry-router.config
+   docker logs relay-fan-in
+   # Expect the fan-in to come up and connect to upstreams, e.g.:
+   #   Loading router config file: /app/strfry-relay-fan-in.config
    #   New stream group [ingest]
    #   Connecting to wss://...
    ```
 
-4. **Confirm auto-restart recovers an OOM-killed router** (proves `restart: unless-stopped`).
+4. **Confirm auto-restart recovers an OOM-killed fan-in** (proves `restart: unless-stopped`).
 
-   > ⚠️ **Do NOT verify with `docker kill strfry-router`.** On Docker Desktop a daemon-initiated
+   > ⚠️ **Do NOT verify with `docker kill relay-fan-in`.** On Docker Desktop a daemon-initiated
    > `docker kill` is treated as intentional and **bypasses the restart policy** — the container
    > stays `exited`, giving a false "hardening is broken" result. Only an *unexpected* death (a
    > kernel/cgroup OOM kill of PID 1, or a real crash) triggers `restart: unless-stopped`. Verified
    > 2026-07-05: `docker kill` → no restart; a real cgroup OOM → `Status=restarting`, `OOMKilled=true`,
    > `RestartCount` climbing.
 
-   To prove the OOM path **without disrupting the live router**, run a throwaway container that
+   To prove the OOM path **without disrupting the live fan-in**, run a throwaway container that
    reuses the image and self-OOMs under a tiny memory cap, then watch it auto-restart:
 
    ```bash
@@ -227,21 +227,21 @@ main `strfry` container into the dedicated `strfry-router` container. Run these 
    docker rm -f oom-probe   # clean up the probe
    ```
 
-   For the real router, confirm it recovers on its own after any genuine OOM by checking that
+   For the real fan-in, confirm it recovers on its own after any genuine OOM by checking that
    `RestartCount` is non-zero / it returned to `(healthy)`:
 
    ```bash
-   docker inspect strfry-router --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}}'
+   docker inspect relay-fan-in --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}}'
    ```
 
 5. **Confirm ingestion resumes** — sample the mainline event count before/after and watch it
-   climb (the router is writing into the shared LMDB the relay serves):
+   climb (the fan-in is writing into the shared LMDB the relay serves):
 
    ```bash
    docker exec strfry ./strfry scan --count '{}'   # run a few times; count should increase
    ```
 
-> **Note:** both `strfry` and `strfry-router` bind-mount the identical LMDB db dir and the
+> **Note:** both `strfry` and `relay-fan-in` bind-mount the identical LMDB db dir and the
 > identical `strfry.conf` (`dbParams.maxreaders = 4096`). Do not let them diverge — mismatched
 > db paths or maxreaders corrupt the LMDB reader table (`MDB_BAD_RSLOT`).
 
@@ -254,7 +254,7 @@ DeepFry has three kinds of configuration:
 - **`.env`** at the repo root — docker-compose variables (secrets, machine-specific paths, build labels). Gitignored. Template at `.env.example`.
 - **`~/deepfry/*.yaml`** on the host — per-service runtime config, read by Go services via Viper. Auto-created with defaults on first run when missing.
 - **`config/**/*`** in the repo — files mounted read-only into containers (StrFry conf, whitelist/router plugin YAML, Dgraph schema). Edited in-tree.
-- **`~/deepfry/strfry-router.config`** on the host — **generated**, not hand-edited: `gen-router-config.sh` builds this standalone taocpp/config++ streams file from `~/deepfry/web-of-trust.yaml`'s `relay_urls:` (the single source of truth for which relays are ingested). It is bind-mounted into the dedicated `strfry-router` container and consumed by that container's `strfry router` process (an explicit `command:` in `docker-compose.strfry.yml`, since the 2026-07-05 split — no longer the `ROUTER=` env on the main `strfry` container). Regenerate after changing the relay list, then recreate the `strfry-router` service to apply.
+- **`~/deepfry/strfry-relay-fan-in.config`** on the host — **generated**, not hand-edited: `gen-relay-fan-in-config.sh` builds this standalone taocpp/config++ streams file from `~/deepfry/web-of-trust.yaml`'s `relay_urls:` (the single source of truth for which relays are ingested). It is bind-mounted into the dedicated `relay-fan-in` container and consumed by that container's `strfry router` process (an explicit `command:` in `docker-compose.strfry.yml`, since the 2026-07-05 split — no longer the `ROUTER=` env on the main `strfry` container). Regenerate after changing the relay list, then recreate the `relay-fan-in` service to apply.
 
 ### `.env` variables
 
@@ -267,7 +267,7 @@ All optional unless marked required. Unset variables fall back to the defaults s
 | `NOSTR_SYNC_SECKEY_HISTORY` | *(empty — required for history forwarders)* | Same idea, for the **history** forwarders. Must differ from the live key — the `d`-tag is derived from it and identifies each sync stream. |
 | `STRFRY_DB_PATH` | `./data/strfry-db` | Host path for mainline StrFry LMDB. Can be absolute. |
 | `STRFRY_QUARANTINE_DB_PATH` | `./data/strfry-quarantine-db` | Host path for the quarantine relay's LMDB. Must differ from the mainline — enforced by `config/strfry/quarantine-db-guard.sh`. |
-| `STRFRY_ROUTER_MEM_LIMIT` | `512m` | Memory ceiling for the dedicated `strfry-router` container. Bounds a router runaway to a deterministic cgroup OOM (attributed to the router, not the canonical relay). Raise if `docker stats strfry-router` sits near the ceiling. |
+| `STRFRY_RELAY_FAN_IN_MEM_LIMIT` | `512m` | Memory ceiling for the dedicated `relay-fan-in` container. Bounds a fan-in runaway to a deterministic cgroup OOM (attributed to the fan-in, not the canonical relay). Raise if `docker stats relay-fan-in` sits near the ceiling. |
 | `DGRAPH_DATA_PATH` | `./data/dgraph` | Host path for Dgraph's data directory. |
 | `FWD_VERSION` | `dev` | Label baked into the event-forwarder image. |
 | `FWD_GIT_COMMIT` | `unknown` | Git SHA label for the forwarder image. |
