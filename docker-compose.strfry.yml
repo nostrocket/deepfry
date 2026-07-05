@@ -12,6 +12,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.strfry
+    # Explicit image name so strfry-router can reuse this exact tag deterministically, independent
+    # of the compose project name (which is derived from the deploy dir and differs per host).
+    image: deepfry-strfry
     container_name: strfry
     restart: unless-stopped
     # OOM protection (debug adapter-crash-heavy-query, 2026-06-28). On this 8 GiB host the
@@ -54,9 +57,13 @@ services:
   # canonical LMDB the relay serves. Same stock dockur/strfry image (NOT forked); the bloom
   # plugin is baked in at /app/plugins/bloom.
   strfry-router:
-    build:
-      context: .
-      dockerfile: Dockerfile.strfry
+    # Reuse the relay's already-built image — the router is the SAME strfry binary/image, differing
+    # only by `command:`. Building a byte-identical second image (deepfry-strfry-router) is wasteful
+    # and, worse, forces a redundant build at deploy time (which fails on hosts where the buildx
+    # credential helper is unavailable, e.g. over SSH). Pin to the image the `strfry` service builds.
+    image: deepfry-strfry
+    depends_on:
+      - strfry
     container_name: strfry-router
     # SPLIT-01: an OOM SIGKILL (ExitCode 137, OOMKilled=true) lands on THIS container and is
     # auto-restarted by Docker — closing the "silent unrestarted router death" gap.
