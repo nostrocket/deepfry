@@ -11,6 +11,7 @@ import (
 
 	"whitelist-plugin/pkg/bloomgate"
 	"whitelist-plugin/pkg/config"
+	"whitelist-plugin/pkg/dedup"
 	"whitelist-plugin/pkg/handler"
 	"whitelist-plugin/pkg/quarantine"
 )
@@ -57,7 +58,13 @@ func main() {
 	// BloomChecker satisfies that interface. RouterIOAdapter parses the full event
 	// (kind + content) so the heuristics gate can run. The mainline reject decision
 	// is unchanged regardless of the quarantine outcome.
-	h := handler.NewRouterHandler(checker, publisher, cfg.Quarantine.Enabled, logger)
+	// Accepted-ID dedup gate (DEDUP-01): rejects duplicate copies of an
+	// already-accepted event instead of re-accepting it, keeping strfry's
+	// writer queue from filling with the same event repeatedly. Capacity
+	// <=0 disables it, restoring byte-identical legacy behavior.
+	h := handler.NewRouterHandler(checker, publisher, cfg.Quarantine.Enabled, logger).
+		WithDedup(dedup.New(cfg.DedupCapacity))
+	logger.Printf("Dedup enabled: accepted-ID LRU capacity=%d", cfg.DedupCapacity)
 	io := handler.NewRouterIOAdapter(os.Stdout)
 
 	if err := runEventLoop(ctx, h, io, logger); err != nil {

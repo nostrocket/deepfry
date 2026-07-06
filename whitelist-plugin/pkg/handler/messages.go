@@ -38,10 +38,10 @@ type RejectReason string
 
 // Allowed RejectReason values.
 const (
-	RejectReasonNotInWoT     RejectReason = "rejected: not in web of trust"
-	RejectReasonMalformed    RejectReason = "rejected: malformed event"
-	RejectReasonInternal     RejectReason = "rejected: internal error"
-	RejectReasonCheckFailed  RejectReason = "rejected: whitelist check unavailable"
+	RejectReasonNotInWoT    RejectReason = "rejected: not in web of trust"
+	RejectReasonMalformed   RejectReason = "rejected: malformed event"
+	RejectReasonInternal    RejectReason = "rejected: internal error"
+	RejectReasonCheckFailed RejectReason = "rejected: whitelist check unavailable"
 )
 
 type Event struct {
@@ -126,6 +126,22 @@ func RejectMalformed() OutputMsg {
 		Id:     "",
 		Action: ActionReject,
 		Msg:    string(RejectReasonMalformed),
+	}
+}
+
+// RejectDuplicate creates an OutputMsg for rejecting a duplicate copy of an
+// already-accepted event. The Msg is intentionally empty: strfry's router
+// (cmd_router.cpp) only logs a blocked event to its own output when the OK
+// message is non-empty. Duplicates can arrive at tens per second from the
+// ~174 upstream relays fanning in the same event; a non-empty per-dup reason
+// would recreate a past disk-fill incident from verbose per-event logging.
+// Do NOT set a non-empty reason here — use the sampled summary log in the
+// caller instead.
+func RejectDuplicate(eventId string) OutputMsg {
+	return OutputMsg{
+		Id:     eventId,
+		Action: ActionReject,
+		Msg:    "",
 	}
 }
 

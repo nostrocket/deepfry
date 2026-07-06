@@ -39,6 +39,25 @@ func (f *fakeEnqueuer) Enqueue(evt nostr.Event) bool {
 	return true
 }
 
+// fakeDeduper is a minimal Deduper backed by a plain map, letting tests
+// assert exactly which keys were recorded without depending on pkg/dedup's
+// LRU eviction behavior (covered separately in pkg/dedup).
+type fakeDeduper struct {
+	seen map[[32]byte]bool
+}
+
+func newFakeDeduper() *fakeDeduper {
+	return &fakeDeduper{seen: make(map[[32]byte]bool)}
+}
+
+func (f *fakeDeduper) SeenOrAdd(key [32]byte) bool {
+	if f.seen[key] {
+		return true
+	}
+	f.seen[key] = true
+	return false
+}
+
 func wrapEvent(t *testing.T, evt nostr.Event) RouterInputMsg {
 	t.Helper()
 	raw, err := json.Marshal(evt)
@@ -182,6 +201,117 @@ func TestRouterHandler_CheckerError(t *testing.T) {
 	}
 	if !strings.Contains(logged, "server unreachable") {
 		t.Fatalf("expected underlying error in log, got %q", logged)
+	}
+}
+
+// hexID64 is a valid 64-hex-char event ID usable with decodeEventID.
+const hexID64 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func TestRouterHandler_DedupRejectsSecondAcceptOfSameID(t *testing.T) {
+	checker := &fakeChecker{allow: map[string]bool{"pk-ok": true}}
+	enq := &fakeEnqueuer{}
+	dd := newFakeDeduper()
+	var buf bytes.Buffer
+	h := NewRouterHandler(checker, enq, true, log.New(&buf, "", 0)).WithDedup(dd)
+
+	out1, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-ok", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out1.Action != ActionAccept || out1.Id != hexID64 {
+		t.Fatalf("expected first accept for %s, got %+v", hexID64, out1)
+	}
+
+	out2, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-ok", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out2.Action != ActionReject {
+		t.Fatalf("expected reject for duplicate of %s, got %+v", hexID64, out2)
+	}
+	if out2.Msg != "" {
+		t.Fatalf("expected empty msg for dup reject, got %q", out2.Msg)
+	}
+	if len(enq.events) != 0 {
+		t.Fatalf("expected dup reject to never reach quarantine enqueuer, got %+v", enq.events)
+	}
+}
+
+func TestRouterHandler_NotInWoTIDNotRecordedInDedup(t *testing.T) {
+	checker := &fakeChecker{allow: map[string]bool{}}
+	enq := &fakeEnqueuer{}
+	dd := newFakeDeduper()
+	h := NewRouterHandler(checker, enq, true, log.New(&bytes.Buffer{}, "", 0)).WithDedup(dd)
+
+	// Not-in-WoT: rejected via the existing path; its ID must never be
+	// inserted into the dedup set.
+	out, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-stranger", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Action != ActionReject || out.Msg != string(RejectReasonNotInWoT) {
+		t.Fatalf("expected not-in-wot reject, got %+v", out)
+	}
+	if len(dd.seen) != 0 {
+		t.Fatalf("expected not-in-wot ID to never be recorded in dedup, got %+v", dd.seen)
+	}
+
+	// If the same pubkey is later whitelisted, the now-not-a-dup ID must be
+	// accepted (not treated as a dup from the earlier not-in-WoT pass).
+	checker.allow["pk-stranger"] = true
+	out2, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-stranger", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out2.Action != ActionAccept {
+		t.Fatalf("expected accept after whitelisting, got %+v", out2)
+	}
+}
+
+func TestRouterHandler_NonHexIDFlowsThroughWithoutDedup(t *testing.T) {
+	checker := &fakeChecker{allow: map[string]bool{"pk-ok": true}}
+	enq := &fakeEnqueuer{}
+	dd := newFakeDeduper()
+	h := NewRouterHandler(checker, enq, true, log.New(&bytes.Buffer{}, "", 0)).WithDedup(dd)
+
+	// "e1" is not a valid 64-hex-char ID; dedup should be silently skipped
+	// rather than erroring, and both calls should accept normally.
+	for i := 0; i < 2; i++ {
+		out, err := h.Handle(wrapEvent(t, baseEvt("e1", "pk-ok", 1)))
+		if err != nil {
+			t.Fatalf("unexpected error on call %d: %v", i, err)
+		}
+		if out.Action != ActionAccept {
+			t.Fatalf("expected accept on call %d for non-hex ID, got %+v", i, out)
+		}
+	}
+	if len(dd.seen) != 0 {
+		t.Fatalf("expected non-hex ID to never be recorded in dedup, got %+v", dd.seen)
+	}
+}
+
+func TestRouterHandler_NoDeduperByteIdenticalToLegacy(t *testing.T) {
+	checker := &fakeChecker{allow: map[string]bool{"pk-ok": true}}
+	enq := &fakeEnqueuer{}
+	var buf bytes.Buffer
+	// No WithDedup call at all.
+	h := NewRouterHandler(checker, enq, true, log.New(&buf, "", 0))
+
+	out1, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-ok", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out1.Action != ActionAccept {
+		t.Fatalf("expected accept, got %+v", out1)
+	}
+
+	// A second identical ID must also be accepted without a deduper attached.
+	out2, err := h.Handle(wrapEvent(t, baseEvt(hexID64, "pk-ok", 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out2.Action != ActionAccept {
+		t.Fatalf("expected second accept with no deduper attached, got %+v", out2)
 	}
 }
 

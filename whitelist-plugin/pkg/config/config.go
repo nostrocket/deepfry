@@ -93,11 +93,15 @@ func LoadClientConfig() (*ClientConfig, error) {
 // BloomConfig is used by the standalone bloom gate plugin (cmd/bloom).
 // It reads from the shared ~/deepfry/whitelist.yaml using bloom_-prefixed keys (D-01/D-03).
 type BloomConfig struct {
-	ServerURL            string           `mapstructure:"server_url"`
-	BloomRefreshInterval time.Duration    `mapstructure:"bloom_refresh_interval"`
-	BloomPath            string           `mapstructure:"bloom_path"`
-	BloomFetchTimeout    time.Duration    `mapstructure:"bloom_fetch_timeout"`
-	RefreshRetryCount    int              `mapstructure:"refresh_retry_count"`
+	ServerURL            string        `mapstructure:"server_url"`
+	BloomRefreshInterval time.Duration `mapstructure:"bloom_refresh_interval"`
+	BloomPath            string        `mapstructure:"bloom_path"`
+	BloomFetchTimeout    time.Duration `mapstructure:"bloom_fetch_timeout"`
+	RefreshRetryCount    int           `mapstructure:"refresh_retry_count"`
+	// DedupCapacity bounds the accepted-ID LRU that rejects duplicate copies
+	// of already-accepted events (DEDUP-01). <= 0 disables dedup entirely,
+	// restoring byte-identical legacy behavior.
+	DedupCapacity int `mapstructure:"dedup_capacity"`
 	// Quarantine reuses the router's QuarantineConfig type (router_config.go). It drives
 	// the bloom plugin's fire-and-forget side-channel to the quarantine relay for
 	// not-in-set kind-0/1/3 events. Absent from whitelist.yaml → defaults below;
@@ -120,11 +124,12 @@ func LoadBloomConfig() (*BloomConfig, error) {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(configDir)
 
-	v.SetDefault("server_url", "http://localhost:8081")            // D-02: reuse shared key
-	v.SetDefault("bloom_refresh_interval", "6h")                   // D-03
+	v.SetDefault("server_url", "http://localhost:8081")                // D-02: reuse shared key
+	v.SetDefault("bloom_refresh_interval", "6h")                       // D-03
 	v.SetDefault("bloom_path", filepath.Join(configDir, "bloom.dfbf")) // D-03
-	v.SetDefault("bloom_fetch_timeout", "30s")                     // D-03
-	v.SetDefault("refresh_retry_count", 3)                         // D-03
+	v.SetDefault("bloom_fetch_timeout", "30s")                         // D-03
+	v.SetDefault("refresh_retry_count", 3)                             // D-03
+	v.SetDefault("dedup_capacity", 100000)                             // DEDUP-01
 
 	// Quarantine side-channel defaults — identical to LoadRouterConfig (M24-QUARANTINE-BLOOM).
 	// No env-prefix / AutomaticEnv here: keep bloom's loader shape so behavior is

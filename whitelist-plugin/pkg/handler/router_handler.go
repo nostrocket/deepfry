@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/hex"
 	"log"
 
 	"whitelist-plugin/pkg/heuristics"
@@ -14,6 +15,20 @@ type EventEnqueuer interface {
 	Enqueue(evt nostr.Event) bool
 }
 
+// Deduper reports whether a decoded 32-byte event ID has been seen before,
+// recording it if not. Kept as an interface (rather than importing
+// pkg/dedup directly) so tests can inject a fake and so this package stays
+// free of a dependency on the concrete LRU implementation.
+type Deduper interface {
+	SeenOrAdd(key [32]byte) bool
+}
+
+// dupLogSampleN controls how often a duplicate-accept summary line is
+// emitted: one line per this many suppressed duplicates, rather than one
+// line per duplicate. At tens of dups/sec, per-dup logging would recreate a
+// past disk-fill incident.
+const dupLogSampleN = 1000
+
 // RouterHandler implements the event routing logic described in quarantine/SPEC.md §6.5:
 //  1. Whitelisted pubkey → Accept (event lands in main StrFry).
 //  2. Non-whitelisted pubkey → run heuristics; if the event passes, fire-and-forget
@@ -23,6 +38,13 @@ type RouterHandler struct {
 	publisher         EventEnqueuer
 	logger            *log.Logger
 	quarantineEnabled bool
+
+	// dedup and dupCount support the optional accepted-ID dedup gate
+	// (WithDedup). Handle is called from a single goroutine (cmd/bloom's
+	// sequential stdin event loop), so dupCount is a plain counter with no
+	// atomics needed.
+	dedup    Deduper
+	dupCount uint64
 }
 
 func NewRouterHandler(checker Checker, publisher EventEnqueuer, quarantineEnabled bool, logger *log.Logger) *RouterHandler {
@@ -32,6 +54,33 @@ func NewRouterHandler(checker Checker, publisher EventEnqueuer, quarantineEnable
 		logger:            logger,
 		quarantineEnabled: quarantineEnabled,
 	}
+}
+
+// WithDedup attaches a Deduper that gates the accept branch of Handle: a
+// duplicate of an already-accepted event ID is rejected instead of
+// re-accepted. It is opt-in (cmd/router and existing tests never call it, so
+// their behavior is byte-identical to before this change). Returns h for
+// fluent construction.
+func (h *RouterHandler) WithDedup(d Deduper) *RouterHandler {
+	h.dedup = d
+	return h
+}
+
+// decodeEventID decodes a 64-char hex event ID into a 32-byte array. It
+// returns false (without error) for anything that isn't exactly 64 hex
+// chars, so a malformed/unexpected ID silently skips dedup rather than
+// erroring the whole request.
+func decodeEventID(id string) ([32]byte, bool) {
+	var key [32]byte
+	if len(id) != 64 {
+		return key, false
+	}
+	decoded, err := hex.DecodeString(id)
+	if err != nil {
+		return key, false
+	}
+	copy(key[:], decoded)
+	return key, true
 }
 
 // Handle applies the routing decision. Called once per stdin line.
@@ -50,6 +99,15 @@ func (h *RouterHandler) Handle(input RouterInputMsg) (OutputMsg, error) {
 		return Reject(evt.ID, RejectReasonCheckFailed), nil
 	}
 	if ok {
+		if h.dedup != nil {
+			if key, decodable := decodeEventID(evt.ID); decodable && h.dedup.SeenOrAdd(key) {
+				h.dupCount++
+				if h.dupCount%dupLogSampleN == 0 {
+					h.log("dedup: suppressed %d duplicate accepts (empty-msg rejects)", h.dupCount)
+				}
+				return RejectDuplicate(evt.ID), nil
+			}
+		}
 		h.log("decision=accept id=%s pubkey=%s", evt.ID, pubkeyPrefix(evt.PubKey))
 		return Accept(evt.ID), nil
 	}
