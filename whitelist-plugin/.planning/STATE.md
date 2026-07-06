@@ -35,7 +35,7 @@ Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
 Progress: [          ] 0% (0/4 phases)
-Last activity: 2026-06-30 — Phase 04 complete
+Last activity: 2026-07-06 — Completed quick task 260706-o1u: bloom plugin accepted-ID LRU dedup (relay-fan-in OOM fix)
 
 ## Roadmap Summary
 
@@ -67,6 +67,12 @@ Last activity: 2026-06-30 — Phase 04 complete
 ### Blockers
 
 - (none)
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260706-o1u | bloom plugin: LRU dedup of recently-accepted event IDs to stop relay-fan-in unbounded write-queue growth | 2026-07-06 | 0fcf458 | [260706-o1u-bloom-plugin-lru-dedup-of-recently-accep](./quick/260706-o1u-bloom-plugin-lru-dedup-of-recently-accep/) |
 
 ## Session Continuity
 
