@@ -289,6 +289,19 @@ The bloom plugin is opt-in: the existing `whitelist` and `router` binaries are u
 5. When the server is unreachable at refresh time, decisions continue to be served from the last persisted on-disk filter (GATE-05).
 6. Cold start blocks only when there is neither a reachable server nor a persisted filter on disk (GATE-06).
 7. A rejected (not-in-set) event that passes the same kind-0/1/3 **heuristic gate** used by the router is forwarded **fire-and-forget** to the quarantine relay. This reuses the router's `RouterHandler` (which is checker-agnostic) plus the shared quarantine `Publisher` and `heuristics.Filter` — nothing is reimplemented. The mainline reject decision and the zero-per-event-HTTP hot path are unchanged: quarantine forwarding is an async WebSocket publish on a background goroutine, never a per-event HTTP call.
+8. An **accepted-ID dedup gate** (DEDUP-01) rejects duplicate copies of events the plugin has already accepted — see below.
+
+### Accepted-ID Dedup (DEDUP-01)
+
+When the bloom plugin gates `strfry router` ingestion (the `relay-fan-in` container pulls from ~174 upstream relays), the same event arrives once per relay that carries it. strfry's router has no write backpressure: every plugin-accepted event is buffered in RAM until an LMDB commit drains it, and on a host where writes are slow the duplicate copies alone grew the router's heap ~16 MiB/min until the container was OOM-killed (measured 2026-07-06: 84% of events reaching strfry's writer were duplicates).
+
+The plugin therefore keeps a bounded LRU (`pkg/dedup`) of recently-**accepted** event IDs and answers `reject` for any repeat. Properties:
+
+- **Always safe:** a nostr event ID is a content hash, so an identical ID is a byte-identical event — strfry would discard it as a duplicate anyway; the gate just stops it from being queued in RAM first.
+- **Empty reject `msg`:** strfry only logs blocked events when `msg` is non-empty, so dup rejects produce no per-event log line (at tens of dups/sec that would recreate a past log disk-fill). The plugin logs one summary line per 1,000 suppressed duplicates instead.
+- **Quarantine-exempt:** dup rejects return before the quarantine side-channel — a copy of an accepted event is in-WoT and already stored, so it is never forwarded.
+- **Accepted IDs only:** rejected events are cheap to re-reject (pure bloom lookup) and never enter the LRU.
+- **Bounded:** capacity is `dedup_capacity` (default 100,000 IDs ≈ a few hours of unique accepts, ~stable few-MB footprint). `dedup_capacity: 0` (or negative) disables the gate entirely, restoring byte-identical legacy behavior.
 
 ### Configuration
 
@@ -300,6 +313,7 @@ bloom_refresh_interval: 6h
 bloom_path: "~/deepfry/bloom.dfbf"
 bloom_fetch_timeout: 30s
 refresh_retry_count: 3
+dedup_capacity: 100000
 quarantine:
   enabled: true
   relay_url: "ws://strfry-quarantine:7778"
@@ -315,6 +329,7 @@ quarantine:
 | `bloom_path` | `~/deepfry/bloom.dfbf` | Path for the persisted filter file; set to `/root/deepfry/bloom-data/bloom.dfbf` in Docker (see below) |
 | `bloom_fetch_timeout` | `30s` | HTTP request timeout for each filter fetch |
 | `refresh_retry_count` | `3` | Retries per refresh cycle on failure |
+| `dedup_capacity` | `100000` | Accepted-ID LRU size for the dedup gate (DEDUP-01); `0` or negative disables dedup |
 
 The bloom plugin now reads the same nested `quarantine:` section the router uses, with defaults matching the [Router Plugin](#router-plugin-optional) (`enabled=true`, `relay_url=ws://strfry-quarantine:7778`, `buffer_size=10000`, `publish_timeout=5s`, `metrics_interval=60s`). Setting `quarantine.enabled: false` gives **byte-identical** legacy bloom behavior (reject-only, no side-channel). See the [Router Plugin § Quarantine Path Invariants](#quarantine-path-invariants) for the shared invariants — the bloom plugin honours the same ones since it drives the same handler, publisher, and heuristic gate. Unlike the router loader, the bloom loader intentionally has no env-prefix override, preserving byte-identical behavior when the section is absent.
 
@@ -373,6 +388,9 @@ whitelist-plugin/
 │   ├── config/
 │   │   ├── config.go            # ServerConfig and ClientConfig with Viper; BloomConfig (bloom_-prefixed keys)
 │   │   └── router_config.go     # RouterConfig (server + quarantine sections)
+│   ├── dedup/
+│   │   ├── lru.go               # Bounded accepted-ID LRU for the dedup gate (DEDUP-01)
+│   │   └── lru_test.go
 │   ├── handler/
 │   │   ├── handler.go           # Checker, Handler, and IOAdapter interfaces
 │   │   ├── messages.go          # StrFry JSONL protocol types (+ RouterInputMsg)
