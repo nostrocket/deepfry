@@ -68,13 +68,16 @@ services:
     # SPLIT-01: an OOM SIGKILL (ExitCode 137, OOMKilled=true) lands on THIS container and is
     # auto-restarted by Docker — closing the "silent unrestarted router death" gap.
     restart: unless-stopped
-    # SPLIT-02: explicit memory ceiling so a router runaway triggers a deterministic cgroup OOM
-    # attributed to the router, not VM-wide killer roulette against the canonical relay. 512 MiB
-    # is generous headroom for ~174 upstream WS connections + per-conn buffers + the LMDB mmap
-    # page tables while still bounding a runaway. Operator: watch `docker stats relay-fan-in`
-    # and raise STRFRY_RELAY_FAN_IN_MEM_LIMIT if it sits near the ceiling (too low → false OOM restart
-    # loop; too high → defeats attribution).
-    mem_limit: ${STRFRY_RELAY_FAN_IN_MEM_LIMIT:-512m}
+    # SPLIT-02: explicit memory ceiling so a fan-in runaway triggers a deterministic cgroup OOM
+    # attributed to the fan-in, not VM-wide killer roulette against the canonical relay. Measured
+    # 2026-07-06: the steady-state working set for ~174 upstream WS connections + per-conn buffers
+    # + the LMDB mmap page tables sits at ~490 MiB, so the original 512 MiB left no headroom and the
+    # container was OOM-killed (exit 137) → auto-restarted every ~2h (RestartCount climbed to 11/23h).
+    # Raised to 1 GiB (~2× steady state) to stop the restart churn while still bounding a runaway and
+    # keeping OOM attributed to the fan-in. Operator: watch `docker stats relay-fan-in`; if it creeps
+    # past 1 GiB over days that indicates a real `strfry router` leak (mitigate with a scheduled
+    # restart), not just an undersized limit. Raise STRFRY_RELAY_FAN_IN_MEM_LIMIT to tune per host.
+    mem_limit: ${STRFRY_RELAY_FAN_IN_MEM_LIMIT:-1g}
     # Do NOT set oom_score_adj here. The relay (-300) holds canonical data and must be the LAST
     # OOM sacrifice; the router is restartable/disposable, so its default score (0) makes it the
     # more acceptable victim. Its own mem_limit gives it a deterministic local ceiling regardless.
